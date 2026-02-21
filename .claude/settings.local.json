@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude:*)",
+      "Bash(python3 --version && pip3 --version && which python3 && which pip3)",
+      "Bash(chmod +x /home/runner/workspace/run.sh)",
+      "Bash(nix-shell -p python313 python313Packages.pip --run \"pip install -r requirements.txt -q 2>&1 | tail -5\" 2>/dev/null && echo \"pip install done\")",
+      "Bash(nix-shell -p python313 python313Packages.pip --run \"pip install -r requirements.txt --break-system-packages -q 2>&1 | tail -5\" 2>/dev/null && echo \"pip install done\")",
+      "Bash(nix-shell -p python313 python313Packages.pip --run \"pip install -r /home/runner/workspace/requirements.txt --break-system-packages --user -q 2>&1 | tail -8\" 2>/dev/null && echo \"pip install done\")",
+      "Bash(nix-shell -p python313 python313Packages.pip --run \"\nexport PYTHONPATH=\\\\$HOME/.local/lib/python3.13/site-packages:\\\\$PYTHONPATH\nSECRET_KEY=test-key-for-check DEBUG=True DATABASE_URL=sqlite:///test.db python3 manage.py check 2>&1\n\" 2>/dev/null)",
+      "Bash(nix-shell -p python313 python313Packages.pip --run \"\nexport PYTHONPATH=\\\\$HOME/.local/lib/python3.13/site-packages:\\\\$PYTHONPATH\nSECRET_KEY=test-key-for-check DEBUG=True DATABASE_URL=sqlite:///test.db python3 manage.py makemigrations 2>&1\n\" 2>/dev/null)",
+      "Bash(nix-shell -p python313 python313Packages.pip --run \"\nexport PYTHONPATH=\\\\$HOME/.local/lib/python3.13/site-packages:\\\\$PYTHONPATH\nSECRET_KEY=test-key-for-check DEBUG=True DATABASE_URL=sqlite:///test.db python3 manage.py makemigrations core catalog distribution events imports 2>&1\n\" 2>/dev/null)",
+      "Bash(nix-shell -p python313 python313Packages.pip --run \"\nexport PYTHONPATH=\\\\$HOME/.local/lib/python3.13/site-packages:\\\\$PYTHONPATH\nSECRET_KEY=test-key-for-check DEBUG=True DATABASE_URL=sqlite:///test.db python3 manage.py migrate 2>&1\n\" 2>/dev/null)",
+      "Bash(nix-shell -p python313 python313Packages.pip --run \"\nexport PYTHONPATH=\\\\$HOME/.local/lib/python3.13/site-packages:\\\\$PYTHONPATH\nSECRET_KEY=test-key-for-check DEBUG=True DATABASE_URL=sqlite:///test.db python3 manage.py seed_data 2>&1\n\" 2>/dev/null)",
+      "Bash(nix-shell -p python313 python313Packages.pip --run \"\nexport PYTHONPATH=\\\\$HOME/.local/lib/python3.13/site-packages:\\\\$PYTHONPATH\nSECRET_KEY=test-key-for-check DEBUG=True DATABASE_URL=sqlite:///test.db python3 manage.py check --deploy 2>&1\n\" 2>/dev/null)",
+      "Bash(nix-shell -p python313 --run \"python3 -c \\\\\"from django.core.management.utils import get_random_secret_key; print\\(get_random_secret_key\\(\\)\\)\\\\\"\" 2>/dev/null)"
+    ]
+  }
+}

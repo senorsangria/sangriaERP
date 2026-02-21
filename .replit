@@ -1,4 +1,5 @@
-modules = ["nodejs-20"]
+modules = ["python-3.13"]
+
 [agent]
 expertMode = true
 
@@ -15,15 +16,15 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Start application"
+args = "Start Django"
 
 [[workflows.workflow]]
-name = "Start application"
+name = "Start Django"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "node server.js"
+args = "bash run.sh"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
@@ -35,4 +36,4 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["node", "server.js"]
+run = ["bash", "run.sh"]
