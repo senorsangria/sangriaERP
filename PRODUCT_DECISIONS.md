@@ -250,8 +250,8 @@ Searchable list for one-off or exception assignments
 | Phase | Description | Status |
 |-------|-------------|--------|
 | Foundation | Project setup, data models, admin, seed data | ✅ Complete |
-| Phase 1 | Login, User Accounts, Roles | 🔄 In Progress |
-| Phase 2 | Distributors, Import Accounts, Import Sales Data (VIP) | ⬜ Pending |
+| Phase 1 | Login, User Accounts, Roles | ✅ Complete |
+| Phase 2 | Distributors, Import Accounts, Import Sales Data (VIP) | 🔄 Next Up |
 | Phase 3 | Sales Views | ⬜ Pending |
 | Phase 4 | Saving Sales Views | ⬜ Pending |
 | Phase 5 | CRM — Accounts (contacts, notes) | ⬜ Pending |
@@ -260,6 +260,54 @@ Searchable list for one-off or exception assignments
 | Phase 8 | Production Ordering | ⬜ Pending |
 | Phase 9 | Projection Planning | ⬜ Pending |
 | Phase 10 | Tasting / Event Management | ⬜ Pending |
+
+---
+
+## Phase 1 — Completed Features
+
+### Authentication
+- Branded productERP login page, mobile-first
+- Case insensitive username login
+- Role-based redirect after login
+- Logout redirects to login page
+- Forgot password link stubbed
+
+### Role-Based Dashboard
+- Single adaptive dashboard template that changes by role
+- Welcome message with user first name, role, and company name
+- Role-appropriate navigation for all 7 roles
+- Hamburger nav on mobile
+- Placeholder pages for features not yet built
+
+### User Management
+- Delegated user creation — users can create roles at or
+  below their own level
+- Role dropdown defaults to "Select Role" blank option
+- Company auto-assigned based on creator's company
+- User list view with search and filter by name or role
+- Mobile-optimized user list — role and status displayed
+  under email address to eliminate horizontal scrolling
+- Edit user — all fields except password
+- Deactivate/reactivate user
+- Password change as separate action
+- Supplier Admin and Sales Manager can reset other
+  users' passwords
+
+### Access Control
+- All pages require authentication
+- Role-based access enforced on every view
+- Friendly "Access Denied" page for unauthorized access
+- Tenant scoping enforced — users only see their
+  company's data
+
+### My Profile
+- View and edit own information
+- Change own password
+
+### UI Notes
+- Tagline updated to "Product Operations Platform"
+  across all templates
+- Username stored and matched in lowercase throughout
 
 ---
 
@@ -285,5 +333,5 @@ Searchable list for one-off or exception assignments
 
 ---
 
-*Last updated: February 2026*
+*Last updated: February 22, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*
