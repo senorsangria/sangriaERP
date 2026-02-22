@@ -5,10 +5,8 @@
 {% block content %}
 
 <div class="mb-4">
-  <a href="{% if brand %}{% url 'brand_detail' brand.pk %}{% else %}{% url 'brand_list' %}{% endif %}"
-     class="text-muted text-decoration-none small">
-    <i class="bi bi-arrow-left me-1"></i>
-    {% if brand %}Back to {{ brand.name }}{% else %}Back to Brands{% endif %}
+  <a href="{% url 'brand_list' %}" class="text-muted text-decoration-none small">
+    <i class="bi bi-arrow-left me-1"></i>Back to Brands
   </a>
   <h1 class="h3 mb-0 fw-bold mt-1">{{ form_title }}</h1>
 </div>
@@ -62,10 +60,7 @@
             <button type="submit" class="btn btn-primary">
               <i class="bi bi-check-lg me-1"></i>Save Brand
             </button>
-            <a href="{% if brand %}{% url 'brand_detail' brand.pk %}{% else %}{% url 'brand_list' %}{% endif %}"
-               class="btn btn-outline-secondary">
-              Cancel
-            </a>
+            <a href="{% url 'brand_list' %}" class="btn btn-outline-secondary">Cancel</a>
           </div>
         </form>
       </div>

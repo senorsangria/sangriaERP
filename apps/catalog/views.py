@@ -76,7 +76,7 @@ def brand_edit(request, pk):
         if form.is_valid():
             form.save()
             messages.success(request, f'Brand "{brand.name}" has been updated.')
-            return redirect('brand_detail', pk=brand.pk)
+            return redirect('brand_list')
     else:
         form = BrandForm(instance=brand, company=request.user.company)
 

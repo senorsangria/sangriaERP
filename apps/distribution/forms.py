@@ -4,8 +4,29 @@ Forms for distribution: Distributor CRUD.
 from django import forms
 from .models import Distributor
 
+US_STATE_CHOICES = [
+    ('', '— Select State —'),
+    ('AL', 'AL'), ('AK', 'AK'), ('AZ', 'AZ'), ('AR', 'AR'), ('CA', 'CA'),
+    ('CO', 'CO'), ('CT', 'CT'), ('DE', 'DE'), ('FL', 'FL'), ('GA', 'GA'),
+    ('HI', 'HI'), ('ID', 'ID'), ('IL', 'IL'), ('IN', 'IN'), ('IA', 'IA'),
+    ('KS', 'KS'), ('KY', 'KY'), ('LA', 'LA'), ('ME', 'ME'), ('MD', 'MD'),
+    ('MA', 'MA'), ('MI', 'MI'), ('MN', 'MN'), ('MS', 'MS'), ('MO', 'MO'),
+    ('MT', 'MT'), ('NE', 'NE'), ('NV', 'NV'), ('NH', 'NH'), ('NJ', 'NJ'),
+    ('NM', 'NM'), ('NY', 'NY'), ('NC', 'NC'), ('ND', 'ND'), ('OH', 'OH'),
+    ('OK', 'OK'), ('OR', 'OR'), ('PA', 'PA'), ('RI', 'RI'), ('SC', 'SC'),
+    ('SD', 'SD'), ('TN', 'TN'), ('TX', 'TX'), ('UT', 'UT'), ('VT', 'VT'),
+    ('VA', 'VA'), ('WA', 'WA'), ('WV', 'WV'), ('WI', 'WI'), ('WY', 'WY'),
+    ('DC', 'DC'),
+]
+
 
 class DistributorForm(forms.ModelForm):
+    state = forms.ChoiceField(
+        choices=US_STATE_CHOICES,
+        required=False,
+        widget=forms.Select(attrs={'class': 'form-select'}),
+    )
+
     class Meta:
         model = Distributor
         fields = ['name', 'address', 'city', 'state', 'notes', 'is_active']
@@ -13,7 +34,6 @@ class DistributorForm(forms.ModelForm):
             'name': forms.TextInput(attrs={'class': 'form-control'}),
             'address': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
             'city': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
-            'state': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
             'notes': forms.Textarea(attrs={'class': 'form-control', 'rows': 3, 'placeholder': 'Optional'}),
             'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
