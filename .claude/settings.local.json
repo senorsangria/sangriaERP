@@ -13,7 +13,15 @@
       "Bash(nix-shell -p python313 python313Packages.pip --run \"\nexport PYTHONPATH=\\\\$HOME/.local/lib/python3.13/site-packages:\\\\$PYTHONPATH\nSECRET_KEY=test-key-for-check DEBUG=True DATABASE_URL=sqlite:///test.db python3 manage.py migrate 2>&1\n\" 2>/dev/null)",
       "Bash(nix-shell -p python313 python313Packages.pip --run \"\nexport PYTHONPATH=\\\\$HOME/.local/lib/python3.13/site-packages:\\\\$PYTHONPATH\nSECRET_KEY=test-key-for-check DEBUG=True DATABASE_URL=sqlite:///test.db python3 manage.py seed_data 2>&1\n\" 2>/dev/null)",
       "Bash(nix-shell -p python313 python313Packages.pip --run \"\nexport PYTHONPATH=\\\\$HOME/.local/lib/python3.13/site-packages:\\\\$PYTHONPATH\nSECRET_KEY=test-key-for-check DEBUG=True DATABASE_URL=sqlite:///test.db python3 manage.py check --deploy 2>&1\n\" 2>/dev/null)",
-      "Bash(nix-shell -p python313 --run \"python3 -c \\\\\"from django.core.management.utils import get_random_secret_key; print\\(get_random_secret_key\\(\\)\\)\\\\\"\" 2>/dev/null)"
+      "Bash(nix-shell -p python313 --run \"python3 -c \\\\\"from django.core.management.utils import get_random_secret_key; print\\(get_random_secret_key\\(\\)\\)\\\\\"\" 2>/dev/null)",
+      "Bash(git add PRODUCT_DECISIONS.md && git commit -m \"Add PRODUCT_DECISIONS.md - living product documentation\" && git push)",
+      "Bash(find /home/runner/workspace/apps -name \"admin.py\" -exec echo \"=== {} ===\" \\\\; -exec cat {} \\\\;)",
+      "Bash(tree -L 3 -I '__pycache__|*.pyc|node_modules|.git|staticfiles' /home/runner/workspace 2>/dev/null || find /home/runner/workspace -type f -name \"*.py\" -o -type d | grep -v __pycache__ | grep -v .git | grep -v node_modules | sort | head -50)",
+      "Bash(python manage.py makemigrations core --name \"add_phone_and_created_by_to_user\" 2>&1)",
+      "Bash(export PYTHONPATH=\"$HOME/.local/lib/python3.13/site-packages:$PYTHONPATH\" && python manage.py makemigrations core --name \"add_phone_and_created_by_to_user\" 2>&1)",
+      "Bash(export PYTHONPATH=\"$HOME/.local/lib/python3.13/site-packages:$PYTHONPATH\" && python manage.py migrate 2>&1)",
+      "Bash(export PYTHONPATH=\"$HOME/.local/lib/python3.13/site-packages:$PYTHONPATH\" && python manage.py check 2>&1)",
+      "Bash(git add -A && git status)"
     ]
   }
 }

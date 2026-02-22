@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}Users{% endblock %}
+
+{% block content %}
+
+<!-- Page header -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 mb-0 fw-bold">Users</h1>
+    <p class="text-muted small mb-0">
+      {% if user.is_supplier_admin or user.is_saas_admin %}All users{% else %}Users you manage{% endif %}
+    </p>
+  </div>
+  {% if can_create %}
+  <a href="{% url 'user_create' %}" class="btn btn-primary">
+    <i class="bi bi-person-plus me-1"></i>Add User
+  </a>
+  {% endif %}
+</div>
+
+<!-- Search & filter bar -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body py-3">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-12 col-sm">
+        <label class="form-label small text-muted mb-1">Search</label>
+        <div class="input-group input-group-sm">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input
+            type="text"
+            name="q"
+            class="form-control"
+            placeholder="Name, email, or username…"
+            value="{{ search }}"
+          >
+        </div>
+      </div>
+      <div class="col-12 col-sm-auto" style="min-width: 180px;">
+        <label class="form-label small text-muted mb-1">Role</label>
+        <select name="role" class="form-select form-select-sm">
+          <option value="">All roles</option>
+          {% for value, label in role_choices %}
+          <option value="{{ value }}" {% if role_filter == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-sm-auto">
+        <button type="submit" class="btn btn-outline-primary btn-sm w-100 w-sm-auto">Filter</button>
+        {% if search or role_filter %}
+        <a href="{% url 'user_list' %}" class="btn btn-outline-secondary btn-sm ms-1">Clear</a>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- User table -->
+{% if users %}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>Name</th>
+          <th>Role</th>
+          <th class="d-none d-md-table-cell">Email</th>
+          <th class="d-none d-lg-table-cell">Phone</th>
+          <th>Status</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td>
+            <div class="fw-medium">{{ u.get_full_name|default:u.username }}</div>
+            <div class="text-muted small d-md-none">{{ u.email }}</div>
+          </td>
+          <td>
+            <span class="badge
+              {% if u.is_supplier_admin %}bg-danger
+              {% elif u.is_sales_manager %}bg-primary
+              {% elif u.is_territory_manager %}bg-info
+              {% elif u.is_ambassador_manager %}bg-warning text-dark
+              {% elif u.is_ambassador %}bg-success
+              {% elif u.is_distributor_contact %}bg-secondary
+              {% else %}bg-dark{% endif %}
+            ">
+              {{ u.get_role_display }}
+            </span>
+          </td>
+          <td class="d-none d-md-table-cell text-muted small">{{ u.email }}</td>
+          <td class="d-none d-lg-table-cell text-muted small">{{ u.phone|default:"—" }}</td>
+          <td>
+            {% if u.is_active %}
+            <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
+            {% else %}
+            <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+            <div class="d-flex gap-1 justify-content-end flex-wrap">
+              <a href="{% url 'user_edit' u.pk %}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
+              </a>
+              {% if user.role in "saas_admin supplier_admin sales_manager" %}
+              <a href="{% url 'user_password_reset' u.pk %}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-key d-sm-none"></i>
+                <span class="d-none d-sm-inline">Reset PW</span>
+              </a>
+              {% endif %}
+              {% if u.pk != user.pk %}
+              <form method="post" action="{% url 'user_deactivate' u.pk %}" class="d-inline">
+                {% csrf_token %}
+                {% if u.is_active %}
+                <button type="submit" class="btn btn-outline-danger btn-sm"
+                  onclick="return confirm('Deactivate {{ u.get_full_name|default:u.username|escapejs }}?')">
+                  <i class="bi bi-person-dash d-sm-none"></i>
+                  <span class="d-none d-sm-inline">Deactivate</span>
+                </button>
+                {% else %}
+                <button type="submit" class="btn btn-outline-success btn-sm"
+                  onclick="return confirm('Reactivate {{ u.get_full_name|default:u.username|escapejs }}?')">
+                  <i class="bi bi-person-check d-sm-none"></i>
+                  <span class="d-none d-sm-inline">Reactivate</span>
+                </button>
+                {% endif %}
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<p class="text-muted small mt-2">{{ users|length }} user{{ users|length|pluralize }} found</p>
+
+{% else %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-people fs-1 text-muted d-block mb-3"></i>
+    <h5 class="fw-semibold">No users found</h5>
+    <p class="text-muted mb-3">
+      {% if search or role_filter %}
+        No users match your search criteria.
+      {% else %}
+        No users have been created yet.
+      {% endif %}
+    </p>
+    {% if can_create %}
+    <a href="{% url 'user_create' %}" class="btn btn-primary">
+      <i class="bi bi-person-plus me-1"></i>Add First User
+    </a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

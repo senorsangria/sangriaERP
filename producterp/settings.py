@@ -165,3 +165,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/login/'
+
+# ---------------------------------------------------------------------------
+# Message tags — map Django 'error' level to Bootstrap 'danger' class
+# ---------------------------------------------------------------------------
+from django.contrib.messages import constants as message_constants
+MESSAGE_TAGS = {
+    message_constants.ERROR: 'danger',
+}

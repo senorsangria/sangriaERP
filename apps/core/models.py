@@ -94,6 +94,18 @@ class User(AbstractUser, TimeStampedModel):
     # Territory Managers: free-text territory description / label
     territory = models.CharField(max_length=255, blank=True)
 
+    # Contact phone number (optional for all roles)
+    phone = models.CharField(max_length=50, blank=True)
+
+    # Tracks who created this user — enables delegated management chain
+    created_by = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_users',
+    )
+
     # Many-to-many assignments (populated as needed per role)
     # These use string references to avoid circular imports.
     assigned_distributors = models.ManyToManyField(

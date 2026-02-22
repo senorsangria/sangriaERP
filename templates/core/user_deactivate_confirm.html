@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Confirm Deactivation{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+  <div class="col-12 col-sm-8 col-md-6 col-lg-5">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center p-5">
+        <div class="rounded-circle bg-danger bg-opacity-10 p-3 d-inline-block mb-3">
+          <i class="bi bi-person-dash fs-2 text-danger"></i>
+        </div>
+        <h4 class="fw-semibold mb-2">
+          {% if target.is_active %}Deactivate User{% else %}Reactivate User{% endif %}
+        </h4>
+        <p class="text-muted mb-4">
+          {% if target.is_active %}
+          Are you sure you want to deactivate
+          <strong>{{ target.get_full_name|default:target.username }}</strong>?
+          They will no longer be able to sign in.
+          {% else %}
+          Reactivate <strong>{{ target.get_full_name|default:target.username }}</strong>?
+          They will regain access to the system.
+          {% endif %}
+        </p>
+        <form method="post">
+          {% csrf_token %}
+          <div class="d-flex gap-2 justify-content-center">
+            <a href="{% url 'user_list' %}" class="btn btn-outline-secondary">Cancel</a>
+            <button type="submit" class="btn {% if target.is_active %}btn-danger{% else %}btn-success{% endif %}">
+              {% if target.is_active %}
+              <i class="bi bi-person-dash me-1"></i>Yes, Deactivate
+              {% else %}
+              <i class="bi bi-person-check me-1"></i>Yes, Reactivate
+              {% endif %}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

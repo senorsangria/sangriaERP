@@ -21,7 +21,9 @@ class UserAdmin(BaseUserAdmin):
             'fields': (
                 'company',
                 'role',
+                'phone',
                 'territory',
+                'created_by',
                 'assigned_distributors',
                 'assigned_accounts',
                 'managed_ambassadors',

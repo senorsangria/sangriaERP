@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}My Profile{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+  <h1 class="h3 mb-0 fw-bold">My Profile</h1>
+  <div class="d-flex gap-2">
+    <a href="{% url 'profile_edit' %}" class="btn btn-outline-primary btn-sm">
+      <i class="bi bi-pencil me-1"></i>Edit Profile
+    </a>
+    <a href="{% url 'password_change' %}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-key me-1"></i>Change Password
+    </a>
+  </div>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-8">
+
+    <!-- Profile card -->
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body p-4">
+        <div class="d-flex align-items-center gap-4 mb-4">
+          <div class="rounded-circle bg-primary bg-opacity-10 d-flex align-items-center justify-content-center flex-shrink-0"
+               style="width:72px;height:72px;">
+            <i class="bi bi-person-fill fs-2 text-primary"></i>
+          </div>
+          <div>
+            <h4 class="mb-0 fw-semibold">{{ user.get_full_name|default:user.username }}</h4>
+            <span class="badge bg-primary mt-1">{{ user.get_role_display }}</span>
+            {% if user.company %}
+            <p class="text-muted small mb-0 mt-1">{{ user.company.name }}</p>
+            {% endif %}
+          </div>
+        </div>
+
+        <hr>
+
+        <div class="row g-3">
+          <div class="col-12 col-sm-6">
+            <div class="small text-muted text-uppercase fw-semibold mb-1" style="letter-spacing:.05em;">First Name</div>
+            <div>{{ user.first_name|default:"—" }}</div>
+          </div>
+          <div class="col-12 col-sm-6">
+            <div class="small text-muted text-uppercase fw-semibold mb-1" style="letter-spacing:.05em;">Last Name</div>
+            <div>{{ user.last_name|default:"—" }}</div>
+          </div>
+          <div class="col-12 col-sm-6">
+            <div class="small text-muted text-uppercase fw-semibold mb-1" style="letter-spacing:.05em;">Email Address</div>
+            <div>{{ user.email|default:"—" }}</div>
+          </div>
+          <div class="col-12 col-sm-6">
+            <div class="small text-muted text-uppercase fw-semibold mb-1" style="letter-spacing:.05em;">Phone Number</div>
+            <div>{{ user.phone|default:"—" }}</div>
+          </div>
+          <div class="col-12 col-sm-6">
+            <div class="small text-muted text-uppercase fw-semibold mb-1" style="letter-spacing:.05em;">Username</div>
+            <div class="font-monospace">{{ user.username }}</div>
+          </div>
+          <div class="col-12 col-sm-6">
+            <div class="small text-muted text-uppercase fw-semibold mb-1" style="letter-spacing:.05em;">Account Status</div>
+            {% if user.is_active %}
+            <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
+            {% else %}
+            <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
+            {% endif %}
+          </div>
+          {% if user.territory %}
+          <div class="col-12">
+            <div class="small text-muted text-uppercase fw-semibold mb-1" style="letter-spacing:.05em;">Territory</div>
+            <div>{{ user.territory }}</div>
+          </div>
+          {% endif %}
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Account info -->
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold border-bottom small text-muted">
+        <i class="bi bi-clock-history me-2"></i>Account Details
+      </div>
+      <div class="card-body">
+        <div class="row g-3 small">
+          <div class="col-12 col-sm-6">
+            <span class="text-muted">Member since</span><br>
+            <span>{{ user.date_joined|date:"N j, Y" }}</span>
+          </div>
+          <div class="col-12 col-sm-6">
+            <span class="text-muted">Last login</span><br>
+            <span>{{ user.last_login|date:"N j, Y g:i A"|default:"Never" }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}Edit User{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-center gap-3 mb-4">
+  <a href="{% url 'user_list' %}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left me-1"></i>Back
+  </a>
+  <div>
+    <h1 class="h3 mb-0 fw-bold">Edit User</h1>
+    <p class="text-muted small mb-0">{{ target.get_full_name|default:target.username }}</p>
+  </div>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-9 col-xl-8">
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      <!-- Personal info -->
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white fw-semibold border-bottom small text-muted">
+          <i class="bi bi-person me-2"></i>Personal Information
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-12 col-sm-6">
+              <label class="form-label fw-medium" for="{{ form.first_name.id_for_label }}">
+                First Name <span class="text-danger">*</span>
+              </label>
+              {{ form.first_name }}
+              {% if form.first_name.errors %}
+              <div class="text-danger small mt-1">{{ form.first_name.errors.0 }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-sm-6">
+              <label class="form-label fw-medium" for="{{ form.last_name.id_for_label }}">
+                Last Name <span class="text-danger">*</span>
+              </label>
+              {{ form.last_name }}
+              {% if form.last_name.errors %}
+              <div class="text-danger small mt-1">{{ form.last_name.errors.0 }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-sm-6">
+              <label class="form-label fw-medium" for="{{ form.email.id_for_label }}">
+                Email Address <span class="text-danger">*</span>
+              </label>
+              {{ form.email }}
+              {% if form.email.errors %}
+              <div class="text-danger small mt-1">{{ form.email.errors.0 }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-sm-6">
+              <label class="form-label fw-medium" for="{{ form.phone.id_for_label }}">Phone Number</label>
+              {{ form.phone }}
+              {% if form.phone.errors %}
+              <div class="text-danger small mt-1">{{ form.phone.errors.0 }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Account info -->
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white fw-semibold border-bottom small text-muted">
+          <i class="bi bi-person-badge me-2"></i>Account Details
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-12 col-sm-6">
+              <label class="form-label fw-medium" for="{{ form.username.id_for_label }}">
+                Username <span class="text-danger">*</span>
+              </label>
+              {{ form.username }}
+              {% if form.username.errors %}
+              <div class="text-danger small mt-1">{{ form.username.errors.0 }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-sm-6">
+              <label class="form-label fw-medium">Company</label>
+              <input type="text" class="form-control" value="{{ target.company.name|default:'—' }}" disabled>
+              <div class="form-text">Company cannot be changed here.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Role & status -->
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white fw-semibold border-bottom small text-muted">
+          <i class="bi bi-shield me-2"></i>Role &amp; Access
+        </div>
+        <div class="card-body">
+          <div class="row g-3 align-items-center">
+            <div class="col-12 col-sm-6">
+              <label class="form-label fw-medium" for="{{ form.role.id_for_label }}">Role</label>
+              {{ form.role }}
+              {% if form.role.errors %}
+              <div class="text-danger small mt-1">{{ form.role.errors.0 }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-sm-6">
+              <div class="form-check mt-sm-4">
+                {{ form.is_active }}
+                <label class="form-check-label fw-medium" for="{{ form.is_active.id_for_label }}">
+                  Active account
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Password reset link -->
+      {% if user.role in "saas_admin supplier_admin sales_manager" %}
+      <div class="alert alert-light border d-flex align-items-center gap-2 mb-3">
+        <i class="bi bi-key text-muted flex-shrink-0"></i>
+        <span class="small">
+          Need to reset this user's password?
+          <a href="{% url 'user_password_reset' target.pk %}">Reset password</a>
+        </span>
+      </div>
+      {% endif %}
+
+      <!-- Form errors -->
+      {% if form.non_field_errors %}
+      <div class="alert alert-danger mb-3">
+        {% for error in form.non_field_errors %}{{ error }}{% endfor %}
+      </div>
+      {% endif %}
+
+      <!-- Actions -->
+      <div class="d-flex gap-2 justify-content-end">
+        <a href="{% url 'user_list' %}" class="btn btn-outline-secondary">Cancel</a>
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-check-lg me-1"></i>Save Changes
+        </button>
+      </div>
+
+    </form>
+  </div>
+</div>
+
+{% endblock %}
