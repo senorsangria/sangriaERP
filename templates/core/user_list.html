@@ -63,10 +63,10 @@
       <thead class="table-light">
         <tr>
           <th>Name</th>
-          <th>Role</th>
+          <th class="d-none d-md-table-cell">Role</th>
           <th class="d-none d-md-table-cell">Email</th>
           <th class="d-none d-lg-table-cell">Phone</th>
-          <th>Status</th>
+          <th class="d-none d-md-table-cell">Status</th>
           <th class="text-end">Actions</th>
         </tr>
       </thead>
@@ -76,8 +76,24 @@
           <td>
             <div class="fw-medium">{{ u.get_full_name|default:u.username }}</div>
             <div class="text-muted small d-md-none">{{ u.email }}</div>
+            <div class="d-md-none mt-1">
+              <span class="badge
+                {% if u.is_supplier_admin %}bg-danger
+                {% elif u.is_sales_manager %}bg-primary
+                {% elif u.is_territory_manager %}bg-info
+                {% elif u.is_ambassador_manager %}bg-warning text-dark
+                {% elif u.is_ambassador %}bg-success
+                {% elif u.is_distributor_contact %}bg-secondary
+                {% else %}bg-dark{% endif %}
+              ">{{ u.get_role_display }}</span>
+              {% if u.is_active %}
+              <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 ms-1">Active</span>
+              {% else %}
+              <span class="badge bg-secondary bg-opacity-10 text-secondary border ms-1">Inactive</span>
+              {% endif %}
+            </div>
           </td>
-          <td>
+          <td class="d-none d-md-table-cell">
             <span class="badge
               {% if u.is_supplier_admin %}bg-danger
               {% elif u.is_sales_manager %}bg-primary
@@ -92,7 +108,7 @@
           </td>
           <td class="d-none d-md-table-cell text-muted small">{{ u.email }}</td>
           <td class="d-none d-lg-table-cell text-muted small">{{ u.phone|default:"—" }}</td>
-          <td>
+          <td class="d-none d-md-table-cell">
             {% if u.is_active %}
             <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
             {% else %}

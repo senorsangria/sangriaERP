@@ -108,7 +108,9 @@ def login_view(request):
 
     error = None
     if request.method == 'POST':
-        form = AuthenticationForm(request, data=request.POST)
+        data = request.POST.copy()
+        data['username'] = data.get('username', '').lower()
+        form = AuthenticationForm(request, data=data)
         if form.is_valid():
             user = form.get_user()
             if not user.is_active:

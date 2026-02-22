@@ -79,9 +79,10 @@ class UserCreateForm(forms.ModelForm):
         # Limit role choices to what this creator is allowed to assign
         if creator:
             allowed = CREATABLE_ROLES.get(creator.role, [])
-            self.fields['role'].choices = [
+            self.fields['role'].choices = [('', 'Select Role')] + [
                 (r, label) for r, label in User.Role.choices if r in allowed
             ]
+            self.fields['role'].initial = ''
 
             # SaaS Admin needs to pick a company; everyone else inherits creator's company
             if creator.is_saas_admin:
@@ -98,8 +99,14 @@ class UserCreateForm(forms.ModelForm):
         self.fields['phone'].required = False
         self.fields['is_active'].initial = True
 
+    def clean_role(self):
+        role = self.cleaned_data.get('role')
+        if not role:
+            raise forms.ValidationError('Please select a role.')
+        return role
+
     def clean_username(self):
-        username = self.cleaned_data.get('username')
+        username = self.cleaned_data.get('username', '').lower()
         if User.objects.filter(username=username).exists():
             raise forms.ValidationError('This username is already taken.')
         return username
