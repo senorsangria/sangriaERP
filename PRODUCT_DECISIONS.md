@@ -320,6 +320,25 @@ Searchable list for one-off or exception assignments
 - Profile photos on user accounts
 - Mobile app (native) — current approach is responsive web
 
+### Distributor CRM (Future)
+- Distributors will eventually have contacts associated
+  to them — people we interact with regularly such as
+  portfolio managers and distributor sales managers
+- This CRM feature for distributors should be built at
+  the same time as the CRM features for accounts (Phase 5)
+- Contact fields will include at minimum: name, title,
+  email, phone
+
+### Distributor Sales Rep Tagging (Future)
+- Over time we will learn which distributor sales reps
+  are responsible for which retail accounts
+- The ability to tag a distributor sales rep to an
+  account will allow us to generate reports by rep
+- This data will help identify ways to help those reps
+  improve sales performance in their accounts
+- This feature should be considered when building
+  account-level CRM and reporting features
+
 ---
 
 ## Open Questions & Future Considerations
