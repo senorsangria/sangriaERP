@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block title %}{{ distributor.name }}{% endblock %}
+
+{% block content %}
+
+<!-- Page header -->
+<div class="mb-4">
+  <a href="{% url 'distributor_list' %}" class="text-muted text-decoration-none small">
+    <i class="bi bi-arrow-left me-1"></i>Back to Distributors
+  </a>
+  <div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mt-1">
+    <div>
+      <h1 class="h3 mb-0 fw-bold">{{ distributor.name }}</h1>
+      {% if distributor.city or distributor.state %}
+      <p class="text-muted mb-0">
+        {{ distributor.city }}{% if distributor.city and distributor.state %}, {% endif %}{{ distributor.state }}
+      </p>
+      {% endif %}
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{% url 'distributor_edit' distributor.pk %}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-pencil me-1"></i>Edit
+      </a>
+      <form method="post" action="{% url 'distributor_toggle' distributor.pk %}" class="d-inline">
+        {% csrf_token %}
+        {% if distributor.is_active %}
+        <button type="submit" class="btn btn-outline-danger btn-sm"
+          onclick="return confirm('Deactivate {{ distributor.name|escapejs }}?')">
+          <i class="bi bi-dash-circle me-1"></i>Deactivate
+        </button>
+        {% else %}
+        <button type="submit" class="btn btn-outline-success btn-sm"
+          onclick="return confirm('Reactivate {{ distributor.name|escapejs }}?')">
+          <i class="bi bi-check-circle me-1"></i>Reactivate
+        </button>
+        {% endif %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Distributor info -->
+<div class="row g-4 mb-5">
+  <div class="col-12 col-lg-5">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent fw-semibold">Distributor Details</div>
+      <div class="card-body">
+        <dl class="mb-0">
+          <div class="row mb-2">
+            <dt class="col-4 text-muted fw-normal small">Status</dt>
+            <dd class="col-8 mb-0">
+              {% if distributor.is_active %}
+              <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
+              {% else %}
+              <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
+              {% endif %}
+            </dd>
+          </div>
+          {% if distributor.address %}
+          <div class="row mb-2">
+            <dt class="col-4 text-muted fw-normal small">Address</dt>
+            <dd class="col-8 mb-0 small">{{ distributor.address }}</dd>
+          </div>
+          {% endif %}
+          {% if distributor.city or distributor.state %}
+          <div class="row mb-2">
+            <dt class="col-4 text-muted fw-normal small">City / State</dt>
+            <dd class="col-8 mb-0 small">
+              {{ distributor.city }}{% if distributor.city and distributor.state %}, {% endif %}{{ distributor.state }}
+            </dd>
+          </div>
+          {% endif %}
+          {% if distributor.notes %}
+          <div class="row mb-2">
+            <dt class="col-4 text-muted fw-normal small">Notes</dt>
+            <dd class="col-8 mb-0 small">{{ distributor.notes|linebreaksbr }}</dd>
+          </div>
+          {% endif %}
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Accounts section -->
+<div class="mb-5">
+  <h2 class="h5 fw-bold mb-3">Accounts</h2>
+  {% if accounts %}
+  <div class="card border-0 shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Account Name</th>
+            <th class="d-none d-md-table-cell">City</th>
+            <th class="d-none d-md-table-cell">State</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for account in accounts %}
+          <tr>
+            <td>{{ account.name }}</td>
+            <td class="d-none d-md-table-cell text-muted small">{{ account.city|default:"—" }}</td>
+            <td class="d-none d-md-table-cell text-muted small">{{ account.state|default:"—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card border-0 shadow-sm">
+    <div class="card-body text-center py-4 text-muted">
+      <i class="bi bi-shop fs-2 d-block mb-2"></i>
+      No accounts imported yet.
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Import history section -->
+<div class="mb-4">
+  <h2 class="h5 fw-bold mb-3">Import History</h2>
+  <div class="card border-0 shadow-sm">
+    <div class="card-body text-center py-4 text-muted">
+      <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>
+      No import history yet.
+    </div>
+  </div>
+</div>
+
+{% endblock %}

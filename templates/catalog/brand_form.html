@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}{{ form_title }}{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <a href="{% if brand %}{% url 'brand_detail' brand.pk %}{% else %}{% url 'brand_list' %}{% endif %}"
+     class="text-muted text-decoration-none small">
+    <i class="bi bi-arrow-left me-1"></i>
+    {% if brand %}Back to {{ brand.name }}{% else %}Back to Brands{% endif %}
+  </a>
+  <h1 class="h3 mb-0 fw-bold mt-1">{{ form_title }}</h1>
+</div>
+
+<div class="row">
+  <div class="col-12 col-lg-6">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body p-4">
+        <form method="post" novalidate>
+          {% csrf_token %}
+
+          {% if form.non_field_errors %}
+          <div class="alert alert-danger">
+            {% for error in form.non_field_errors %}{{ error }}{% endfor %}
+          </div>
+          {% endif %}
+
+          <div class="mb-3">
+            <label for="{{ form.name.id_for_label }}" class="form-label fw-medium">
+              Brand Name <span class="text-danger">*</span>
+            </label>
+            {{ form.name }}
+            {% if form.name.errors %}
+            <div class="invalid-feedback d-block">{{ form.name.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label for="{{ form.description.id_for_label }}" class="form-label fw-medium">
+              Description
+            </label>
+            {{ form.description }}
+            {% if form.description.errors %}
+            <div class="invalid-feedback d-block">{{ form.description.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <div class="mb-4">
+            <div class="form-check">
+              {{ form.is_active }}
+              <label class="form-check-label fw-medium" for="{{ form.is_active.id_for_label }}">
+                Active
+              </label>
+            </div>
+            {% if form.is_active.errors %}
+            <div class="invalid-feedback d-block">{{ form.is_active.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-check-lg me-1"></i>Save Brand
+            </button>
+            <a href="{% if brand %}{% url 'brand_detail' brand.pk %}{% else %}{% url 'brand_list' %}{% endif %}"
+               class="btn btn-outline-secondary">
+              Cancel
+            </a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

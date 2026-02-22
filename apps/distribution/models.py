@@ -24,9 +24,12 @@ class Distributor(TimeStampedModel):
         related_name='distributors',
     )
     name = models.CharField(max_length=255)
+    address = models.CharField(max_length=500, blank=True)
+    city = models.CharField(max_length=100, blank=True)
+    state = models.CharField(max_length=50, blank=True)
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=50, blank=True)
-    address = models.CharField(max_length=500, blank=True)
+    notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:

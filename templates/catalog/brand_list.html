@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Brands{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 mb-0 fw-bold">Brands</h1>
+    <p class="text-muted small mb-0">Product brands for {{ user.company.name }}</p>
+  </div>
+  <a href="{% url 'brand_create' %}" class="btn btn-primary">
+    <i class="bi bi-plus-lg me-1"></i>Add Brand
+  </a>
+</div>
+
+{% if brands %}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>Brand Name</th>
+          <th class="d-none d-md-table-cell text-center">Items</th>
+          <th class="d-none d-sm-table-cell text-center">Status</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for brand in brands %}
+        <tr>
+          <td>
+            <div class="fw-medium">
+              <a href="{% url 'brand_detail' brand.pk %}" class="text-decoration-none text-dark">
+                {{ brand.name }}
+              </a>
+            </div>
+            {% if brand.description %}
+            <div class="text-muted small d-none d-md-block">{{ brand.description|truncatechars:60 }}</div>
+            {% endif %}
+            <!-- Mobile: show item count + status under name -->
+            <div class="d-sm-none mt-1 d-flex gap-2 align-items-center">
+              <span class="text-muted small">{{ brand.item_count }} item{{ brand.item_count|pluralize }}</span>
+              {% if brand.is_active %}
+              <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size:.7rem;">Active</span>
+              {% else %}
+              <span class="badge bg-secondary bg-opacity-10 text-secondary border" style="font-size:.7rem;">Inactive</span>
+              {% endif %}
+            </div>
+          </td>
+          <td class="d-none d-md-table-cell text-center text-muted small">
+            {{ brand.item_count }}
+          </td>
+          <td class="d-none d-sm-table-cell text-center">
+            {% if brand.is_active %}
+            <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
+            {% else %}
+            <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+            <div class="d-flex gap-1 justify-content-end flex-wrap">
+              <a href="{% url 'brand_edit' brand.pk %}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
+              </a>
+              <form method="post" action="{% url 'brand_toggle' brand.pk %}" class="d-inline">
+                {% csrf_token %}
+                {% if brand.is_active %}
+                <button type="submit" class="btn btn-outline-danger btn-sm"
+                  onclick="return confirm('Deactivate {{ brand.name|escapejs }}?')">
+                  <i class="bi bi-dash-circle d-sm-none"></i>
+                  <span class="d-none d-sm-inline">Deactivate</span>
+                </button>
+                {% else %}
+                <button type="submit" class="btn btn-outline-success btn-sm"
+                  onclick="return confirm('Reactivate {{ brand.name|escapejs }}?')">
+                  <i class="bi bi-check-circle d-sm-none"></i>
+                  <span class="d-none d-sm-inline">Reactivate</span>
+                </button>
+                {% endif %}
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<p class="text-muted small mt-2">{{ brands|length }} brand{{ brands|length|pluralize }}</p>
+
+{% else %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-bookmark fs-1 text-muted d-block mb-3"></i>
+    <h5 class="fw-semibold">No brands yet</h5>
+    <p class="text-muted mb-3">Add your first brand to get started.</p>
+    <a href="{% url 'brand_create' %}" class="btn btn-primary">
+      <i class="bi bi-plus-lg me-1"></i>Add Brand
+    </a>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

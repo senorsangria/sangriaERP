@@ -251,7 +251,8 @@ Searchable list for one-off or exception assignments
 |-------|-------------|--------|
 | Foundation | Project setup, data models, admin, seed data | ✅ Complete |
 | Phase 1 | Login, User Accounts, Roles | ✅ Complete |
-| Phase 2 | Distributors, Import Accounts, Import Sales Data (VIP) | 🔄 Next Up |
+| Phase 2.1 | Brand & Item Management, Distributor Management | ✅ Complete |
+| Phase 2.2 | Import Accounts, Import Sales Data (VIP) | 🔄 Next Up |
 | Phase 3 | Sales Views | ⬜ Pending |
 | Phase 4 | Saving Sales Views | ⬜ Pending |
 | Phase 5 | CRM — Accounts (contacts, notes) | ⬜ Pending |
@@ -351,6 +352,32 @@ Searchable list for one-off or exception assignments
   assignments based on attribute rules (dynamic assignment)?
 
 ---
+
+---
+
+## Phase 2.1 — Completed Features
+
+### Brand Management (Supplier Admin only)
+- Brand list view: name, item count, active status, edit/deactivate actions
+- Brand create/edit form: name (required, unique within company), description, active flag
+- Brand detail page: brand info + all items with inline actions
+- Company auto-assigned from logged-in user
+
+### Item Management (within Brand context)
+- Item list within brand detail: name, item code, SKU, active status, edit/deactivate
+- Item create/edit form: name, item code (unique within brand), SKU number (optional), description, active
+- Existing seed data (Señor Sangria, Backyard Barrel Co) fully editable through these interfaces
+
+### Distributor Management (Supplier Admin only)
+- Distributor list view with name search: name, city, state, active status, view/edit/deactivate
+- Distributor create/edit form: name (required, unique within company), address, city, state, notes, active
+- Distributor detail page: full info, accounts list (placeholder until Phase 2.2), import history (placeholder)
+- Distributor model extended with city, state, notes fields (migration 0002)
+- No brand-distributor junction table created (relationship derived from sales data in future phase)
+
+### Navigation Updates
+- Supplier Admin sidebar: Brands and Distributors are now live links (removed "Soon" badges)
+- Mobile nav updated to match
 
 *Last updated: February 22, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*

@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}{{ brand.name }}{% endblock %}
+
+{% block content %}
+
+<!-- Page header -->
+<div class="mb-4">
+  <a href="{% url 'brand_list' %}" class="text-muted text-decoration-none small">
+    <i class="bi bi-arrow-left me-1"></i>Back to Brands
+  </a>
+  <div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mt-1">
+    <div>
+      <h1 class="h3 mb-0 fw-bold">{{ brand.name }}</h1>
+      {% if brand.description %}
+      <p class="text-muted mb-0">{{ brand.description }}</p>
+      {% endif %}
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{% url 'brand_edit' brand.pk %}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-pencil me-1"></i>Edit Brand
+      </a>
+      <form method="post" action="{% url 'brand_toggle' brand.pk %}" class="d-inline">
+        {% csrf_token %}
+        {% if brand.is_active %}
+        <button type="submit" class="btn btn-outline-danger btn-sm"
+          onclick="return confirm('Deactivate {{ brand.name|escapejs }}?')">
+          <i class="bi bi-dash-circle me-1"></i>Deactivate
+        </button>
+        {% else %}
+        <button type="submit" class="btn btn-outline-success btn-sm"
+          onclick="return confirm('Reactivate {{ brand.name|escapejs }}?')">
+          <i class="bi bi-check-circle me-1"></i>Reactivate
+        </button>
+        {% endif %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Brand info card -->
+<div class="row mb-4">
+  <div class="col-12 col-md-auto">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body py-3 px-4">
+        <div class="d-flex gap-4 flex-wrap">
+          <div>
+            <div class="text-muted small">Status</div>
+            {% if brand.is_active %}
+            <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
+            {% else %}
+            <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
+            {% endif %}
+          </div>
+          <div>
+            <div class="text-muted small">Items</div>
+            <div class="fw-semibold">{{ items|length }}</div>
+          </div>
+          <div>
+            <div class="text-muted small">Company</div>
+            <div class="fw-semibold">{{ brand.company.name }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Items section -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+  <h2 class="h5 fw-bold mb-0">Items</h2>
+  <a href="{% url 'item_create' brand.pk %}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-lg me-1"></i>Add Item
+  </a>
+</div>
+
+{% if items %}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>Item Name</th>
+          <th class="d-none d-sm-table-cell">Item Code</th>
+          <th class="d-none d-md-table-cell">SKU Number</th>
+          <th class="d-none d-sm-table-cell text-center">Status</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>
+            <div class="fw-medium">{{ item.name }}</div>
+            <!-- Mobile: show code + status under name -->
+            <div class="d-sm-none mt-1 d-flex gap-2 align-items-center flex-wrap">
+              <span class="text-muted small font-monospace">{{ item.item_code }}</span>
+              {% if item.sku_number %}
+              <span class="text-muted small">SKU: {{ item.sku_number }}</span>
+              {% endif %}
+              {% if item.is_active %}
+              <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size:.7rem;">Active</span>
+              {% else %}
+              <span class="badge bg-secondary bg-opacity-10 text-secondary border" style="font-size:.7rem;">Inactive</span>
+              {% endif %}
+            </div>
+          </td>
+          <td class="d-none d-sm-table-cell">
+            <span class="font-monospace small">{{ item.item_code }}</span>
+          </td>
+          <td class="d-none d-md-table-cell text-muted small">
+            {{ item.sku_number|default:"—" }}
+          </td>
+          <td class="d-none d-sm-table-cell text-center">
+            {% if item.is_active %}
+            <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
+            {% else %}
+            <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+            <div class="d-flex gap-1 justify-content-end flex-wrap">
+              <a href="{% url 'item_edit' brand.pk item.pk %}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
+              </a>
+              <form method="post" action="{% url 'item_toggle' brand.pk item.pk %}" class="d-inline">
+                {% csrf_token %}
+                {% if item.is_active %}
+                <button type="submit" class="btn btn-outline-danger btn-sm"
+                  onclick="return confirm('Deactivate {{ item.name|escapejs }}?')">
+                  <i class="bi bi-dash-circle d-sm-none"></i>
+                  <span class="d-none d-sm-inline">Deactivate</span>
+                </button>
+                {% else %}
+                <button type="submit" class="btn btn-outline-success btn-sm"
+                  onclick="return confirm('Reactivate {{ item.name|escapejs }}?')">
+                  <i class="bi bi-check-circle d-sm-none"></i>
+                  <span class="d-none d-sm-inline">Reactivate</span>
+                </button>
+                {% endif %}
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<p class="text-muted small mt-2">{{ items|length }} item{{ items|length|pluralize }}</p>
+
+{% else %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-upc fs-1 text-muted d-block mb-3"></i>
+    <h5 class="fw-semibold">No items yet</h5>
+    <p class="text-muted mb-3">Add items (SKUs) to this brand.</p>
+    <a href="{% url 'item_create' brand.pk %}" class="btn btn-primary">
+      <i class="bi bi-plus-lg me-1"></i>Add First Item
+    </a>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
