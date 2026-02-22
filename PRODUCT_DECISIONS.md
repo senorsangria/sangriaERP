@@ -428,6 +428,20 @@ is platform-agnostic)
 - Name changes are handled by the Account Conflict
   Detection tool (Phase 2.3)
 
+### Normalized Address Storage
+- Normalized address values are stored as separate fields
+  on the Account model, not calculated on the fly
+- Fields to add: address_normalized, city_normalized,
+  state_normalized
+- Original fields (address, city, state) are preserved
+  exactly as received for display purposes
+- Normalized fields are used only for matching and
+  conflict detection
+- Normalization rules: uppercase, trimmed whitespace,
+  standardized abbreviations (Street→ST, Avenue→AVE,
+  Boulevard→BLVD, Drive→DR, Road→RD, Lane→LN,
+  Court→CT, Place→PL), punctuation removed
+
 ### Duplicate Import Detection
 - If any sale date in the incoming file already
   exists in SalesRecord for that distributor,
