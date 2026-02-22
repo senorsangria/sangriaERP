@@ -67,10 +67,9 @@ on this project including AI coding assistants.
 | Spritz White 12oz | SprWhite12oz |
 
 ### Distributors
-- Distributor relationships exist at the Brand level, not Company level
-- Many-to-many relationship between Distributors and Brands
-- A Distributor can service multiple Brands
-- A Brand can have multiple Distributors
+- Distributor-brand relationship is derived from sales data,
+  no explicit junction table exists
+- A Distributor belongs to a Company (tenant)
 - Cross-tenant distributor sharing is a future consideration,
   not in scope now
 
@@ -99,8 +98,10 @@ on this project including AI coding assistants.
 
 ### Item Mapping
 - Scoped to Brand (which is scoped to Company)
-- When a VIP import contains an unrecognized item name, the import
-  completes and unrecognized items are queued for admin cleanup
+- If a sales data import contains an unrecognized item code,
+  the import is aborted — nothing is written to the database
+- The user is shown a clear list of unrecognized codes and told
+  to create the items in Brand Management before re-importing
 - Statuses: mapped, unmapped, ignored
 
 ---
@@ -204,9 +205,13 @@ Searchable list for one-off or exception assignments
 - Sample CSV files will be provided when this feature is built
 
 ### Import Behavior
-- Import completes even if unrecognized items are present
-- Unrecognized items are queued in ItemMapping for admin cleanup
-- Import does not pause or fail on unmapped items
+- If unrecognized item codes are present, the import is aborted
+  and nothing is written to the database
+- If any sale date in the file already exists for that distributor,
+  the import is aborted and nothing is written to the database
+- The user receives a clear error message in both cases
+- A clean file with all items pre-mapped is required before
+  an import will be accepted
 
 ### Account Import
 - Account lists also come from distributors
@@ -252,7 +257,8 @@ Searchable list for one-off or exception assignments
 | Foundation | Project setup, data models, admin, seed data | ✅ Complete |
 | Phase 1 | Login, User Accounts, Roles | ✅ Complete |
 | Phase 2.1 | Brand & Item Management, Distributor Management | ✅ Complete |
-| Phase 2.2 | Import Accounts, Import Sales Data (VIP) | 🔄 Next Up |
+| Phase 2.2 | Sales Data Import, Item Mapping, Batch History | ⬜ Pending |
+| Phase 2.3 | Account Conflict Detection & Merge Tool | ⬜ Pending |
 | Phase 3 | Sales Views | ⬜ Pending |
 | Phase 4 | Saving Sales Views | ⬜ Pending |
 | Phase 5 | CRM — Accounts (contacts, notes) | ⬜ Pending |
@@ -378,6 +384,130 @@ Searchable list for one-off or exception assignments
 ### Navigation Updates
 - Supplier Admin sidebar: Brands and Distributors are now live links (removed "Soon" badges)
 - Mobile nav updated to match
+
+---
+
+## Phase 2 — Design Decisions
+
+### Brand & Item Management
+- Full CRUD for Brands and Items
+- Supplier Admin only
+- Item Code must be unique within a Brand
+- Existing seed data (Señor Sangria, Backyard Barrel Co)
+  is editable through these interfaces
+
+### Distributor Management
+- Full CRUD for Distributors
+- Supplier Admin only
+- No explicit brand-distributor association table
+- Brand-distributor relationship is derived from
+  sales data, not stored as a separate record
+
+### Sales Data Import (formerly referred to as
+VIP Import — renamed to reflect that the format
+is platform-agnostic)
+- Import type is called "Sales Data Import"
+- Supplier Admin only
+- Distributor is selected before file upload
+- Performance approach: bulk_create in batches
+  of 500-1000 rows, all account matching done
+  in memory, single database transaction
+- Expected volume: 5,000 to 30,000 records per file
+- Historical data: 2-3 years imported across
+  multiple files, oldest to newest
+- One distributor at a time
+
+### Account Unique Identifier (Composite Key)
+- Unique key for account matching during import:
+  Normalized Address + City + State
+- Normalization means: uppercase, trimmed,
+  standardized abbreviations
+  (Street→ST, Avenue→AVE, etc.), no punctuation
+- Account Name is intentionally excluded from
+  the composite key because names change over time
+- Name changes are handled by the Account Conflict
+  Detection tool (Phase 2.3)
+
+### Duplicate Import Detection
+- If any sale date in the incoming file already
+  exists in SalesRecord for that distributor,
+  stop and abort — nothing written to database
+- Show clear error message identifying
+  conflicting dates
+
+### Import Abort on Unknown Item Codes
+- If any Item Name ID in the file does not have
+  an existing ItemMapping record for that
+  distributor, abort the import
+- Show clear message listing unrecognized codes
+- Tell user to create items in Brand Management
+  first then re-import
+- Nothing is written to the database on abort
+
+### Account Auto-Creation on Import
+- Accounts are auto-created from sales data
+  if no matching record exists
+- Matching uses normalized Address + City + State
+- Auto-created account fields: Name, Address,
+  City, State, Zip, Distributor, VIP Outlet ID
+  (reference only), County (or "Unknown"),
+  On/Off Premise (or "Unknown")
+- Auto-created flag set to True
+- Separate account records created per distributor
+- Master Account matching deferred to Phase 2.3
+
+### Merged Account Records
+- When accounts are merged in Phase 2.3, the
+  older duplicate record is kept but flagged
+  as merged
+- A merged_into foreign key on Account points
+  to the master record
+- A note field captures the reason for the merge
+- All report queries must exclude merged records
+- An active_accounts model manager will be built
+  to automatically filter out merged records so
+  report writers don't need to handle this manually
+- Historical sales from merged accounts are
+  attributed to the master account in reporting
+
+### Account Conflict Detection Tool (Phase 2.3)
+- Separate tool, not part of import process
+- Scans all accounts for potential duplicates
+  using fuzzy matching at 80% similarity threshold
+- Flags conflicts where same address but
+  different name, or same name but different address
+- Supplier Admin reviews each conflict and can:
+  * Merge (enter a note explaining why)
+  * Keep Separate (won't appear again)
+  * Ignore for now
+- On merge: older record flagged as merged,
+  master_account FK populated, note saved
+- Import historically oldest to newest so
+  newer records become the canonical version
+
+### Batch Import History
+- Supplier Admin only (Sales Managers cannot
+  view import history at this time)
+- Shows all imports with: date, distributor,
+  data date range, records imported, accounts
+  created, status
+- Delete batch with safe rollback
+- Safe delete: only removes auto-created accounts
+  with no other batch references
+- CRM data deleted along with account if removed
+  during rollback
+
+---
+
+## Deferred Features — Additions
+
+### Active Accounts Model Manager
+- An active_accounts custom manager will be
+  built on the Account model during Phase 2.3
+- Automatically excludes merged accounts
+  from all queries
+- All report features must use this manager
+  rather than the default objects manager
 
 *Last updated: February 22, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*
