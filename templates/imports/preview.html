@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Import Preview{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center mb-4">
+  <div>
+    <h2 class="mb-0 fw-bold">Import Preview</h2>
+    <p class="text-muted mb-0">Review the summary below, then confirm to run the import.</p>
+  </div>
+</div>
+
+<div class="row g-4">
+
+  <!-- Summary card -->
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-clipboard-data me-2"></i>Import Summary
+      </div>
+      <table class="table table-sm mb-0">
+        <tbody>
+          <tr>
+            <th class="ps-3 text-muted fw-normal" style="width:45%">Distributor</th>
+            <td class="fw-semibold">{{ pending.distributor_name }}</td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">File</th>
+            <td>{{ pending.filename }}</td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">Date Range</th>
+            <td>{{ preview.date_range_start }} → {{ preview.date_range_end }}</td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">Total Sale Records</th>
+            <td><span class="badge bg-primary fs-6">{{ preview.total_records|floatformat:"0" }}</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Account breakdown -->
+    <div class="card mt-3">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-shop me-2"></i>Accounts
+      </div>
+      <table class="table table-sm mb-0">
+        <tbody>
+          <tr>
+            <th class="ps-3 text-muted fw-normal" style="width:55%">Unique accounts in file</th>
+            <td>{{ preview.unique_accounts }}</td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">Already in system</th>
+            <td><span class="text-success">{{ preview.existing_accounts }}</span></td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">Will be auto-created</th>
+            <td>
+              {% if preview.new_accounts > 0 %}
+              <span class="badge bg-warning text-dark">{{ preview.new_accounts }} new</span>
+              {% else %}
+              <span class="text-muted">0</span>
+              {% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Confirm / Cancel -->
+    <div class="card mt-3">
+      <div class="card-body">
+        <p class="small text-muted mb-3">
+          Once confirmed, the import runs in a single transaction. If anything
+          fails, the entire import is rolled back — nothing will be partially saved.
+        </p>
+        <form method="post" class="d-flex gap-2">
+          {% csrf_token %}
+          <button type="submit" name="action" value="confirm" class="btn btn-success">
+            <i class="bi bi-check-circle me-1"></i>Confirm Import
+          </button>
+          <button type="submit" name="action" value="cancel" class="btn btn-outline-danger">
+            <i class="bi bi-x-circle me-1"></i>Cancel
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Item mappings -->
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-arrow-left-right me-2"></i>Item Code Mappings
+        <span class="badge bg-secondary ms-1">{{ preview.item_mappings|length }}</span>
+      </div>
+      {% if preview.item_mappings %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Raw Item Code</th>
+              <th>Maps To</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in preview.item_mappings %}
+            <tr>
+              <td><code>{{ m.code }}</code></td>
+              <td class="small">{{ m.mapped_to }}</td>
+              <td>
+                {% if m.status == 'mapped' %}
+                <span class="badge bg-success">Mapped</span>
+                {% elif m.status == 'ignored' %}
+                <span class="badge bg-secondary">Ignored</span>
+                {% else %}
+                <span class="badge bg-warning text-dark">Unmapped</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="card-body text-muted small">No item codes found.</div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

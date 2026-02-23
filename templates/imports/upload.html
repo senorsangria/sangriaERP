@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Sales Import{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center mb-4">
+  <div>
+    <h2 class="mb-0 fw-bold">Sales Data Import</h2>
+    <p class="text-muted mb-0">Select a distributor and upload a VIP sales data CSV export.</p>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-cloud-upload me-2"></i>Step 1 — Upload File
+      </div>
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data" novalidate>
+          {% csrf_token %}
+
+          {% for field in form %}
+          <div class="mb-3">
+            <label for="{{ field.id_for_label }}" class="form-label fw-semibold">
+              {{ field.label }}
+              {% if field.field.required %}<span class="text-danger">*</span>{% endif %}
+            </label>
+            {{ field }}
+            {% if field.help_text %}
+            <div class="form-text">{{ field.help_text }}</div>
+            {% endif %}
+            {% for error in field.errors %}
+            <div class="invalid-feedback d-block">{{ error }}</div>
+            {% endfor %}
+          </div>
+          {% endfor %}
+
+          <div class="d-flex gap-2 mt-4">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-arrow-right me-1"></i>Preview Import
+            </button>
+            <a href="{% url 'batch_list' %}" class="btn btn-outline-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6 mt-4 mt-lg-0">
+    <div class="card border-info">
+      <div class="card-header fw-semibold text-info-emphasis bg-info-subtle">
+        <i class="bi bi-info-circle me-2"></i>Before You Import
+      </div>
+      <div class="card-body small">
+        <p class="mb-2">The import tool will validate your file before writing any data. Two checks are run:</p>
+        <ol class="mb-3">
+          <li class="mb-1"><strong>Duplicate dates</strong> — if any sale dates in the file already exist for this distributor, the import is aborted.</li>
+          <li class="mb-1"><strong>Unknown item codes</strong> — if any Item Name ID values are not mapped, the import is aborted. Go to <a href="{% url 'mapping_list' %}">Item Mapping</a> to create mappings first.</li>
+        </ol>
+        <p class="mb-0 text-muted">Nothing is written to the database until you confirm on the preview screen.</p>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-table me-2"></i>Expected CSV Columns
+      </div>
+      <div class="card-body small p-0">
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Column</th>
+              <th>Required</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Retail Accounts</td><td><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td>Address</td><td><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td>City</td><td><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td>State</td><td><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td>Zip Code</td><td><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td>VIP Outlet ID</td><td><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td>Counties</td><td><span class="badge bg-secondary">Optional</span></td></tr>
+            <tr><td>OnOff Premises</td><td><span class="badge bg-secondary">Optional</span></td></tr>
+            <tr><td>Dates</td><td><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td>Item Names</td><td><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td>Item Name ID</td><td><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td><em>Quantity (last col)</em></td><td><span class="badge bg-danger">Required</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

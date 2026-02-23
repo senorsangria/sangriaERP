@@ -2,7 +2,6 @@
 Import models: ImportBatch, SalesRecord, ItemMapping.
 
 Import data (account lists, sales data) comes from distributor CSV exports.
-The actual CSV parsing logic will be built in a future feature phase.
 """
 from django.db import models
 from apps.core.models import TimeStampedModel
@@ -34,6 +33,8 @@ class ImportBatch(TimeStampedModel):
     brand = models.ForeignKey(
         'catalog.Brand',
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name='import_batches',
     )
     distributor = models.ForeignKey(
@@ -55,6 +56,15 @@ class ImportBatch(TimeStampedModel):
     filename = models.CharField(max_length=500)
     notes = models.TextField(blank=True)
 
+    # Date range of the data contained in this import
+    date_range_start = models.DateField(null=True, blank=True)
+    date_range_end = models.DateField(null=True, blank=True)
+
+    # Import statistics
+    records_imported = models.IntegerField(default=0)
+    accounts_created = models.IntegerField(default=0)
+    records_skipped = models.IntegerField(default=0)
+
     class Meta:
         verbose_name = 'Import Batch'
         verbose_name_plural = 'Import Batches'
@@ -67,6 +77,8 @@ class ImportBatch(TimeStampedModel):
 class SalesRecord(TimeStampedModel):
     """
     One line of distributor sales data: what a retailer purchased on a given date.
+
+    Quantity may be negative (returns/corrections).
     """
 
     company = models.ForeignKey(
@@ -90,7 +102,9 @@ class SalesRecord(TimeStampedModel):
         related_name='sales_records',
     )
     sale_date = models.DateField()
-    quantity = models.PositiveIntegerField()
+    quantity = models.IntegerField(
+        help_text='Quantity sold. May be negative for returns/corrections.',
+    )
 
     class Meta:
         verbose_name = 'Sales Record'
@@ -111,10 +125,16 @@ class SalesRecord(TimeStampedModel):
 
 class ItemMapping(TimeStampedModel):
     """
-    Maps a raw item name (as it appeared in an import file) to a catalog Item.
+    Maps a raw item code (as it appeared in an import file) to a catalog Item.
 
-    When an import contains an unrecognized item name, an ItemMapping record
-    is created with status=unmapped so an admin can review and resolve it.
+    Scoped to company + distributor + raw_item_name (unique together).
+    Mappings are per distributor — the same item code from different distributors
+    may map to different catalog items.
+
+    Statuses:
+    - unmapped: code seen but not yet resolved
+    - mapped: code resolved to a catalog Item
+    - ignored: code intentionally excluded from imports
     """
 
     class Status(models.TextChoices):
@@ -127,15 +147,25 @@ class ItemMapping(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name='item_mappings',
     )
+    distributor = models.ForeignKey(
+        'distribution.Distributor',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='item_mappings',
+        help_text='The distributor this mapping applies to.',
+    )
     brand = models.ForeignKey(
         'catalog.Brand',
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name='item_mappings',
-        help_text='Item mapping is scoped to a Brand within a Company.',
+        help_text='Brand context for filtering the mapped item dropdown.',
     )
     raw_item_name = models.CharField(
         max_length=500,
-        help_text='The item name exactly as it appeared in the import file.',
+        help_text='The item code exactly as it appeared in the import file.',
     )
     mapped_item = models.ForeignKey(
         'catalog.Item',
@@ -154,8 +184,8 @@ class ItemMapping(TimeStampedModel):
     class Meta:
         verbose_name = 'Item Mapping'
         verbose_name_plural = 'Item Mappings'
-        ordering = ['status', 'brand', 'raw_item_name']
-        unique_together = [['brand', 'raw_item_name']]
+        ordering = ['status', 'distributor', 'raw_item_name']
+        unique_together = [['company', 'distributor', 'raw_item_name']]
 
     def __str__(self):
         resolved = self.mapped_item.item_code if self.mapped_item else '(unmapped)'

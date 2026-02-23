@@ -153,6 +153,9 @@
           {% if user.is_supplier_admin %}
           <li class="nav-item"><a class="nav-link" href="{% url 'brand_list' %}"><i class="bi bi-bookmark me-1"></i>Brands</a></li>
           <li class="nav-item"><a class="nav-link" href="{% url 'distributor_list' %}"><i class="bi bi-truck me-1"></i>Distributors</a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'import_upload' %}"><i class="bi bi-cloud-upload me-1"></i>Sales Import</a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'mapping_list' %}"><i class="bi bi-arrow-left-right me-1"></i>Item Mapping</a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'batch_list' %}"><i class="bi bi-clock-history me-1"></i>Import History</a></li>
           {% endif %}
 
           {% if user.is_saas_admin %}
@@ -295,20 +298,24 @@
         </li>
         <li class="nav-section">Operations</li>
         <li class="nav-item">
-          <a class="nav-link placeholder-link" href="#" tabindex="-1">
-            <i class="bi bi-graph-up-arrow me-2"></i>Sales Data
-            <span class="soon-badge">Soon</span>
-          </a>
-        </li>
-        <li class="nav-item">
           <a class="nav-link {% if 'distributor' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'distributor_list' %}">
             <i class="bi bi-truck me-2"></i>Distributors
           </a>
         </li>
+        <li class="nav-section">Imports</li>
         <li class="nav-item">
-          <a class="nav-link placeholder-link" href="#" tabindex="-1">
-            <i class="bi bi-cloud-upload me-2"></i>Imports
-            <span class="soon-badge">Soon</span>
+          <a class="nav-link {% if request.resolver_match.url_name == 'import_upload' or request.resolver_match.url_name == 'import_preview' %}active{% endif %}" href="{% url 'import_upload' %}">
+            <i class="bi bi-cloud-upload me-2"></i>Sales Import
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link {% if 'mapping' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'mapping_list' %}">
+            <i class="bi bi-arrow-left-right me-2"></i>Item Mapping
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link {% if 'batch' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'batch_list' %}">
+            <i class="bi bi-clock-history me-2"></i>Import History
           </a>
         </li>
 

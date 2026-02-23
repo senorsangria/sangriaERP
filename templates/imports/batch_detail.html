@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Import Detail{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="mb-0 fw-bold">Import Detail</h2>
+    <p class="text-muted mb-0">{{ batch.distributor.name }} — imported {{ batch.import_date }}</p>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{% url 'batch_list' %}" class="btn btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Back to History
+    </a>
+    <a href="{% url 'batch_delete' batch.pk %}" class="btn btn-outline-danger">
+      <i class="bi bi-trash me-1"></i>Delete Batch
+    </a>
+  </div>
+</div>
+
+<div class="row g-4">
+  <!-- Summary -->
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-clipboard-data me-2"></i>Batch Summary
+      </div>
+      <table class="table table-sm mb-0">
+        <tbody>
+          <tr>
+            <th class="ps-3 text-muted fw-normal" style="width:45%">Distributor</th>
+            <td>{{ batch.distributor.name }}</td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">File</th>
+            <td class="small">{{ batch.filename }}</td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">Import Date</th>
+            <td>{{ batch.import_date }}</td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">Date Range</th>
+            <td>
+              {% if batch.date_range_start and batch.date_range_end %}
+              {{ batch.date_range_start }} → {{ batch.date_range_end }}
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">Records Imported</th>
+            <td><strong class="text-success">{{ batch.records_imported }}</strong></td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">Accounts Created</th>
+            <td>{{ batch.accounts_created }}</td>
+          </tr>
+          {% if batch.records_skipped > 0 %}
+          <tr>
+            <th class="ps-3 text-muted fw-normal">Records Skipped</th>
+            <td><span class="text-warning">{{ batch.records_skipped }}</span></td>
+          </tr>
+          {% endif %}
+          <tr>
+            <th class="ps-3 text-muted fw-normal">Status</th>
+            <td>
+              {% if batch.status == 'complete' %}
+              <span class="badge bg-success">{{ batch.get_status_display }}</span>
+              {% elif batch.status == 'failed' %}
+              <span class="badge bg-danger">{{ batch.get_status_display }}</span>
+              {% else %}
+              <span class="badge bg-secondary">{{ batch.get_status_display }}</span>
+              {% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Auto-created accounts -->
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-shop me-2"></i>Auto-Created Accounts
+        <span class="badge bg-secondary ms-1">{{ auto_created_accounts.count }}</span>
+      </div>
+      {% if auto_created_accounts %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Account Name</th>
+              <th>City</th>
+              <th>State</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for account in auto_created_accounts %}
+            <tr>
+              <td>{{ account.name }}</td>
+              <td>{{ account.city }}</td>
+              <td>{{ account.state }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="card-body text-muted small">
+        No accounts were auto-created by this import (all accounts already existed).
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

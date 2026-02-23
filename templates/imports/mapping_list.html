@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Item Mapping{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="mb-0 fw-bold">Item Mapping</h2>
+    <p class="text-muted mb-0">Map distributor item codes to productERP catalog items.</p>
+  </div>
+  <a href="{% url 'mapping_create' %}" class="btn btn-primary">
+    <i class="bi bi-plus-circle me-1"></i>Add Mapping
+  </a>
+</div>
+
+<!-- Filters -->
+<div class="card mb-4">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-sm-4 col-lg-3">
+        <label class="form-label small mb-1">Distributor</label>
+        <select name="distributor" class="form-select form-select-sm">
+          <option value="">All Distributors</option>
+          {% for d in distributors %}
+          <option value="{{ d.pk }}" {% if selected_distributor == d.pk|stringformat:"s" %}selected{% endif %}>{{ d.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-sm-4 col-lg-3">
+        <label class="form-label small mb-1">Brand</label>
+        <select name="brand" class="form-select form-select-sm">
+          <option value="">All Brands</option>
+          {% for b in brands %}
+          <option value="{{ b.pk }}" {% if selected_brand == b.pk|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-sm-4 col-lg-3">
+        <label class="form-label small mb-1">Status</label>
+        <select name="status" class="form-select form-select-sm">
+          <option value="">All Statuses</option>
+          {% for val, label in status_choices %}
+          <option value="{{ val }}" {% if selected_status == val %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+        <a href="{% url 'mapping_list' %}" class="btn btn-sm btn-outline-secondary ms-1">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if mappings %}
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Raw Item Code</th>
+          <th>Distributor</th>
+          <th>Brand</th>
+          <th>Mapped To</th>
+          <th>Status</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in mappings %}
+        <tr>
+          <td><code>{{ m.raw_item_name }}</code></td>
+          <td>{{ m.distributor.name|default:"—" }}</td>
+          <td>{{ m.brand.name|default:"—" }}</td>
+          <td class="small">
+            {% if m.mapped_item %}
+              {{ m.mapped_item.brand.name }} — {{ m.mapped_item.name }}
+              <span class="text-muted">({{ m.mapped_item.item_code }})</span>
+            {% elif m.status == 'ignored' %}
+              <span class="text-muted fst-italic">Ignored</span>
+            {% else %}
+              <span class="text-warning">Not mapped</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if m.status == 'mapped' %}
+              <span class="badge bg-success">Mapped</span>
+            {% elif m.status == 'ignored' %}
+              <span class="badge bg-secondary">Ignored</span>
+            {% else %}
+              <span class="badge bg-warning text-dark">Unmapped</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+            <a href="{% url 'mapping_edit' m.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body text-center text-muted py-5">
+    <i class="bi bi-arrow-left-right fs-1 mb-3 d-block"></i>
+    <p class="mb-2">No item mappings found.</p>
+    {% if selected_distributor or selected_brand or selected_status %}
+    <a href="{% url 'mapping_list' %}" class="btn btn-sm btn-outline-secondary">Clear Filters</a>
+    {% else %}
+    <p class="small">When an import contains unrecognized item codes, mappings will be listed here.</p>
+    <a href="{% url 'mapping_create' %}" class="btn btn-sm btn-primary">Add Mapping</a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

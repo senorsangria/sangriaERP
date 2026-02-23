@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+  <h2 class="mb-0 fw-bold">{{ title }}</h2>
+  <p class="text-muted mb-0">
+    {% if is_edit %}
+    Update this mapping. Raw item codes cannot be changed once created.
+    {% else %}
+    Map a distributor item code to a productERP catalog item.
+    {% endif %}
+  </p>
+</div>
+
+<div class="row">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-body">
+        <form method="post" novalidate>
+          {% csrf_token %}
+
+          {% for field in form %}
+          <div class="mb-3">
+            <label for="{{ field.id_for_label }}" class="form-label fw-semibold">
+              {{ field.label }}
+            </label>
+            {% if is_edit and field.html_name == 'raw_item_name' %}
+              <input type="text" class="form-control" value="{{ field.value }}" readonly>
+              {{ field.as_hidden }}
+            {% else %}
+              {{ field }}
+            {% endif %}
+            {% if field.help_text %}
+            <div class="form-text">{{ field.help_text }}</div>
+            {% endif %}
+            {% for error in field.errors %}
+            <div class="invalid-feedback d-block">{{ error }}</div>
+            {% endfor %}
+          </div>
+          {% endfor %}
+
+          {% if form.non_field_errors %}
+          <div class="alert alert-danger">
+            {% for error in form.non_field_errors %}
+            <div>{{ error }}</div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
+          <div class="d-flex gap-2 mt-4">
+            <button type="submit" class="btn btn-primary">
+              {% if is_edit %}
+              <i class="bi bi-save me-1"></i>Save Changes
+              {% else %}
+              <i class="bi bi-plus-circle me-1"></i>Create Mapping
+              {% endif %}
+            </button>
+            <a href="{% url 'mapping_list' %}" class="btn btn-outline-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5 mt-4 mt-lg-0">
+    <div class="card border-info">
+      <div class="card-header bg-info-subtle text-info-emphasis fw-semibold">
+        <i class="bi bi-info-circle me-2"></i>How Mappings Work
+      </div>
+      <div class="card-body small">
+        <p class="mb-2">Item mappings link a distributor's raw item code (from CSV exports) to a productERP catalog item.</p>
+        <ul class="mb-0">
+          <li class="mb-1"><strong>Mapped</strong> — sales data for this code will be attributed to the selected catalog item.</li>
+          <li class="mb-1"><strong>Ignored</strong> — rows with this code will be silently skipped during import.</li>
+          <li class="mb-1"><strong>Unmapped</strong> — import will be blocked until this is resolved.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

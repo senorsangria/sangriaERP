@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Delete Import Batch{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6">
+
+    <div class="card border-danger">
+      <div class="card-header bg-danger text-white fw-semibold">
+        <i class="bi bi-exclamation-triangle me-2"></i>Delete Import Batch
+      </div>
+      <div class="card-body">
+        <p class="fw-semibold mb-1">{{ batch.distributor.name }}</p>
+        <p class="text-muted small mb-3">
+          File: {{ batch.filename }}<br>
+          Imported: {{ batch.import_date }}
+          {% if batch.date_range_start and batch.date_range_end %}
+          &mdash; Data: {{ batch.date_range_start }} → {{ batch.date_range_end }}
+          {% endif %}
+        </p>
+
+        <div class="alert alert-danger">
+          <p class="mb-1">
+            This will permanently delete <strong>{{ sales_count }} sales records</strong>
+            and may delete <strong>{{ deletable_account_count }} auto-created accounts</strong>
+            that have no other sales records.
+          </p>
+          <p class="mb-0"><strong>This cannot be undone. Are you sure?</strong></p>
+        </div>
+
+        <form method="post" class="d-flex gap-2">
+          {% csrf_token %}
+          <button type="submit" name="action" value="confirm" class="btn btn-danger">
+            <i class="bi bi-trash me-1"></i>Yes, Delete Permanently
+          </button>
+          <a href="{% url 'batch_detail' batch.pk %}" class="btn btn-outline-secondary">
+            Cancel
+          </a>
+        </form>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

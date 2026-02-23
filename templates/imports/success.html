@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Import Complete{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-7">
+
+    <div class="card border-success">
+      <div class="card-header bg-success text-white fw-semibold">
+        <i class="bi bi-check-circle me-2"></i>Import Complete
+      </div>
+      <div class="card-body">
+        <h5 class="fw-bold mb-4">{{ batch.distributor.name }}</h5>
+        <table class="table table-sm">
+          <tbody>
+            <tr>
+              <th class="text-muted fw-normal" style="width:40%">File</th>
+              <td>{{ batch.filename }}</td>
+            </tr>
+            <tr>
+              <th class="text-muted fw-normal">Import Date</th>
+              <td>{{ batch.import_date }}</td>
+            </tr>
+            <tr>
+              <th class="text-muted fw-normal">Date Range</th>
+              <td>{{ batch.date_range_start }} → {{ batch.date_range_end }}</td>
+            </tr>
+            <tr>
+              <th class="text-muted fw-normal">Records Imported</th>
+              <td><strong class="text-success">{{ batch.records_imported }}</strong></td>
+            </tr>
+            <tr>
+              <th class="text-muted fw-normal">Accounts Created</th>
+              <td>
+                {% if batch.accounts_created > 0 %}
+                <strong>{{ batch.accounts_created }}</strong>
+                {% else %}
+                0
+                {% endif %}
+              </td>
+            </tr>
+            {% if batch.records_skipped > 0 %}
+            <tr>
+              <th class="text-muted fw-normal">Records Skipped</th>
+              <td><span class="text-warning">{{ batch.records_skipped }}</span> (ignored item codes)</td>
+            </tr>
+            {% endif %}
+            <tr>
+              <th class="text-muted fw-normal">Status</th>
+              <td><span class="badge bg-success">{{ batch.get_status_display }}</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="d-flex gap-2 mt-3">
+          <a href="{% url 'import_upload' %}" class="btn btn-primary">
+            <i class="bi bi-cloud-upload me-1"></i>Import Another File
+          </a>
+          <a href="{% url 'batch_detail' batch.pk %}" class="btn btn-outline-secondary">
+            <i class="bi bi-eye me-1"></i>View Batch Detail
+          </a>
+          <a href="{% url 'batch_list' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-list me-1"></i>Import History
+          </a>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

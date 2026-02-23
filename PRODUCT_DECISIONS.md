@@ -257,7 +257,7 @@ Searchable list for one-off or exception assignments
 | Foundation | Project setup, data models, admin, seed data | ✅ Complete |
 | Phase 1 | Login, User Accounts, Roles | ✅ Complete |
 | Phase 2.1 | Brand & Item Management, Distributor Management | ✅ Complete |
-| Phase 2.2 | Sales Data Import, Item Mapping, Batch History | ⬜ Pending |
+| Phase 2.2 | Sales Data Import, Item Mapping, Batch History | 🔄 In Progress |
 | Phase 2.3 | Account Conflict Detection & Merge Tool | ⬜ Pending |
 | Phase 3 | Sales Views | ⬜ Pending |
 | Phase 4 | Saving Sales Views | ⬜ Pending |
@@ -516,11 +516,11 @@ is platform-agnostic)
 ## Deferred Features — Additions
 
 ### Active Accounts Model Manager
-- An active_accounts custom manager will be
-  built on the Account model during Phase 2.3
-- Automatically excludes merged accounts
-  from all queries
-- All report features must use this manager
+- Built in Phase 2.2 (ahead of Phase 2.3 schedule)
+- active_accounts custom manager on the Account model
+- Automatically excludes merged (merged_into__isnull=False)
+  and inactive (is_active=False) accounts from all queries
+- All report and display queries must use this manager
   rather than the default objects manager
 
 *Last updated: February 22, 2026*
