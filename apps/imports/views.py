@@ -105,10 +105,29 @@ def _parse_csv_headers(headers):
 
 
 def _parse_date(date_str):
-    """Parse a date string in common formats; raise ValueError if unrecognised."""
-    for fmt in ('%m/%d/%Y', '%Y-%m-%d', '%m-%d-%Y', '%d/%m/%Y', '%m/%d/%y'):
+    """
+    Parse a date string in common formats; raise ValueError if unrecognised.
+
+    Handles formats commonly produced by VIP and Excel CSV exports, including
+    variants with or without zero-padding and with time components appended.
+    """
+    raw = date_str.strip()
+
+    # Strip trailing time component if present (e.g. "01/15/2024 00:00:00")
+    if ' ' in raw:
+        raw = raw.split(' ')[0].strip()
+
+    for fmt in (
+        '%m/%d/%Y',   # 01/15/2024  (most common VIP format)
+        '%m/%d/%y',   # 01/15/24
+        '%Y-%m-%d',   # 2024-01-15
+        '%Y/%m/%d',   # 2024/01/15
+        '%m-%d-%Y',   # 01-15-2024
+        '%d/%m/%Y',   # 15/01/2024
+        '%d-%m-%Y',   # 15-01-2024
+    ):
         try:
-            return datetime.strptime(date_str.strip(), fmt).date()
+            return datetime.strptime(raw, fmt).date()
         except ValueError:
             continue
     raise ValueError(f'Cannot parse date: {date_str!r}')
@@ -207,7 +226,19 @@ def import_upload(request):
 
                 if not rows:
                     _cleanup_temp_file(filepath)
-                    messages.error(request, 'The CSV file contains no data rows.')
+                    if row_errors:
+                        # Every row failed to parse — show the first few errors so
+                        # the user can diagnose the actual problem (e.g. date format).
+                        sample = row_errors[:3]
+                        detail = ' | '.join(sample)
+                        messages.error(
+                            request,
+                            f'Could not read any data rows from this file '
+                            f'({len(row_errors)} rows failed). '
+                            f'First errors: {detail}',
+                        )
+                    else:
+                        messages.error(request, 'The CSV file contains no data rows.')
                     return render(request, 'imports/upload.html', {'form': form})
 
                 # --- Validation 1: Duplicate date check ---
