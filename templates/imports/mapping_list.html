@@ -71,10 +71,10 @@
           <td><code>{{ m.raw_item_name }}</code></td>
           <td>{{ m.distributor.name|default:"—" }}</td>
           <td>{{ m.brand.name|default:"—" }}</td>
-          <td class="small">
+          <td>
             {% if m.mapped_item %}
-              {{ m.mapped_item.brand.name }} — {{ m.mapped_item.name }}
-              <span class="text-muted">({{ m.mapped_item.item_code }})</span>
+              {{ m.mapped_item.brand.name }} — {{ m.mapped_item.name }}<br>
+              <small class="text-muted">{{ m.mapped_item.item_code }}</small>
             {% elif m.status == 'ignored' %}
               <span class="text-muted fst-italic">Ignored</span>
             {% else %}

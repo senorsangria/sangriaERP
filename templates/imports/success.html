@@ -53,7 +53,7 @@
         </table>
 
         <div class="d-flex gap-2 mt-3">
-          <a href="{% url 'import_upload' %}" class="btn btn-primary">
+          <a href="{% url 'import_upload' %}?distributor={{ batch.distributor.pk }}" class="btn btn-primary">
             <i class="bi bi-cloud-upload me-1"></i>Import Another File
           </a>
           <a href="{% url 'batch_detail' batch.pk %}" class="btn btn-outline-secondary">

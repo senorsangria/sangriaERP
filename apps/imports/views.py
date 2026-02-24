@@ -23,6 +23,7 @@ from datetime import datetime
 
 from django.contrib import messages
 from django.db import transaction
+from django.db.models.functions import ExtractYear
 from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.catalog.models import Item
@@ -202,7 +203,14 @@ def import_upload(request):
         return denied
 
     company = request.user.company
-    form = ImportUploadForm(company=company)
+
+    # Pre-select distributor if passed as a URL param (e.g. from the success page)
+    initial = {}
+    distributor_param = request.GET.get('distributor')
+    if distributor_param:
+        initial['distributor'] = distributor_param
+
+    form = ImportUploadForm(company=company, initial=initial)
 
     if request.method == 'POST':
         form = ImportUploadForm(request.POST, request.FILES, company=company)
@@ -691,18 +699,72 @@ def batch_list(request):
         return denied
 
     company = request.user.company
-    qs = ImportBatch.objects.filter(company=company).select_related('distributor')
+    active_tab = request.GET.get('tab', 'list')
+    if active_tab not in ('list', 'monthly'):
+        active_tab = 'list'
 
+    # List view queryset
+    qs = ImportBatch.objects.filter(company=company).select_related('distributor')
     distributor_id = request.GET.get('distributor')
     if distributor_id:
         qs = qs.filter(distributor_id=distributor_id)
 
-    distributors = Distributor.objects.filter(company=company).order_by('name')
+    distributors = Distributor.objects.filter(company=company, is_active=True).order_by('name')
+
+    # Monthly view — available years (most recent first)
+    available_years = list(
+        ImportBatch.objects.filter(company=company, date_range_start__isnull=False)
+        .annotate(year=ExtractYear('date_range_start'))
+        .values_list('year', flat=True)
+        .distinct()
+        .order_by('-year')
+    )
+
+    # Selected year — default to most recent
+    year_param = request.GET.get('year')
+    if year_param and year_param.isdigit() and int(year_param) in available_years:
+        selected_year = int(year_param)
+    elif available_years:
+        selected_year = available_years[0]
+    else:
+        selected_year = None
+
+    # Build monthly grid: one row per active distributor, 12 month cells each
+    month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    monthly_grid = []
+    if selected_year:
+        year_batches = (
+            ImportBatch.objects.filter(
+                company=company,
+                date_range_start__year=selected_year,
+            )
+            .select_related('distributor')
+            .order_by('date_range_start')
+        )
+        # Organize into {distributor_id: {month_number: [batch, ...]}}
+        batch_map = {}
+        for batch in year_batches:
+            batch_map.setdefault(batch.distributor_id, {}).setdefault(
+                batch.date_range_start.month, []
+            ).append(batch)
+
+        for dist in distributors:
+            dist_data = batch_map.get(dist.pk, {})
+            monthly_grid.append({
+                'distributor': dist,
+                'months': [dist_data.get(m, []) for m in range(1, 13)],
+            })
 
     context = {
         'batches': qs,
         'distributors': distributors,
         'selected_distributor': distributor_id,
+        'active_tab': active_tab,
+        'available_years': available_years,
+        'selected_year': selected_year,
+        'monthly_grid': monthly_grid,
+        'month_names': month_names,
     }
     return render(request, 'imports/batch_list.html', context)
 

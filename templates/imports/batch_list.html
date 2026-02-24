@@ -12,10 +12,26 @@
   </a>
 </div>
 
+<!-- Main tabs -->
+<ul class="nav nav-tabs mb-4">
+  <li class="nav-item">
+    <a class="nav-link {% if active_tab == 'list' %}active{% endif %}"
+       href="{% url 'batch_list' %}?tab=list">List View</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if active_tab == 'monthly' %}active{% endif %}"
+       href="{% url 'batch_list' %}?tab=monthly">Monthly View</a>
+  </li>
+</ul>
+
+{% if active_tab == 'list' %}
+<!-- ===== LIST VIEW ===== -->
+
 <!-- Distributor filter -->
 <div class="card mb-4">
   <div class="card-body py-2">
     <form method="get" class="row g-2 align-items-end">
+      <input type="hidden" name="tab" value="list">
       <div class="col-sm-4 col-lg-3">
         <label class="form-label small mb-1">Distributor</label>
         <select name="distributor" class="form-select form-select-sm">
@@ -27,7 +43,7 @@
       </div>
       <div class="col-auto">
         <button type="submit" class="btn btn-sm btn-primary">Filter</button>
-        <a href="{% url 'batch_list' %}" class="btn btn-sm btn-outline-secondary ms-1">Clear</a>
+        <a href="{% url 'batch_list' %}?tab=list" class="btn btn-sm btn-outline-secondary ms-1">Clear</a>
       </div>
     </form>
   </div>
@@ -93,5 +109,63 @@
     </a>
   </div>
 </div>
+{% endif %}
+
+{% else %}
+<!-- ===== MONTHLY VIEW ===== -->
+
+{% if available_years %}
+<!-- Year tabs -->
+<ul class="nav nav-pills mb-3">
+  {% for year in available_years %}
+  <li class="nav-item">
+    <a class="nav-link {% if year == selected_year %}active{% endif %}"
+       href="{% url 'batch_list' %}?tab=monthly&year={{ year }}">{{ year }}</a>
+  </li>
+  {% endfor %}
+</ul>
+
+<!-- Monthly grid -->
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-striped table-bordered mb-0">
+      <thead class="table-light">
+        <tr>
+          <th style="min-width:160px">Distributor</th>
+          {% for month in month_names %}
+          <th class="text-center" style="min-width:65px">{{ month }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in monthly_grid %}
+        <tr>
+          <td>{{ row.distributor.name }}</td>
+          {% for cell in row.months %}
+          <td class="text-center">
+            {% for batch in cell %}
+            <a href="{% url 'batch_detail' batch.pk %}">{{ batch.records_imported }}</a>{% if not forloop.last %}<br>{% endif %}
+            {% empty %}{% endfor %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% else %}
+<div class="card">
+  <div class="card-body text-center text-muted py-5">
+    <i class="bi bi-calendar3 fs-1 mb-3 d-block"></i>
+    <p class="mb-2">No import data found. Import sales data to see it here.</p>
+    <a href="{% url 'import_upload' %}" class="btn btn-sm btn-primary">
+      <i class="bi bi-cloud-upload me-1"></i>Import Sales Data
+    </a>
+  </div>
+</div>
+{% endif %}
+
 {% endif %}
 {% endblock %}

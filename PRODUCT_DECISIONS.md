@@ -523,5 +523,35 @@ is platform-agnostic)
 - All report and display queries must use this manager
   rather than the default objects manager
 
-*Last updated: February 22, 2026*
+---
+
+## Phase 2.2 — Improvements
+
+### Default Distributor on Re-Import
+- After a successful import, the "Import Another File" button passes
+  the distributor ID as a URL parameter (`?distributor=<pk>`)
+- The upload form view reads this parameter and pre-selects the
+  distributor in the dropdown via Django's `initial` dict on the form
+- Eliminates the need to re-select the same distributor when importing
+  multiple files from the same distributor in sequence
+
+### Item Mapping List — Mapped To Column
+- The "Mapped To" column now shows the productERP item name on the
+  first line and the item code below it in `<small class="text-muted">`
+- Replaces the previous inline parenthetical format
+
+### Import History Monthly View
+- Import History page now has two tabs: List View (unchanged) and
+  Monthly View
+- Monthly View shows a grid: rows = all active distributors for the
+  company, columns = 12 months for the selected year
+- Year tabs above the grid, built dynamically from ImportBatch data;
+  most recent year shown first and selected by default
+- Each cell shows records_imported as a clickable link to the batch
+  detail page; multiple batches in a month each get their own link
+- All batches for the year fetched in a single query, organized into
+  a dict in Python (no per-cell queries)
+- Distributors with no data for the year still appear as rows
+
+*Last updated: February 24, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*
