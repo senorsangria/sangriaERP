@@ -259,6 +259,7 @@ Searchable list for one-off or exception assignments
 | Phase 2.1 | Brand & Item Management, Distributor Management | ✅ Complete |
 | Phase 2.2 | Sales Data Import, Item Mapping, Batch History | 🔄 In Progress |
 | Phase 2.3 | Account Conflict Detection & Merge Tool | ⬜ Pending |
+| Phase 2.5 | Manual Account Creation | ⬜ Pending |
 | Phase 3 | Sales Views | ⬜ Pending |
 | Phase 4 | Saving Sales Views | ⬜ Pending |
 | Phase 5 | CRM — Accounts (contacts, notes) | ⬜ Pending |
@@ -266,7 +267,11 @@ Searchable list for one-off or exception assignments
 | Phase 7 | Sales Orders | ⬜ Pending |
 | Phase 8 | Production Ordering | ⬜ Pending |
 | Phase 9 | Projection Planning | ⬜ Pending |
-| Phase 10 | Tasting / Event Management | ⬜ Pending |
+| Phase 10.1 | Account Assignment & Ambassador Coverage Areas | ⬜ Pending |
+| Phase 10.2 | Event Scheduling & Status Workflow | ⬜ Pending |
+| Phase 10.3 | Event Recap | ⬜ Pending |
+| Phase 10.4 | Expense Management | ⬜ Pending |
+| Phase 10.5 | Event Export | ⬜ Pending |
 
 ---
 
@@ -513,6 +518,191 @@ is platform-agnostic)
 
 ---
 
+## Phase 10 — Event Management Design Decisions
+
+### Phase Breakdown
+- Phase 10.1 — Account Assignment & Ambassador Coverage Areas
+- Phase 10.2 — Event Scheduling & Status Workflow
+- Phase 10.3 — Event Recap
+- Phase 10.4 — Expense Management
+- Phase 10.5 — Event Export
+- Phase 2.5 — Manual Account Creation
+  (inserted before Phase 10 work begins)
+
+### Photo Storage
+- Photos are stored in object storage, not the database
+- File URL is stored in the database
+- Development: Django local file storage
+- Production: Cloudflare R2 (S3-compatible, zero egress fees)
+- Swap is a single settings change, no code rewrite needed
+
+### Event Types
+Three event types, each drives different behavior:
+
+1. Tasting — full recap required, account required,
+   items selection required
+2. Festival — simplified recap (comment box + expenses),
+   account required
+3. Admin — no recap, no account required, captures hours
+   for compensation purposes
+
+### Event Creation
+Who can create events:
+- Supplier Admin
+- Sales Manager
+- Territory Manager
+- Ambassador Manager
+
+Event setup fields (set by creator, not ambassador):
+- Event Type (selected first, drives remaining fields)
+- Account — required for Tasting and Festival,
+  not required for Admin
+- Date
+- Duration — hours selector + minutes selector
+  (used for bookkeeper compensation export)
+- Items to be sampled — Tasting only, multi-select from
+  items associated to the distributor that services the
+  account (derived from sales data)
+- Ambassador — filtered dropdown showing only ambassadors
+  whose coverage area overlaps with the event account
+- Event Manager — defaults to person creating the event,
+  can be reassigned to any TM or AM who has that account
+  in their territory
+
+### Ambassador Role Clarification
+- Ambassadors do NOT own accounts
+- Ambassadors have a personal coverage area on their
+  profile defining where they are willing to travel
+- Coverage area is defined by any combination of:
+  states, counties, cities, distributors, specific accounts
+- Ambassador dropdown for events filters based on coverage
+  area overlap with the event account
+- Ambassadors only fill out recap information — they do not
+  create or edit event setup fields
+
+### Ambassador Manager Role Clarification
+- AM does not visit stores
+- AM coordinates tastings remotely between stores and ambassadors
+- AM reviews sales reports and works with distributors to
+  identify tasting opportunities
+- AM can assign themselves as the working ambassador on an event
+  (no special flag needed — this is handled naturally by the role)
+- AM is assigned to accounts/areas similar to Territory Manager
+
+### Territory Manager Role Clarification
+- TM visits stores physically
+- TM builds brand awareness and manages relationships with
+  store managers
+- TM can book events and can also hand off coordination to an AM
+- TM sees ALL events at accounts in their territory regardless
+  of who created the event
+- Visibility is driven by account assignment, not by who booked
+  the event
+
+### Event Status Workflow
+Five statuses in order:
+
+1. Draft — event is being set up, not yet visible to ambassador.
+   Creator is still coordinating with account.
+2. Scheduled — event released, now visible to assigned ambassador
+3. Recap Submitted — ambassador has completed and submitted
+   recap information
+4. Complete — event creator has reviewed recap and marked event
+   as complete
+
+Admin events follow a simpler flow:
+Draft → Scheduled → Complete (no recap step)
+
+Festival events follow:
+Draft → Scheduled → Recap Submitted → Complete
+
+### Event Permissions
+- Event setup fields: editable by AM, TM, Sales Manager,
+  Supplier Admin
+- Recap fields: editable only by the assigned Ambassador
+- TM sees all events at accounts in their territory regardless
+  of who created them
+- AM sees all events they created or manage
+- Ambassador sees only their assigned events
+- Admin events: visible to creator and anyone above them in
+  role hierarchy, no account scoping
+
+### Event Recap by Type
+
+Tasting recap — 3 parts:
+
+Part 1 — Overall Event:
+- Number of samples poured
+- Number of QR codes scanned
+- General notes (free text)
+- One or more photos
+
+Part 2 — Per Item Sampled:
+- For each item selected at event setup:
+  * Shelf price
+  * Bottles sold
+  * Bottles used for samples
+
+Part 3 — Expenses:
+- One or more expense entries
+- Each entry: description, amount, receipt photo
+- No approval workflow required
+
+Festival recap:
+- Comment box only
+- Expenses (same structure as tasting)
+
+Admin:
+- No recap
+
+### Event Export (Phase 10.5)
+- Not called compensation export — called Event Export
+- Supplier Admin selects a date range
+- Export lists all events in that range with: account,
+  event type, ambassador, duration, expenses
+- Output provided to bookkeeper who handles compensation
+  processing externally
+- Format TBD when building Phase 10.5
+
+### Account Assignment (Phase 10.1)
+- Applies to: Territory Managers and Ambassador Managers
+- Does NOT apply to Ambassadors (they have coverage areas instead)
+- Many-to-many relationship: multiple TMs or AMs can be assigned
+  to the same account, one TM or AM can be assigned to many accounts
+- Two assignment modes:
+  Mode 1 — Bulk by attributes (distributor, county, city,
+  on/off premise, combinable)
+  Mode 2 — Individual account selection (searchable list
+  for exceptions)
+- Static assignment for now, dynamic assignment deferred
+
+### Ambassador Coverage Area (Phase 10.1)
+- Stored on ambassador's user profile
+- Defined by any combination of: states, counties, cities,
+  distributors, specific accounts
+- Used only for filtering event assignment dropdown —
+  not for ownership or authority
+- Many-to-many relationships needed for each geographic dimension
+
+### Manual Account Creation (Phase 2.5)
+- Lightweight form to manually create an account when it doesn't
+  exist in the system
+- Used when a new account needs an event before sales data has
+  been imported
+- Fields: name, address, city, state, zip, distributor, county,
+  on/off premise
+- auto_created flag set to False (manually created)
+- Merging manually created accounts with later-imported accounts
+  is deferred to a future phase
+
+### Tasting Agency (Reminder — Deferred)
+- Agencies are third-party Ambassador Managers
+- Explicitly out of scope until a future phase
+- The AM role and structure should be designed with agency
+  introduction in mind
+
+---
+
 ## Deferred Features — Additions
 
 ### Active Accounts Model Manager
@@ -553,5 +743,5 @@ is platform-agnostic)
   a dict in Python (no per-cell queries)
 - Distributors with no data for the year still appear as rows
 
-*Last updated: February 24, 2026*
+*Last updated: February 25, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*
