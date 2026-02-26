@@ -1,0 +1,69 @@
+{% comment %}
+Coverage areas table partial.
+Context variables:
+  enhanced_coverage_areas  — list of dicts: {ca, display_value, display_state}
+  target                   — the User being edited
+{% endcomment %}
+
+{% if enhanced_coverage_areas %}
+<div class="table-responsive">
+  <table class="table table-sm mb-0 align-middle">
+    <thead class="table-light">
+      <tr>
+        <th style="width:120px">Type</th>
+        <th>Value</th>
+        <th style="width:70px">State</th>
+        <th style="width:140px" class="text-end">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in enhanced_coverage_areas %}
+      <tr>
+        <td>
+          <span class="badge
+            {% if item.ca.coverage_type == 'distributor' %}bg-primary
+            {% elif item.ca.coverage_type == 'state' %}bg-success
+            {% elif item.ca.coverage_type == 'county' %}bg-info text-dark
+            {% elif item.ca.coverage_type == 'city' %}bg-warning text-dark
+            {% elif item.ca.coverage_type == 'account' %}bg-secondary
+            {% endif %}
+          ">{{ item.ca.get_coverage_type_display }}</span>
+        </td>
+        <td class="small">{{ item.display_value }}</td>
+        <td class="small text-muted">{{ item.display_state }}</td>
+        <td class="text-end">
+          <button
+            type="button"
+            id="btn-remove-{{ item.ca.pk }}"
+            class="btn btn-outline-danger btn-sm ca-remove-btn"
+            data-ca-pk="{{ item.ca.pk }}"
+            data-type="{{ item.ca.get_coverage_type_display }}"
+            data-value="{{ item.display_value }}"
+          >Remove</button>
+          <span id="confirm-{{ item.ca.pk }}" class="d-none d-flex align-items-center justify-content-end gap-1 flex-wrap">
+            <span class="small text-muted">
+              Remove {{ item.ca.get_coverage_type_display }}: {{ item.display_value }}?
+            </span>
+            <button
+              type="button"
+              class="btn btn-danger btn-sm ca-confirm-btn"
+              data-ca-pk="{{ item.ca.pk }}"
+            >Confirm</button>
+            <button
+              type="button"
+              class="btn btn-outline-secondary btn-sm ca-cancel-btn"
+              data-ca-pk="{{ item.ca.pk }}"
+            >Cancel</button>
+          </span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="text-muted small py-3 text-center">
+  <i class="bi bi-geo-alt me-1"></i>
+  No coverage areas assigned yet. Use the form below to add coverage areas.
+</div>
+{% endif %}

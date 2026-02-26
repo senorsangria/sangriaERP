@@ -9,11 +9,59 @@
     <i class="bi bi-arrow-left me-1"></i>Back
   </a>
   <div>
-    <h1 class="h3 mb-0 fw-bold">Edit User</h1>
-    <p class="text-muted small mb-0">{{ target.get_full_name|default:target.username }}</p>
+    <h1 class="h3 mb-0 fw-bold">{{ target.get_full_name|default:target.username }}</h1>
+    <p class="text-muted small mb-0">
+      {{ target.get_role_display }}{% if target.company %} &mdash; {{ target.company.name }}{% endif %}
+    </p>
   </div>
 </div>
 
+{% if show_coverage_tab %}
+<!-- =========================================================
+     Tabbed interface: Profile + Coverage Areas (Supplier Admin)
+     ========================================================= -->
+<ul class="nav nav-tabs mb-4" id="userDetailTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button
+      class="nav-link active"
+      id="profile-tab-btn"
+      data-bs-toggle="tab"
+      data-bs-target="#profile-pane"
+      type="button"
+      role="tab"
+      aria-controls="profile-pane"
+      aria-selected="true"
+    >
+      <i class="bi bi-person me-1"></i>Profile
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button
+      class="nav-link"
+      id="coverage-tab-btn"
+      data-bs-toggle="tab"
+      data-bs-target="#coverage-pane"
+      type="button"
+      role="tab"
+      aria-controls="coverage-pane"
+      aria-selected="false"
+    >
+      <i class="bi bi-geo-alt me-1"></i>Coverage Areas
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content" id="userDetailTabsContent">
+
+  <!-- ============================================================
+       Tab 1 — Profile
+       ============================================================ -->
+  <div class="tab-pane fade show active" id="profile-pane" role="tabpanel">
+{% endif %}
+
+<!-- ----------------------------------------------------------------
+     Profile form (always rendered; wrapped in tab pane when tabbed)
+     ---------------------------------------------------------------- -->
 <div class="row justify-content-center">
   <div class="col-12 col-lg-9 col-xl-8">
     <form method="post" novalidate>
@@ -145,4 +193,515 @@
   </div>
 </div>
 
+{% if show_coverage_tab %}
+  </div><!-- /profile-pane -->
+
+  <!-- ============================================================
+       Tab 2 — Coverage Areas
+       ============================================================ -->
+  <div class="tab-pane fade" id="coverage-pane" role="tabpanel">
+
+    <!-- Section 1: Current Assignments -->
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white fw-semibold border-bottom small text-muted">
+        <i class="bi bi-list-check me-2"></i>Current Coverage Areas
+      </div>
+      <div class="card-body p-0">
+        <div id="coverage-areas-table-container">
+          {% include 'accounts/_coverage_areas_table.html' %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Inline feedback message -->
+    <div id="ca-message" class="d-none mb-3"></div>
+
+    <!-- Section 2: Add Coverage Area form -->
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold border-bottom small text-muted">
+        <i class="bi bi-plus-circle me-2"></i>Add Coverage Area
+      </div>
+      <div class="card-body">
+
+        <!-- Step 1: Coverage Type -->
+        <div class="mb-3">
+          <label class="form-label fw-medium" for="ca-type">Coverage Type</label>
+          <select id="ca-type" class="form-select" style="max-width:280px">
+            <option value="">Select type…</option>
+            <option value="distributor">Distributor</option>
+            <option value="state">State</option>
+            <option value="county">County</option>
+            <option value="city">City</option>
+            <option value="account">Account</option>
+          </select>
+        </div>
+
+        <!-- Step 2: Type-specific inputs (shown/hidden by JS) -->
+
+        <!-- Distributor input -->
+        <div id="ca-distributor-section" class="d-none mb-3">
+          <label class="form-label fw-medium" for="ca-distributor-select">Distributor</label>
+          {% if distributors %}
+          <select id="ca-distributor-select" class="form-select" style="max-width:360px">
+            <option value="">Select distributor…</option>
+            {% for d in distributors %}
+            <option value="{{ d.pk }}">{{ d.name }}</option>
+            {% endfor %}
+          </select>
+          {% else %}
+          <div class="text-muted small">No distributors available yet.</div>
+          {% endif %}
+        </div>
+
+        <!-- State input -->
+        <div id="ca-state-section" class="d-none mb-3">
+          <label class="form-label fw-medium" for="ca-state-select">State</label>
+          <select id="ca-state-select" class="form-select" style="max-width:280px">
+            <option value="">Select state…</option>
+            {% for code, name in us_states %}
+            <option value="{{ code }}">{{ name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- County input -->
+        <div id="ca-county-section" class="d-none mb-3">
+          <div class="row g-3 align-items-end" style="max-width:560px">
+            <div class="col-sm-6">
+              <label class="form-label fw-medium" for="ca-county-state">State</label>
+              <select id="ca-county-state" class="form-select">
+                <option value="">Select state…</option>
+                {% for code, name in us_states %}
+                <option value="{{ code }}">{{ name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label fw-medium" for="ca-county-select">County</label>
+              <select id="ca-county-select" class="form-select d-none">
+                <option value="">Select county…</option>
+              </select>
+              <div id="ca-county-message" class="text-muted small mt-1 d-none"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- City input -->
+        <div id="ca-city-section" class="d-none mb-3">
+          <div class="row g-3 align-items-end" style="max-width:560px">
+            <div class="col-sm-6">
+              <label class="form-label fw-medium" for="ca-city-state">State</label>
+              <select id="ca-city-state" class="form-select">
+                <option value="">Select state…</option>
+                {% for code, name in us_states %}
+                <option value="{{ code }}">{{ name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label fw-medium" for="ca-city-select">City</label>
+              <select id="ca-city-select" class="form-select d-none">
+                <option value="">Select city…</option>
+              </select>
+              <div id="ca-city-message" class="text-muted small mt-1 d-none"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Account search input -->
+        <div id="ca-account-section" class="d-none mb-3">
+          <label class="form-label fw-medium" for="ca-account-search">Search Accounts</label>
+          <input
+            type="text"
+            id="ca-account-search"
+            class="form-control"
+            placeholder="Search by name, address, or city…"
+            autocomplete="off"
+            style="max-width:480px"
+          >
+          <div
+            id="ca-account-results"
+            class="border rounded mt-1 bg-white"
+            style="max-width:480px; max-height:300px; overflow-y:auto; display:none;"
+          ></div>
+        </div>
+
+        <!-- Add button (non-account types only) -->
+        <div id="ca-add-btn-wrapper" class="d-none">
+          <button type="button" id="ca-add-btn" class="btn btn-primary">
+            <i class="bi bi-plus-lg me-1"></i>Add Coverage Area
+          </button>
+        </div>
+
+      </div><!-- /card-body -->
+    </div><!-- /card -->
+
+  </div><!-- /coverage-pane -->
+
+</div><!-- /tab-content -->
+{% endif %}
+
+{% endblock %}
+
+
+{% block extra_js %}
+{% if show_coverage_tab %}
+<script>
+(function () {
+  'use strict';
+
+  // ── Configuration ─────────────────────────────────────────────────────────
+  const USER_PK        = {{ target.pk }};
+  const ADD_URL        = "{% url 'coverage_area_add' target.pk %}";
+  const COUNTIES_URL   = "{% url 'ajax_counties' %}";
+  const CITIES_URL     = "{% url 'ajax_cities' %}";
+  const SEARCH_URL     = "{% url 'ajax_accounts_search' %}";
+
+  function getRemoveUrl(caPk) {
+    return `/accounts/users/${USER_PK}/coverage-areas/${caPk}/remove/`;
+  }
+
+  function getCsrfToken() {
+    const c = document.cookie.split(';').map(s => s.trim()).find(s => s.startsWith('csrftoken='));
+    return c ? c.split('=')[1] : '';
+  }
+
+  // ── DOM references ─────────────────────────────────────────────────────────
+  const typeSelect      = document.getElementById('ca-type');
+  const tableContainer  = document.getElementById('coverage-areas-table-container');
+  const msgEl           = document.getElementById('ca-message');
+  const addBtnWrapper   = document.getElementById('ca-add-btn-wrapper');
+  const addBtn          = document.getElementById('ca-add-btn');
+
+  const sections = {
+    distributor : document.getElementById('ca-distributor-section'),
+    state       : document.getElementById('ca-state-section'),
+    county      : document.getElementById('ca-county-section'),
+    city        : document.getElementById('ca-city-section'),
+    account     : document.getElementById('ca-account-section'),
+  };
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function showSection(type) {
+    Object.entries(sections).forEach(([k, el]) => {
+      if (el) el.classList.toggle('d-none', k !== type);
+    });
+    // Show Add button for non-account types (and only when a type is selected)
+    if (addBtnWrapper) {
+      addBtnWrapper.classList.toggle('d-none', !type || type === 'account');
+    }
+  }
+
+  function showError(msg) {
+    msgEl.className = 'alert alert-danger';
+    msgEl.textContent = msg;
+    msgEl.classList.remove('d-none');
+  }
+
+  function showSuccess(msg) {
+    msgEl.className = 'alert alert-success';
+    msgEl.textContent = msg;
+    msgEl.classList.remove('d-none');
+    setTimeout(() => msgEl.classList.add('d-none'), 4000);
+  }
+
+  function clearMsg() {
+    msgEl.classList.add('d-none');
+  }
+
+  function escapeHtml(str) {
+    const d = document.createElement('div');
+    d.appendChild(document.createTextNode(str || ''));
+    return d.innerHTML;
+  }
+
+  function resetForm() {
+    typeSelect.value = '';
+    showSection('');
+    clearMsg();
+
+    // Reset distributor
+    const distSel = document.getElementById('ca-distributor-select');
+    if (distSel) distSel.value = '';
+
+    // Reset state selects
+    ['ca-state-select', 'ca-county-state', 'ca-city-state'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+
+    // Reset county
+    const countySel = document.getElementById('ca-county-select');
+    if (countySel) { countySel.innerHTML = '<option value="">Select county…</option>'; countySel.classList.add('d-none'); }
+    const countyMsg = document.getElementById('ca-county-message');
+    if (countyMsg) { countyMsg.textContent = ''; countyMsg.classList.add('d-none'); }
+
+    // Reset city
+    const citySel = document.getElementById('ca-city-select');
+    if (citySel) { citySel.innerHTML = '<option value="">Select city…</option>'; citySel.classList.add('d-none'); }
+    const cityMsg = document.getElementById('ca-city-message');
+    if (cityMsg) { cityMsg.textContent = ''; cityMsg.classList.add('d-none'); }
+
+    // Reset account search
+    const searchEl = document.getElementById('ca-account-search');
+    if (searchEl) searchEl.value = '';
+    const resultsEl = document.getElementById('ca-account-results');
+    if (resultsEl) { resultsEl.innerHTML = ''; resultsEl.style.display = 'none'; }
+  }
+
+  // ── Coverage type selector ─────────────────────────────────────────────────
+  typeSelect.addEventListener('change', function () {
+    showSection(this.value);
+    clearMsg();
+  });
+
+  // ── County: load on state change ───────────────────────────────────────────
+  const countyStateEl = document.getElementById('ca-county-state');
+  if (countyStateEl) {
+    countyStateEl.addEventListener('change', function () {
+      const state = this.value;
+      const sel   = document.getElementById('ca-county-select');
+      const msg   = document.getElementById('ca-county-message');
+      sel.innerHTML = '<option value="">Select county…</option>';
+      sel.classList.add('d-none');
+      msg.textContent = '';
+      msg.classList.add('d-none');
+      if (!state) return;
+
+      fetch(`${COUNTIES_URL}?state=${encodeURIComponent(state)}`)
+        .then(r => r.json())
+        .then(data => {
+          if (!data.counties || data.counties.length === 0) {
+            msg.textContent = 'No counties available for this state yet. Import sales data or create accounts in this state first.';
+            msg.classList.remove('d-none');
+          } else {
+            data.counties.forEach(c => {
+              const opt = document.createElement('option');
+              opt.value = c;
+              opt.textContent = c;
+              sel.appendChild(opt);
+            });
+            sel.classList.remove('d-none');
+          }
+        })
+        .catch(() => {
+          msg.textContent = 'Error loading counties. Please try again.';
+          msg.classList.remove('d-none');
+        });
+    });
+  }
+
+  // ── City: load on state change ─────────────────────────────────────────────
+  const cityStateEl = document.getElementById('ca-city-state');
+  if (cityStateEl) {
+    cityStateEl.addEventListener('change', function () {
+      const state = this.value;
+      const sel   = document.getElementById('ca-city-select');
+      const msg   = document.getElementById('ca-city-message');
+      sel.innerHTML = '<option value="">Select city…</option>';
+      sel.classList.add('d-none');
+      msg.textContent = '';
+      msg.classList.add('d-none');
+      if (!state) return;
+
+      fetch(`${CITIES_URL}?state=${encodeURIComponent(state)}`)
+        .then(r => r.json())
+        .then(data => {
+          if (!data.cities || data.cities.length === 0) {
+            msg.textContent = 'No cities available for this state yet.';
+            msg.classList.remove('d-none');
+          } else {
+            data.cities.forEach(c => {
+              const opt = document.createElement('option');
+              opt.value = c;
+              opt.textContent = c;
+              sel.appendChild(opt);
+            });
+            sel.classList.remove('d-none');
+          }
+        })
+        .catch(() => {
+          msg.textContent = 'Error loading cities. Please try again.';
+          msg.classList.remove('d-none');
+        });
+    });
+  }
+
+  // ── Account live search ────────────────────────────────────────────────────
+  const accountSearchEl = document.getElementById('ca-account-search');
+  const accountResultsEl = document.getElementById('ca-account-results');
+  let searchTimer;
+
+  if (accountSearchEl) {
+    accountSearchEl.addEventListener('input', function () {
+      clearTimeout(searchTimer);
+      const q = this.value.trim();
+      if (q.length < 2) {
+        accountResultsEl.innerHTML = '';
+        accountResultsEl.style.display = 'none';
+        return;
+      }
+      searchTimer = setTimeout(() => fetchAccounts(q), 300);
+    });
+  }
+
+  function fetchAccounts(q) {
+    fetch(`${SEARCH_URL}?q=${encodeURIComponent(q)}`)
+      .then(r => r.json())
+      .then(data => {
+        accountResultsEl.innerHTML = '';
+        if (!data.accounts) { accountResultsEl.style.display = 'none'; return; }
+
+        if (data.accounts.length === 0) {
+          accountResultsEl.innerHTML =
+            '<div class="text-muted small p-3">No accounts found matching your search.</div>';
+        } else {
+          data.accounts.forEach(a => {
+            const row = document.createElement('div');
+            row.className = 'd-flex align-items-center justify-content-between p-2 border-bottom';
+            row.innerHTML = `
+              <div>
+                <div class="fw-medium small">${escapeHtml(a.name)}</div>
+                <div class="text-muted" style="font-size:.8rem">${escapeHtml(a.street)}, ${escapeHtml(a.city)}, ${escapeHtml(a.state)}</div>
+                ${a.distributor ? `<div class="text-muted" style="font-size:.75rem">${escapeHtml(a.distributor)}</div>` : ''}
+              </div>
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-primary ms-3 ca-add-account-btn flex-shrink-0"
+                data-account-id="${a.id}"
+              >Add</button>`;
+            accountResultsEl.appendChild(row);
+          });
+        }
+        accountResultsEl.style.display = 'block';
+      })
+      .catch(() => {
+        accountResultsEl.innerHTML =
+          '<div class="text-muted small p-3">Error searching accounts. Please try again.</div>';
+        accountResultsEl.style.display = 'block';
+      });
+  }
+
+  // ── Add coverage area ──────────────────────────────────────────────────────
+  function addCoverageArea(data) {
+    const fd = new FormData();
+    Object.entries(data).forEach(([k, v]) => fd.append(k, v));
+
+    fetch(ADD_URL, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+      body: fd,
+    })
+      .then(r => r.json())
+      .then(result => {
+        if (result.success) {
+          tableContainer.innerHTML = result.html;
+          resetForm();
+          showSuccess('Coverage area added successfully.');
+        } else {
+          showError(result.error || 'An error occurred.');
+        }
+      })
+      .catch(() => showError('Network error. Please try again.'));
+  }
+
+  // Add button (non-account types)
+  if (addBtn) {
+    addBtn.addEventListener('click', function () {
+      const type = typeSelect.value;
+      if (!type) { showError('Please select a coverage type.'); return; }
+
+      const data = { coverage_type: type };
+
+      if (type === 'distributor') {
+        const v = document.getElementById('ca-distributor-select').value;
+        if (!v) { showError('Please select a distributor.'); return; }
+        data.distributor_id = v;
+
+      } else if (type === 'state') {
+        const v = document.getElementById('ca-state-select').value;
+        if (!v) { showError('Please select a state.'); return; }
+        data.state = v;
+
+      } else if (type === 'county') {
+        const state  = document.getElementById('ca-county-state').value;
+        const county = document.getElementById('ca-county-select').value;
+        if (!state)  { showError('Please select a state.'); return; }
+        if (!county) { showError('Please select a county.'); return; }
+        data.state  = state;
+        data.county = county;
+
+      } else if (type === 'city') {
+        const state = document.getElementById('ca-city-state').value;
+        const city  = document.getElementById('ca-city-select').value;
+        if (!state) { showError('Please select a state.'); return; }
+        if (!city)  { showError('Please select a city.'); return; }
+        data.state = state;
+        data.city  = city;
+      }
+
+      addCoverageArea(data);
+    });
+  }
+
+  // Add account via inline "Add" button in search results (event delegation)
+  const coveragePane = document.getElementById('coverage-pane');
+  if (coveragePane) {
+    coveragePane.addEventListener('click', function (e) {
+      // Account search result "Add" button
+      if (e.target.classList.contains('ca-add-account-btn')) {
+        const accountId = e.target.getAttribute('data-account-id');
+        addCoverageArea({ coverage_type: 'account', account_id: accountId });
+        return;
+      }
+
+      // Remove button — show inline confirmation
+      if (e.target.classList.contains('ca-remove-btn')) {
+        const pk = e.target.getAttribute('data-ca-pk');
+        e.target.classList.add('d-none');
+        const confirmEl = document.getElementById(`confirm-${pk}`);
+        if (confirmEl) confirmEl.classList.remove('d-none');
+        return;
+      }
+
+      // Confirm remove
+      if (e.target.classList.contains('ca-confirm-btn')) {
+        const pk = e.target.getAttribute('data-ca-pk');
+        removeCoverageArea(pk);
+        return;
+      }
+
+      // Cancel remove
+      if (e.target.classList.contains('ca-cancel-btn')) {
+        const pk = e.target.getAttribute('data-ca-pk');
+        const confirmEl = document.getElementById(`confirm-${pk}`);
+        if (confirmEl) confirmEl.classList.add('d-none');
+        const removeBtn = document.getElementById(`btn-remove-${pk}`);
+        if (removeBtn) removeBtn.classList.remove('d-none');
+        return;
+      }
+    });
+  }
+
+  // ── Remove coverage area ───────────────────────────────────────────────────
+  function removeCoverageArea(caPk) {
+    fetch(getRemoveUrl(caPk), {
+      method: 'POST',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    })
+      .then(r => r.json())
+      .then(result => {
+        if (result.success) {
+          tableContainer.innerHTML = result.html;
+          showSuccess('Coverage area removed.');
+        } else {
+          showError(result.error || 'An error occurred.');
+        }
+      })
+      .catch(() => showError('Network error. Please try again.'));
+  }
+
+})();
+</script>
+{% endif %}
 {% endblock %}

@@ -17,6 +17,9 @@ from .forms import (
     ProfileEditForm,
     CREATABLE_ROLES,
 )
+from apps.distribution.models import Distributor
+from apps.accounts.constants import US_STATES, US_STATES_DICT
+from apps.accounts.views import _build_enhanced_coverage_areas
 
 # ---------------------------------------------------------------------------
 # Role sets for access control
@@ -233,11 +236,33 @@ def user_edit(request, pk):
             form.save()
             name = target.get_full_name() or target.username
             messages.success(request, f'{name} has been updated.')
-            return redirect('user_list')
+            return redirect('user_edit', pk=pk)
     else:
         form = UserEditForm(instance=target, editor=request.user)
 
-    return render(request, 'core/user_edit.html', {'form': form, 'target': target})
+    # Coverage Areas tab — visible to Supplier Admins only
+    show_coverage_tab = request.user.is_supplier_admin
+    enhanced_coverage_areas = []
+    distributors = []
+
+    if show_coverage_tab:
+        enhanced_coverage_areas = _build_enhanced_coverage_areas(
+            target, request.user.company
+        )
+        distributors = list(
+            Distributor.objects.filter(
+                company=request.user.company, is_active=True
+            ).order_by('name')
+        )
+
+    return render(request, 'core/user_edit.html', {
+        'form': form,
+        'target': target,
+        'show_coverage_tab': show_coverage_tab,
+        'enhanced_coverage_areas': enhanced_coverage_areas,
+        'distributors': distributors,
+        'us_states': US_STATES,
+    })
 
 
 @login_required

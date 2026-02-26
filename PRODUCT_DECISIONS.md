@@ -267,7 +267,7 @@ Searchable list for one-off or exception assignments
 | Phase 7 | Sales Orders | ⬜ Pending |
 | Phase 8 | Production Ordering | ⬜ Pending |
 | Phase 9 | Projection Planning | ⬜ Pending |
-| Phase 10.1 | Account Assignment & Ambassador Coverage Areas | ⬜ Pending |
+| Phase 10.1 | Account Assignment & Ambassador Coverage Areas | ✅ Complete |
 | Phase 10.2 | Event Scheduling & Status Workflow | ⬜ Pending |
 | Phase 10.3 | Event Recap | ⬜ Pending |
 | Phase 10.4 | Expense Management | ⬜ Pending |
@@ -820,6 +820,71 @@ Admin:
   sidebar and mobile nav
 - Ambassador Manager: Accounts link added above Events placeholder in
   sidebar; Accounts link added to mobile nav
+
+---
+
+## Phase 10.1 — Completed Features
+
+### Coverage Areas on User Profiles
+
+- Tabbed User Edit page: Profile tab (existing, unchanged) and Coverage Areas tab
+- Coverage Areas tab visible to Supplier Admin only; all other roles see the Profile
+  tab only with no tab UI
+- After saving the Profile form the user is redirected back to the same Edit page
+  (keeping the user in context), replacing the previous redirect to the user list
+
+### Coverage Areas Tab — Current Assignments
+
+- Table showing all UserCoverageArea records for the target user
+- Columns: Type (color-coded badge), Value, State (for county/city types), Action
+- Empty state message when no coverage areas are assigned yet
+- Inline Remove confirmation: clicking Remove shows "Remove [Type]: [Value]?
+  Confirm / Cancel" in the same row; no page navigation required
+
+### Coverage Areas Tab — Add Coverage Area Form
+
+- Coverage Type dropdown with five options: Distributor, State, County, City, Account
+- Form is always visible below the assignments table; resets after each successful
+  addition so multiple entries can be added without extra navigation
+- **Distributor type**: dropdown of all active distributors for the company
+- **State type**: dropdown of all 50 US states + DC
+- **County type**: state dropdown first; county dropdown populated via AJAX when
+  state is selected; message shown if no counties exist for that state yet
+- **City type**: state dropdown first; city dropdown populated via AJAX when state
+  is selected; message shown if no cities exist for that state yet
+- **Account type**: live search box (triggers after 2+ characters with 300 ms
+  debounce); results show account name, address, distributor; each result has an
+  inline Add button; search box clears after adding; no separate Add button for
+  this type
+
+### AJAX Endpoints (accounts app)
+
+- `GET /accounts/ajax/counties/?state=NJ` — distinct counties for the company and
+  state, excludes blank and "Unknown" values
+- `GET /accounts/ajax/cities/?state=NJ` — distinct cities for the company and state
+- `GET /accounts/ajax/search/?q=barrel` — active accounts matching name, street,
+  city, or state (max 20 results); returns id, name, street, city, state, distributor
+- All endpoints require authentication and return 403 if unauthenticated
+- Coverage area add/remove endpoints require Supplier Admin role
+
+### Data & Validation
+
+- Duplicate prevention: adding the same type + value combination twice for the same
+  user is blocked with an inline error message
+- Account search uses the active_accounts manager (excludes inactive and merged)
+- County and city queries use state_normalized for accurate state matching
+- US States constant list (`apps/accounts/constants.py`) used across forms and display
+- State stored as 2-letter abbreviation; full name shown in assignments table via
+  US_STATES_DICT lookup computed in Python (no custom template filters needed)
+
+### JavaScript
+
+- Vanilla JavaScript only (no jQuery or additional libraries)
+- Event delegation used for dynamically-rendered table rows (Remove/Confirm/Cancel
+  buttons survive AJAX table re-renders)
+- CSRF token read from cookie for fetch() calls
+- Add and Remove return rendered table HTML in JSON response; table container
+  replaced in-place without full page reload
 
 *Last updated: February 26, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*
