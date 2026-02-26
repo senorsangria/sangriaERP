@@ -1,6 +1,6 @@
 """
 Accounts views: Account list, detail, create, edit, toggle.
-AJAX endpoints: counties, cities, account search.
+AJAX endpoints: states, counties, cities, account search.
 Coverage area management: add, remove.
 Access: Territory Manager, Ambassador Manager, Sales Manager, Supplier Admin.
 """
@@ -275,6 +275,12 @@ def coverage_area_add(request, user_pk):
     if coverage_type not in valid_types:
         return JsonResponse({'error': 'Invalid coverage type.'}, status=400)
 
+    # Coverage area assignments use union logic.
+    # A user sees ALL accounts that match ANY of their coverage area entries
+    # combined. Example: if a user has Distributor X AND City "Hoboken"
+    # assigned, they see all accounts under Distributor X plus all accounts
+    # in Hoboken, regardless of distributor. Sets are combined, not intersected.
+
     # Build create kwargs and check for duplicates based on type
     kwargs = {
         'user': target,
@@ -300,8 +306,8 @@ def coverage_area_add(request, user_pk):
 
     elif coverage_type == UserCoverageArea.CoverageType.STATE:
         state = request.POST.get('state', '').strip().upper()
-        if not state or state not in US_STATES_DICT:
-            return JsonResponse({'error': 'Please select a valid state.'}, status=400)
+        if not state:
+            return JsonResponse({'error': 'Please select a state.'}, status=400)
         kwargs['state'] = state
         exists = UserCoverageArea.objects.filter(
             user=target, company=company,
@@ -391,6 +397,27 @@ def coverage_area_remove(request, user_pk, ca_pk):
 # ---------------------------------------------------------------------------
 # AJAX endpoints (authentication required, company-scoped)
 # ---------------------------------------------------------------------------
+
+def ajax_states(request):
+    """
+    GET /accounts/ajax/states/
+    Returns distinct state_normalized values for the company.
+    Only states with at least one active account are returned.
+    """
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'Authentication required.'}, status=403)
+
+    states = (
+        Account.active_accounts
+        .filter(company=request.user.company)
+        .exclude(state_normalized='')
+        .values_list('state_normalized', flat=True)
+        .distinct()
+        .order_by('state_normalized')
+    )
+
+    return JsonResponse({'states': list(states)})
+
 
 def ajax_counties(request):
     """

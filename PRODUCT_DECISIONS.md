@@ -766,6 +766,14 @@ Admin:
 - Deduplication concept will be revisited if needed; `Account.merged_into`
   self-FK already provides merge support
 
+### Coverage Area Union Logic
+- Coverage area assignments use union logic
+- A user sees ALL accounts that match ANY of their coverage area entries combined
+- Example: Distributor X + City Hoboken = all accounts under Distributor X PLUS
+  all accounts in Hoboken (regardless of distributor)
+- Sets are always combined (union), never intersected (AND)
+- This applies to all roles that use coverage areas: TM, AM, Sales Manager, Ambassador
+
 ### UserCoverageArea — Replaces User M2M Territory Fields
 - New model `accounts.UserCoverageArea` replaces the removed M2M fields on `User`
 - Removed from `User`: `territory` (CharField), `assigned_distributors` (M2M),
@@ -847,7 +855,9 @@ Admin:
 - Form is always visible below the assignments table; resets after each successful
   addition so multiple entries can be added without extra navigation
 - **Distributor type**: dropdown of all active distributors for the company
-- **State type**: dropdown of all 50 US states + DC
+- **State type**: dropdown populated via AJAX from distinct `state_normalized` values
+  in the company's active accounts (same pattern as County and City); shows
+  "No states available yet" message if no account data exists
 - **County type**: state dropdown first; county dropdown populated via AJAX when
   state is selected; message shown if no counties exist for that state yet
 - **City type**: state dropdown first; city dropdown populated via AJAX when state

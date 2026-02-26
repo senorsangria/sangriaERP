@@ -24,6 +24,7 @@ urlpatterns = [
     ),
 
     # AJAX endpoints
+    path('accounts/ajax/states/', views.ajax_states, name='ajax_states'),
     path('accounts/ajax/counties/', views.ajax_counties, name='ajax_counties'),
     path('accounts/ajax/cities/', views.ajax_cities, name='ajax_cities'),
     path('accounts/ajax/search/', views.ajax_accounts_search, name='ajax_accounts_search'),

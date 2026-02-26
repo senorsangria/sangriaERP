@@ -253,22 +253,23 @@
           {% endif %}
         </div>
 
-        <!-- State input -->
+        <!-- State input (loaded via AJAX when State type is selected) -->
         <div id="ca-state-section" class="d-none mb-3">
-          <label class="form-label fw-medium" for="ca-state-select">State</label>
-          <select id="ca-state-select" class="form-select" style="max-width:280px">
+          <label class="form-label fw-medium">State</label>
+          <div id="ca-state-loading" class="text-muted small d-none">
+            <i class="bi bi-hourglass-split me-1"></i>Loading states…
+          </div>
+          <select id="ca-state-select" class="form-select d-none" style="max-width:280px">
             <option value="">Select state…</option>
-            {% for code, name in us_states %}
-            <option value="{{ code }}">{{ name }}</option>
-            {% endfor %}
           </select>
+          <div id="ca-state-message" class="text-muted small mt-1 d-none"></div>
         </div>
 
         <!-- County input -->
         <div id="ca-county-section" class="d-none mb-3">
           <div class="row g-3 align-items-end" style="max-width:560px">
             <div class="col-sm-6">
-              <label class="form-label fw-medium" for="ca-county-state">State</label>
+              <label class="form-label fw-medium" for="ca-county-state">Select a state to see available counties</label>
               <select id="ca-county-state" class="form-select">
                 <option value="">Select state…</option>
                 {% for code, name in us_states %}
@@ -290,7 +291,7 @@
         <div id="ca-city-section" class="d-none mb-3">
           <div class="row g-3 align-items-end" style="max-width:560px">
             <div class="col-sm-6">
-              <label class="form-label fw-medium" for="ca-city-state">State</label>
+              <label class="form-label fw-medium" for="ca-city-state">Select a state to see available cities</label>
               <select id="ca-city-state" class="form-select">
                 <option value="">Select state…</option>
                 {% for code, name in us_states %}
@@ -353,6 +354,7 @@
   // ── Configuration ─────────────────────────────────────────────────────────
   const USER_PK        = {{ target.pk }};
   const ADD_URL        = "{% url 'coverage_area_add' target.pk %}";
+  const STATES_URL     = "{% url 'ajax_states' %}";
   const COUNTIES_URL   = "{% url 'ajax_counties' %}";
   const CITIES_URL     = "{% url 'ajax_cities' %}";
   const SEARCH_URL     = "{% url 'ajax_accounts_search' %}";
@@ -424,8 +426,16 @@
     const distSel = document.getElementById('ca-distributor-select');
     if (distSel) distSel.value = '';
 
-    // Reset state selects
-    ['ca-state-select', 'ca-county-state', 'ca-city-state'].forEach(id => {
+    // Reset state (dynamic dropdown)
+    const stateSel = document.getElementById('ca-state-select');
+    if (stateSel) { stateSel.innerHTML = '<option value="">Select state…</option>'; stateSel.classList.add('d-none'); }
+    const stateMsg = document.getElementById('ca-state-message');
+    if (stateMsg) { stateMsg.textContent = ''; stateMsg.classList.add('d-none'); }
+    const stateLoading = document.getElementById('ca-state-loading');
+    if (stateLoading) stateLoading.classList.add('d-none');
+
+    // Reset county/city state selects
+    ['ca-county-state', 'ca-city-state'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
@@ -453,7 +463,46 @@
   typeSelect.addEventListener('change', function () {
     showSection(this.value);
     clearMsg();
+    if (this.value === 'state') {
+      fetchStates();
+    }
   });
+
+  // ── State: load available states via AJAX ─────────────────────────────────
+  function fetchStates() {
+    const sel     = document.getElementById('ca-state-select');
+    const msg     = document.getElementById('ca-state-message');
+    const loading = document.getElementById('ca-state-loading');
+
+    sel.innerHTML = '<option value="">Select state…</option>';
+    sel.classList.add('d-none');
+    msg.textContent = '';
+    msg.classList.add('d-none');
+    loading.classList.remove('d-none');
+
+    fetch(STATES_URL)
+      .then(r => r.json())
+      .then(data => {
+        loading.classList.add('d-none');
+        if (!data.states || data.states.length === 0) {
+          msg.textContent = 'No states available yet. Import sales data or create accounts first.';
+          msg.classList.remove('d-none');
+        } else {
+          data.states.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s;
+            opt.textContent = s;
+            sel.appendChild(opt);
+          });
+          sel.classList.remove('d-none');
+        }
+      })
+      .catch(() => {
+        loading.classList.add('d-none');
+        msg.textContent = 'Error loading states. Please try again.';
+        msg.classList.remove('d-none');
+      });
+  }
 
   // ── County: load on state change ───────────────────────────────────────────
   const countyStateEl = document.getElementById('ca-county-state');
