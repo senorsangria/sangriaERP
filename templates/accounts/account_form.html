@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block title %}{{ form_title }}{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <a href="{% if account %}{% url 'account_detail' account.pk %}{% else %}{% url 'account_list' %}{% endif %}"
+     class="text-muted text-decoration-none small">
+    <i class="bi bi-arrow-left me-1"></i>
+    {% if account %}Back to {{ account.name }}{% else %}Back to Accounts{% endif %}
+  </a>
+  <h1 class="h3 mb-0 fw-bold mt-1">{{ form_title }}</h1>
+</div>
+
+<div class="row">
+  <div class="col-12 col-lg-7">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body p-4">
+        <form method="post" novalidate>
+          {% csrf_token %}
+
+          {% if form.non_field_errors %}
+          <div class="alert alert-danger">
+            {% for error in form.non_field_errors %}{{ error }}{% endfor %}
+          </div>
+          {% endif %}
+
+          <!-- Account Name -->
+          <div class="mb-3">
+            <label for="{{ form.name.id_for_label }}" class="form-label fw-medium">
+              Account Name <span class="text-danger">*</span>
+            </label>
+            {{ form.name }}
+            {% if form.name.errors %}
+            <div class="invalid-feedback d-block">{{ form.name.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <!-- Street -->
+          <div class="mb-3">
+            <label for="{{ form.street.id_for_label }}" class="form-label fw-medium">Street</label>
+            {{ form.street }}
+            {% if form.street.errors %}
+            <div class="invalid-feedback d-block">{{ form.street.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <!-- City / State / Zip -->
+          <div class="row g-3 mb-3">
+            <div class="col-12 col-sm-5">
+              <label for="{{ form.city.id_for_label }}" class="form-label fw-medium">City</label>
+              {{ form.city }}
+              {% if form.city.errors %}
+              <div class="invalid-feedback d-block">{{ form.city.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+            <div class="col-6 col-sm-4">
+              <label for="{{ form.state.id_for_label }}" class="form-label fw-medium">State</label>
+              {{ form.state }}
+              {% if form.state.errors %}
+              <div class="invalid-feedback d-block">{{ form.state.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+            <div class="col-6 col-sm-3">
+              <label for="{{ form.zip_code.id_for_label }}" class="form-label fw-medium">Zip Code</label>
+              {{ form.zip_code }}
+              {% if form.zip_code.errors %}
+              <div class="invalid-feedback d-block">{{ form.zip_code.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+          </div>
+
+          <!-- Phone -->
+          <div class="mb-3">
+            <label for="{{ form.phone.id_for_label }}" class="form-label fw-medium">Phone</label>
+            {{ form.phone }}
+            {% if form.phone.errors %}
+            <div class="invalid-feedback d-block">{{ form.phone.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <!-- County -->
+          <div class="mb-3">
+            <label for="{{ form.county.id_for_label }}" class="form-label fw-medium">County</label>
+            {{ form.county }}
+            {% if form.county.errors %}
+            <div class="invalid-feedback d-block">{{ form.county.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <!-- On/Off Premise -->
+          <div class="mb-3">
+            <label for="{{ form.on_off_premise.id_for_label }}" class="form-label fw-medium">
+              On / Off Premise
+            </label>
+            {{ form.on_off_premise }}
+            {% if form.on_off_premise.errors %}
+            <div class="invalid-feedback d-block">{{ form.on_off_premise.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <!-- Account Type -->
+          <div class="mb-3">
+            <label for="{{ form.account_type.id_for_label }}" class="form-label fw-medium">
+              Account Type
+            </label>
+            {{ form.account_type }}
+            {% if form.account_type.errors %}
+            <div class="invalid-feedback d-block">{{ form.account_type.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <!-- Distributor -->
+          <div class="mb-3">
+            <label for="{{ form.distributor.id_for_label }}" class="form-label fw-medium">
+              Distributor
+            </label>
+            {{ form.distributor }}
+            {% if form.distributor.errors %}
+            <div class="invalid-feedback d-block">{{ form.distributor.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <!-- Active -->
+          <div class="mb-4">
+            <div class="form-check">
+              {{ form.is_active }}
+              <label class="form-check-label fw-medium" for="{{ form.is_active.id_for_label }}">
+                Active
+              </label>
+            </div>
+            {% if form.is_active.errors %}
+            <div class="invalid-feedback d-block">{{ form.is_active.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-check-lg me-1"></i>Save Account
+            </button>
+            <a href="{% if account %}{% url 'account_detail' account.pk %}{% else %}{% url 'account_list' %}{% endif %}"
+               class="btn btn-outline-secondary">
+              Cancel
+            </a>
+          </div>
+
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

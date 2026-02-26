@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+
+{% block title %}Accounts{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 mb-0 fw-bold">Accounts</h1>
+    <p class="text-muted small mb-0">Retail locations for {{ user.company.name }}</p>
+  </div>
+  <a href="{% url 'account_create' %}" class="btn btn-primary">
+    <i class="bi bi-plus-lg me-1"></i>New Account
+  </a>
+</div>
+
+<!-- Filters -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body py-3">
+    <form method="get" class="row g-2 align-items-end">
+
+      <!-- Search -->
+      <div class="col-12 col-sm-6 col-lg-3">
+        <label class="form-label small text-muted mb-1">Search</label>
+        <div class="input-group input-group-sm">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input
+            type="text" name="q" class="form-control"
+            placeholder="Name or city…"
+            value="{{ search }}"
+          >
+        </div>
+      </div>
+
+      <!-- Distributor filter -->
+      <div class="col-12 col-sm-6 col-lg-3">
+        <label class="form-label small text-muted mb-1">Distributor</label>
+        <select name="distributor" class="form-select form-select-sm">
+          <option value="">All Distributors</option>
+          <option value="none" {% if selected_distributor == 'none' %}selected{% endif %}>None assigned</option>
+          {% for dist in distributors %}
+          <option value="{{ dist.pk }}" {% if selected_distributor == dist.pk|stringformat:"s" %}selected{% endif %}>
+            {{ dist.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- On/Off Premise filter -->
+      <div class="col-12 col-sm-6 col-lg-2">
+        <label class="form-label small text-muted mb-1">On / Off Premise</label>
+        <select name="on_off" class="form-select form-select-sm">
+          <option value="">All</option>
+          <option value="ON" {% if selected_on_off == 'ON' %}selected{% endif %}>ON</option>
+          <option value="OFF" {% if selected_on_off == 'OFF' %}selected{% endif %}>OFF</option>
+          <option value="Unknown" {% if selected_on_off == 'Unknown' %}selected{% endif %}>Unknown</option>
+        </select>
+      </div>
+
+      <!-- Source filter -->
+      <div class="col-12 col-sm-6 col-lg-2">
+        <label class="form-label small text-muted mb-1">Source</label>
+        <select name="source" class="form-select form-select-sm">
+          <option value="">All</option>
+          <option value="manual" {% if selected_source == 'manual' %}selected{% endif %}>Manual</option>
+          <option value="imported" {% if selected_source == 'imported' %}selected{% endif %}>Imported</option>
+        </select>
+      </div>
+
+      <!-- Buttons -->
+      <div class="col-12 col-lg-auto">
+        <button type="submit" class="btn btn-outline-primary btn-sm me-1">Filter</button>
+        {% if search or selected_distributor or selected_on_off or selected_source %}
+        <a href="{% url 'account_list' %}" class="btn btn-outline-secondary btn-sm">Clear</a>
+        {% endif %}
+      </div>
+
+    </form>
+  </div>
+</div>
+
+{% if accounts %}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>Account Name</th>
+          <th class="d-none d-lg-table-cell">Address</th>
+          <th class="d-none d-xl-table-cell">Distributor</th>
+          <th class="d-none d-xl-table-cell">County</th>
+          <th class="d-none d-lg-table-cell text-center">On/Off</th>
+          <th class="d-none d-lg-table-cell">Type</th>
+          <th class="d-none d-sm-table-cell text-center">Source</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for account in accounts %}
+        <tr>
+          <td>
+            <div class="fw-medium">
+              <a href="{% url 'account_detail' account.pk %}" class="text-decoration-none text-dark">
+                {{ account.name }}
+              </a>
+            </div>
+            <!-- Mobile: city/state + source under name -->
+            <div class="d-lg-none text-muted small">
+              {% if account.city or account.state %}
+              {{ account.city }}{% if account.city and account.state %}, {% endif %}{{ account.state }}
+              {% endif %}
+            </div>
+            <div class="d-sm-none mt-1">
+              {% if not account.auto_created %}
+              <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25" style="font-size:.7rem;">Manual</span>
+              {% else %}
+              <span class="badge bg-secondary bg-opacity-10 text-secondary border" style="font-size:.7rem;">Imported</span>
+              {% endif %}
+            </div>
+          </td>
+          <td class="d-none d-lg-table-cell text-muted small">
+            {% if account.street %}{{ account.street }}, {% endif %}
+            {{ account.city }}{% if account.city and account.state %}, {% endif %}{{ account.state }}
+          </td>
+          <td class="d-none d-xl-table-cell text-muted small">
+            {{ account.distributor.name|default:"None" }}
+          </td>
+          <td class="d-none d-xl-table-cell text-muted small">
+            {{ account.county|default:"—" }}
+          </td>
+          <td class="d-none d-lg-table-cell text-center">
+            <span class="badge
+              {% if account.on_off_premise == 'ON' %}bg-success bg-opacity-10 text-success border border-success border-opacity-25
+              {% elif account.on_off_premise == 'OFF' %}bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25
+              {% else %}bg-secondary bg-opacity-10 text-secondary border{% endif %}"
+              style="font-size:.7rem;">
+              {{ account.on_off_premise }}
+            </span>
+          </td>
+          <td class="d-none d-lg-table-cell text-muted small">
+            {{ account.get_account_type_display }}
+          </td>
+          <td class="d-none d-sm-table-cell text-center">
+            {% if not account.auto_created %}
+            <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25">Manual</span>
+            {% else %}
+            <span class="badge bg-secondary bg-opacity-10 text-secondary border">Imported</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+            <div class="d-flex gap-1 justify-content-end flex-wrap">
+              <a href="{% url 'account_detail' account.pk %}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-eye d-sm-none"></i>
+                <span class="d-none d-sm-inline">View</span>
+              </a>
+              <a href="{% url 'account_edit' account.pk %}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
+              </a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<p class="text-muted small mt-2">{{ accounts|length }} account{{ accounts|length|pluralize }}</p>
+
+{% else %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-shop fs-1 text-muted d-block mb-3"></i>
+    <h5 class="fw-semibold">
+      {% if search or selected_distributor or selected_on_off or selected_source %}
+        No accounts match those filters
+      {% else %}
+        No accounts yet
+      {% endif %}
+    </h5>
+    <p class="text-muted mb-3">
+      {% if search or selected_distributor or selected_on_off or selected_source %}
+        Try adjusting your filters.
+      {% else %}
+        Create your first account to get started.
+      {% endif %}
+    </p>
+    {% if not search and not selected_distributor and not selected_on_off and not selected_source %}
+    <a href="{% url 'account_create' %}" class="btn btn-primary">
+      <i class="bi bi-plus-lg me-1"></i>New Account
+    </a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

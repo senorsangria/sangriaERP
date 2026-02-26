@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}{{ account.name }}{% endblock %}
+
+{% block content %}
+
+<!-- Page header -->
+<div class="mb-4">
+  <a href="{% url 'account_list' %}" class="text-muted text-decoration-none small">
+    <i class="bi bi-arrow-left me-1"></i>Back to Accounts
+  </a>
+  <div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mt-1">
+    <div>
+      <h1 class="h3 mb-0 fw-bold">{{ account.name }}</h1>
+      {% if account.city or account.state %}
+      <p class="text-muted mb-0">
+        {{ account.city }}{% if account.city and account.state %}, {% endif %}{{ account.state }}
+      </p>
+      {% endif %}
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{% url 'account_edit' account.pk %}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-pencil me-1"></i>Edit Account
+      </a>
+      <form method="post" action="{% url 'account_toggle' account.pk %}" class="d-inline">
+        {% csrf_token %}
+        {% if account.is_active %}
+        <button type="submit" class="btn btn-outline-danger btn-sm"
+          onclick="return confirm('Deactivate {{ account.name|escapejs }}?')">
+          <i class="bi bi-dash-circle me-1"></i>Deactivate
+        </button>
+        {% else %}
+        <button type="submit" class="btn btn-outline-success btn-sm"
+          onclick="return confirm('Reactivate {{ account.name|escapejs }}?')">
+          <i class="bi bi-check-circle me-1"></i>Reactivate
+        </button>
+        {% endif %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Account info -->
+<div class="row g-4 mb-5">
+  <div class="col-12 col-lg-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent fw-semibold">Account Details</div>
+      <div class="card-body">
+        <dl class="mb-0">
+
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Status</dt>
+            <dd class="col-7 mb-0">
+              {% if account.is_active %}
+              <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
+              {% else %}
+              <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
+              {% endif %}
+            </dd>
+          </div>
+
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Source</dt>
+            <dd class="col-7 mb-0">
+              {% if not account.auto_created %}
+              <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25">Manual</span>
+              {% else %}
+              <span class="badge bg-secondary bg-opacity-10 text-secondary border">Imported</span>
+              {% endif %}
+            </dd>
+          </div>
+
+          {% if account.street %}
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Street</dt>
+            <dd class="col-7 mb-0 small">{{ account.street }}</dd>
+          </div>
+          {% endif %}
+
+          {% if account.city or account.state %}
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">City / State</dt>
+            <dd class="col-7 mb-0 small">
+              {{ account.city }}{% if account.city and account.state %}, {% endif %}{{ account.state }}
+            </dd>
+          </div>
+          {% endif %}
+
+          {% if account.zip_code %}
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Zip Code</dt>
+            <dd class="col-7 mb-0 small">{{ account.zip_code }}</dd>
+          </div>
+          {% endif %}
+
+          {% if account.phone %}
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Phone</dt>
+            <dd class="col-7 mb-0 small">{{ account.phone }}</dd>
+          </div>
+          {% endif %}
+
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">County</dt>
+            <dd class="col-7 mb-0 small">{{ account.county|default:"—" }}</dd>
+          </div>
+
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">On / Off Premise</dt>
+            <dd class="col-7 mb-0 small">{{ account.on_off_premise|default:"—" }}</dd>
+          </div>
+
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Account Type</dt>
+            <dd class="col-7 mb-0 small">{{ account.get_account_type_display }}</dd>
+          </div>
+
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Distributor</dt>
+            <dd class="col-7 mb-0 small">{{ account.distributor.name|default:"None" }}</dd>
+          </div>
+
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Created</dt>
+            <dd class="col-7 mb-0 small">{{ account.created_at|date:"N j, Y" }}</dd>
+          </div>
+
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Events placeholder -->
+<div class="mb-4">
+  <h2 class="h5 fw-bold mb-3">Events</h2>
+  <div class="card border-0 shadow-sm">
+    <div class="card-body text-center py-4 text-muted">
+      <i class="bi bi-calendar-event fs-2 d-block mb-2"></i>
+      Events will appear here in a future phase.
+    </div>
+  </div>
+</div>
+
+<!-- Sales History placeholder -->
+<div class="mb-4">
+  <h2 class="h5 fw-bold mb-3">Sales History</h2>
+  <div class="card border-0 shadow-sm">
+    <div class="card-body text-center py-4 text-muted">
+      <i class="bi bi-graph-up fs-2 d-block mb-2"></i>
+      Sales history will appear here in a future phase.
+    </div>
+  </div>
+</div>
+
+<!-- CRM Notes placeholder -->
+<div class="mb-4">
+  <h2 class="h5 fw-bold mb-3">CRM Notes</h2>
+  <div class="card border-0 shadow-sm">
+    <div class="card-body text-center py-4 text-muted">
+      <i class="bi bi-journal-text fs-2 d-block mb-2"></i>
+      CRM notes will appear here in a future phase.
+    </div>
+  </div>
+</div>
+
+{% endblock %}

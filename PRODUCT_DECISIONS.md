@@ -259,7 +259,7 @@ Searchable list for one-off or exception assignments
 | Phase 2.1 | Brand & Item Management, Distributor Management | ✅ Complete |
 | Phase 2.2 | Sales Data Import, Item Mapping, Batch History | 🔄 In Progress |
 | Phase 2.3 | Account Conflict Detection & Merge Tool | ⬜ Pending |
-| Phase 2.5 | Manual Account Creation | ⬜ Pending |
+| Phase 2.5 | Manual Account Creation | ✅ Complete |
 | Phase 3 | Sales Views | ⬜ Pending |
 | Phase 4 | Saving Sales Views | ⬜ Pending |
 | Phase 5 | CRM — Accounts (contacts, notes) | ⬜ Pending |
@@ -788,6 +788,38 @@ Admin:
 - `brands` M2M was unused; brand-distributor relationships will be modeled
   differently when needed (not current scope)
 - `distribution_distributor_brands` junction table dropped
+
+---
+
+## Phase 2.5 — Completed Features
+
+### Manual Account Creation
+- Account list view at `/accounts/` — accessible to Territory Manager,
+  Ambassador Manager, Sales Manager, and Supplier Admin
+- Search by account name or city; filter by distributor, on/off premise,
+  and source (manual vs. imported)
+- Account detail view at `/accounts/<id>/` — read-only display of all
+  account fields; placeholder sections for Events, Sales History, CRM Notes
+- Create account form at `/accounts/create/` — all editable fields;
+  auto_created set to False; normalized fields populated on save
+- Edit account form at `/accounts/<id>/edit/` — pre-populated; normalized
+  fields re-computed on save
+- Deactivate / Reactivate via POST from the detail page; no separate page
+- All views scoped to the logged-in user's company
+- active_accounts manager used for list view (excludes merged and inactive)
+- normalize_address applied to street, city, state on every save
+- Mobile-friendly: list collapses to name, city/state, and source badge
+  on small screens; full columns visible on lg+ viewports
+
+### Navigation Updates
+- Supplier Admin: Accounts link added to Operations section in sidebar
+  and mobile nav
+- Sales Manager: Accounts placeholder replaced with live link in sidebar
+  and mobile nav
+- Territory Manager: Accounts placeholder replaced with live link in
+  sidebar and mobile nav
+- Ambassador Manager: Accounts link added above Events placeholder in
+  sidebar; Accounts link added to mobile nav
 
 *Last updated: February 26, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*
