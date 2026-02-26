@@ -91,9 +91,6 @@ class User(AbstractUser, TimeStampedModel):
         default=Role.AMBASSADOR,
     )
 
-    # Territory Managers: free-text territory description / label
-    territory = models.CharField(max_length=255, blank=True)
-
     # Contact phone number (optional for all roles)
     phone = models.CharField(max_length=50, blank=True)
 
@@ -104,28 +101,6 @@ class User(AbstractUser, TimeStampedModel):
         null=True,
         blank=True,
         related_name='created_users',
-    )
-
-    # Many-to-many assignments (populated as needed per role)
-    # These use string references to avoid circular imports.
-    assigned_distributors = models.ManyToManyField(
-        'distribution.Distributor',
-        blank=True,
-        related_name='assigned_users',
-    )
-
-    assigned_accounts = models.ManyToManyField(
-        'distribution.Account',
-        blank=True,
-        related_name='assigned_users',
-    )
-
-    # Ambassador Manager → Ambassador relationship (self-referential M2M)
-    managed_ambassadors = models.ManyToManyField(
-        'self',
-        symmetrical=False,
-        blank=True,
-        related_name='managing_users',
     )
 
     class Meta:

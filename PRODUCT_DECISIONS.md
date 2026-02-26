@@ -743,5 +743,51 @@ Admin:
   a dict in Python (no per-cell queries)
 - Distributors with no data for the year still appear as rows
 
-*Last updated: February 25, 2026*
+---
+
+## Phase 2.4 — App Structure & Data Model Cleanup
+
+### New Apps: accounts, sales
+- `apps.accounts` — owns `Account` and `UserCoverageArea` models
+- `apps.sales` — owns `SalesRecord` model
+- Both registered in `INSTALLED_APPS` after `apps.distribution`
+
+### Account Moved: distribution → accounts
+- `Account` model moved from `apps.distribution` to `apps.accounts`
+- `master_account` FK to `MasterAccount` removed (MasterAccount was unused)
+- All FKs updated: `events.Event.account` now points to `accounts.Account`
+- `imports/views.py` now imports `Account` from `apps.accounts.models`
+- Migration path: create `accounts.Account` → update `events.Event.account` FK →
+  delete `distribution.Account`; data preserved (table had 0 records at migration time)
+
+### MasterAccount Removed
+- `MasterAccount` model removed from `apps.distribution`
+- Was a stub for future deduplication; never populated; no data loss
+- Deduplication concept will be revisited if needed; `Account.merged_into`
+  self-FK already provides merge support
+
+### UserCoverageArea — Replaces User M2M Territory Fields
+- New model `accounts.UserCoverageArea` replaces the removed M2M fields on `User`
+- Removed from `User`: `territory` (CharField), `assigned_distributors` (M2M),
+  `assigned_accounts` (M2M), `managed_ambassadors` (M2M)
+- `UserCoverageArea` is flexible: coverage_type choices are distributor, state,
+  county, city, account — supports all current and planned assignment patterns
+- M2M junction tables dropped: `core_user_assigned_accounts`,
+  `core_user_assigned_distributors`, `core_user_managed_ambassadors`
+- UserCoverageArea not yet wired to any view logic; structure only in this phase
+
+### SalesRecord Moved: imports → sales
+- `SalesRecord` model moved from `apps.imports` to `apps.sales`
+- `account` FK updated to point to `accounts.Account` (not `distribution.Account`)
+- `imports/views.py` now imports `SalesRecord` from `apps.sales.models`
+- Migration path: create `sales.SalesRecord` → delete `imports.SalesRecord`;
+  data preserved (table had 0 records at migration time)
+
+### Distributor Cleaned Up
+- Removed from `Distributor`: `brands` (M2M to catalog.Brand), `email`, `phone`
+- `brands` M2M was unused; brand-distributor relationships will be modeled
+  differently when needed (not current scope)
+- `distribution_distributor_brands` junction table dropped
+
+*Last updated: February 26, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*

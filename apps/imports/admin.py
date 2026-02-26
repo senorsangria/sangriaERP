@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ImportBatch, SalesRecord, ItemMapping
+from .models import ImportBatch, ItemMapping
 
 
 @admin.register(ImportBatch)
@@ -8,15 +8,6 @@ class ImportBatchAdmin(admin.ModelAdmin):
     list_filter = ('company', 'import_type', 'status', 'brand')
     search_fields = ('filename', 'company__name', 'brand__name', 'distributor__name')
     readonly_fields = ('import_date', 'created_at', 'updated_at')
-
-
-@admin.register(SalesRecord)
-class SalesRecordAdmin(admin.ModelAdmin):
-    list_display = ('account', 'item', 'quantity', 'sale_date', 'import_batch', 'company')
-    list_filter = ('company', 'sale_date', 'item__brand')
-    search_fields = ('account__name', 'item__item_code', 'item__name')
-    date_hierarchy = 'sale_date'
-    readonly_fields = ('created_at', 'updated_at')
 
 
 @admin.register(ItemMapping)

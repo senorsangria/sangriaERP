@@ -1,5 +1,5 @@
 """
-Import models: ImportBatch, SalesRecord, ItemMapping.
+Import models: ImportBatch, ItemMapping.
 
 Import data (account lists, sales data) comes from distributor CSV exports.
 """
@@ -72,55 +72,6 @@ class ImportBatch(TimeStampedModel):
 
     def __str__(self):
         return f'{self.filename} ({self.get_status_display()}) — {self.import_date}'
-
-
-class SalesRecord(TimeStampedModel):
-    """
-    One line of distributor sales data: what a retailer purchased on a given date.
-
-    Quantity may be negative (returns/corrections).
-    """
-
-    company = models.ForeignKey(
-        'core.Company',
-        on_delete=models.PROTECT,
-        related_name='sales_records',
-    )
-    import_batch = models.ForeignKey(
-        'imports.ImportBatch',
-        on_delete=models.CASCADE,
-        related_name='sales_records',
-    )
-    account = models.ForeignKey(
-        'distribution.Account',
-        on_delete=models.PROTECT,
-        related_name='sales_records',
-    )
-    item = models.ForeignKey(
-        'catalog.Item',
-        on_delete=models.PROTECT,
-        related_name='sales_records',
-    )
-    sale_date = models.DateField()
-    quantity = models.IntegerField(
-        help_text='Quantity sold. May be negative for returns/corrections.',
-    )
-
-    class Meta:
-        verbose_name = 'Sales Record'
-        verbose_name_plural = 'Sales Records'
-        ordering = ['-sale_date']
-        indexes = [
-            models.Index(fields=['company', 'sale_date']),
-            models.Index(fields=['account', 'sale_date']),
-            models.Index(fields=['item', 'sale_date']),
-        ]
-
-    def __str__(self):
-        return (
-            f'{self.account.name} — {self.item.item_code} '
-            f'x{self.quantity} on {self.sale_date}'
-        )
 
 
 class ItemMapping(TimeStampedModel):

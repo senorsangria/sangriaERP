@@ -26,10 +26,12 @@ from django.db import transaction
 from django.db.models.functions import ExtractYear
 from django.shortcuts import get_object_or_404, redirect, render
 
+from apps.accounts.models import Account
 from apps.catalog.models import Item
-from apps.distribution.models import Account, Distributor
+from apps.distribution.models import Distributor
 from apps.imports.forms import ImportUploadForm, ItemMappingForm
-from apps.imports.models import ImportBatch, ItemMapping, SalesRecord
+from apps.imports.models import ImportBatch, ItemMapping
+from apps.sales.models import SalesRecord
 from utils.normalize import normalize_address
 
 

@@ -35,7 +35,7 @@ class Event(TimeStampedModel):
         related_name='events',
     )
     account = models.ForeignKey(
-        'distribution.Account',
+        'accounts.Account',
         on_delete=models.PROTECT,
         related_name='events',
     )

@@ -22,11 +22,7 @@ class UserAdmin(BaseUserAdmin):
                 'company',
                 'role',
                 'phone',
-                'territory',
                 'created_by',
-                'assigned_distributors',
-                'assigned_accounts',
-                'managed_ambassadors',
             ),
         }),
         ('Timestamps', {
@@ -44,5 +40,5 @@ class UserAdmin(BaseUserAdmin):
     list_display = ('username', 'email', 'get_full_name', 'company', 'role', 'is_active')
     list_filter = ('role', 'company', 'is_active', 'is_staff')
     search_fields = ('username', 'email', 'first_name', 'last_name')
-    filter_horizontal = ('assigned_distributors', 'assigned_accounts', 'managed_ambassadors')
+    filter_horizontal = ()
     readonly_fields = ('created_at', 'updated_at')

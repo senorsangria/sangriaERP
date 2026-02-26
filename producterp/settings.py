@@ -57,6 +57,8 @@ INSTALLED_APPS = [
     'apps.core',
     'apps.catalog',
     'apps.distribution',
+    'apps.accounts',
+    'apps.sales',
     'apps.events',
     'apps.imports',
 ]
