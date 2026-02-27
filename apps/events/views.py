@@ -344,6 +344,20 @@ def event_detail(request, pk):
 # Event Create
 # ---------------------------------------------------------------------------
 
+def _account_search_disabled(user):
+    """
+    Return True if the account live search should be disabled for this user
+    (they have no accounts available and no privileged access).
+    """
+    from apps.accounts.models import UserCoverageArea
+    if user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SAAS_ADMIN):
+        return False
+    # All other roles need coverage areas
+    return not UserCoverageArea.objects.filter(
+        user=user, company=user.company
+    ).exists()
+
+
 @login_required
 def event_create(request):
     if request.user.role not in _CREATOR_ROLES:
@@ -358,10 +372,16 @@ def event_create(request):
             event.company = company
             event.created_by = request.user
             event.status = Event.Status.DRAFT
-            # Default event_manager to creator if not set
-            if not event.event_manager_id:
-                if request.user.role in (User.Role.TERRITORY_MANAGER, User.Role.AMBASSADOR_MANAGER):
+
+            # Change 6: Admin events always have event_manager = creator
+            if event.event_type == Event.EventType.ADMIN:
+                event.event_manager = request.user
+                event.start_time = None
+            else:
+                # Change 5: Default event_manager to creator for ALL roles if not set
+                if not event.event_manager_id:
                     event.event_manager = request.user
+
             event.duration_hours = int(form.cleaned_data.get('duration_hours', 0))
             event.save()
             form.save_m2m()
@@ -371,9 +391,11 @@ def event_create(request):
         form = EventForm(company=company, user=request.user)
 
     return render(request, 'events/event_form.html', {
-        'form':       form,
-        'form_title': 'Create Event',
-        'is_create':  True,
+        'form':                   form,
+        'form_title':             'Create Event',
+        'is_create':              True,
+        'account_search_disabled': _account_search_disabled(request.user),
+        'selected_account_name':  '',
     })
 
 
@@ -395,6 +417,10 @@ def event_edit(request, pk):
         if form.is_valid():
             event = form.save(commit=False)
             event.duration_hours = int(form.cleaned_data.get('duration_hours', 0))
+            # Change 6: Admin events always have event_manager = creator, clear start_time
+            if event.event_type == Event.EventType.ADMIN:
+                event.event_manager = event.created_by or request.user
+                event.start_time = None
             event.save()
             form.save_m2m()
             messages.success(request, 'Event updated successfully.')
@@ -403,11 +429,23 @@ def event_edit(request, pk):
         form = EventForm(instance=event, company=company, user=request.user)
         form.fields['duration_hours'].initial = event.duration_hours
 
+    # For the live search display: resolve the currently-selected account name
+    selected_account_name = ''
+    if event.account_id:
+        try:
+            from apps.accounts.models import Account
+            acc = Account.objects.get(pk=event.account_id)
+            selected_account_name = acc.name
+        except Exception:
+            pass
+
     return render(request, 'events/event_form.html', {
-        'form':       form,
-        'event':      event,
-        'form_title': f'Edit Event',
-        'is_create':  False,
+        'form':                   form,
+        'event':                  event,
+        'form_title':             'Edit Event',
+        'is_create':              False,
+        'account_search_disabled': _account_search_disabled(request.user),
+        'selected_account_name':  selected_account_name,
     })
 
 
@@ -513,8 +551,11 @@ def _ambassador_list_response(users):
 def ajax_ambassadors(request):
     """
     GET /events/ajax/ambassadors/?account_id=X
-    Returns ambassadors and ambassador managers covering the given account.
-    For Admin events (no account_id), returns all company ambassadors/AMs.
+    Returns users eligible as ambassadors for the given account:
+      - Ambassador, Ambassador Manager, Territory Manager, Sales Manager
+        filtered by coverage area
+      - Supplier Admin always included regardless of coverage area
+    For Admin events (no account_id), returns all company users in those roles.
     """
     if not request.user.is_authenticated:
         return JsonResponse({'error': 'Authentication required.'}, status=403)
@@ -522,15 +563,25 @@ def ajax_ambassadors(request):
     company = request.user.company
     account_id = request.GET.get('account_id', '').strip()
 
-    roles = [User.Role.AMBASSADOR, User.Role.AMBASSADOR_MANAGER]
+    # Ambassador dropdown roles (Change 7)
+    # SaaS Admin and Distributor Contact are excluded
+    roles = [
+        User.Role.AMBASSADOR,
+        User.Role.AMBASSADOR_MANAGER,
+        User.Role.TERRITORY_MANAGER,
+        User.Role.SALES_MANAGER,
+        User.Role.SUPPLIER_ADMIN,
+    ]
 
     if account_id:
         try:
             account = Account.active_accounts.get(pk=account_id, company=company)
         except Account.DoesNotExist:
             return JsonResponse({'ambassadors': []})
+        # get_users_covering_account handles Supplier Admin specially (always included)
         users = get_users_covering_account(account, roles)
     else:
+        # Admin event: all company users in these roles (except Supplier Admin is included too)
         users = User.objects.filter(
             company=company, role__in=roles, is_active=True
         ).order_by('last_name', 'first_name')
@@ -565,3 +616,49 @@ def ajax_event_managers(request):
         ).order_by('last_name', 'first_name')
 
     return JsonResponse({'event_managers': _ambassador_list_response(users)})
+
+
+@login_required
+def ajax_event_accounts(request):
+    """
+    GET /events/ajax/accounts/?q=searchterm
+    Returns accounts matching the search query, filtered through the user's
+    coverage areas via get_accounts_for_user(). Max 20 results.
+    Searches name, street, city, state (case insensitive).
+    """
+    from django.db.models import Q as DjangoQ
+
+    q = request.GET.get('q', '').strip()
+    if len(q) < 2:
+        return JsonResponse({'accounts': []})
+
+    company = request.user.company
+    if not company:
+        return JsonResponse({'accounts': []})
+
+    accounts = (
+        get_accounts_for_user(request.user)
+        .filter(
+            DjangoQ(name__icontains=q)
+            | DjangoQ(street__icontains=q)
+            | DjangoQ(city__icontains=q)
+            | DjangoQ(state__icontains=q)
+        )
+        .select_related('distributor')
+        .order_by('name')
+        [:20]
+    )
+
+    result = [
+        {
+            'id': a.pk,
+            'name': a.name,
+            'street': a.street or '',
+            'city': a.city or '',
+            'state': a.state or '',
+            'distributor': a.distributor.name if a.distributor else '',
+        }
+        for a in accounts
+    ]
+
+    return JsonResponse({'accounts': result})

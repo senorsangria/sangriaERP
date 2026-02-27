@@ -6,9 +6,30 @@
   .field-section { border-left: 3px solid #dee2e6; padding-left: 1rem; }
   .section-heading { font-size: .8rem; font-weight: 700; text-transform: uppercase;
                      letter-spacing: .06em; color: #6c757d; margin-bottom: .75rem; }
-  /* Hide account / items sections until type is chosen */
+  /* Hide account / items / start-time / event-manager sections until type is chosen */
   #accountSection, #itemsSection { transition: opacity .2s; }
   #accountSection.hidden, #itemsSection.hidden { display: none; }
+  #startTimeWrapper.hidden, #eventManagerWrapper.hidden { display: none; }
+
+  /* Account live search */
+  #accountSearchResults {
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+  }
+  .account-result-item {
+    padding: .6rem .85rem;
+    border-bottom: 1px solid #f0f0f0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+  }
+  .account-result-item:last-child { border-bottom: none; }
+  .account-result-item:hover { background: #f8f9fa; }
 </style>
 {% endblock %}
 
@@ -39,6 +60,9 @@
 <form method="post" id="eventForm">
   {% csrf_token %}
 
+  {# Hidden field for selected account ID (live search result) #}
+  <input type="hidden" name="account" id="id_account" value="{{ form.account.value|default:'' }}">
+
   <div class="row g-3">
 
     <!-- ---- Event Type (always shown first) ---- -->
@@ -65,21 +89,56 @@
       </div>
     </div>
 
-    <!-- ---- Account (hidden for Admin) ---- -->
+    <!-- ---- Account (hidden for Admin) — live search ---- -->
     <div class="col-12" id="accountSection">
       <div class="card">
         <div class="card-body">
           <div class="section-heading">Account</div>
-          <div class="mb-0">
-            <label for="{{ form.account.id_for_label }}" class="form-label">
+
+          {% if account_search_disabled %}
+          {# No accounts available message #}
+          <div class="alert alert-secondary py-2 px-3 small text-muted mb-0">
+            <i class="bi bi-info-circle me-1"></i>
+            No accounts available. Contact your Supplier Admin to set up your coverage areas.
+          </div>
+          {% else %}
+
+          {# Selected account display #}
+          <div id="accountSelected" class="mb-2" style="{% if not form.account.value %}display:none{% endif %}">
+            <div class="d-flex align-items-center gap-2 p-2 bg-light rounded border">
+              <i class="bi bi-shop text-primary"></i>
+              <span id="accountSelectedName" class="fw-medium">
+                {# Populated by JS on load if editing #}
+                {{ selected_account_name|default:'' }}
+              </span>
+              <a href="#" id="accountClear" class="ms-auto text-muted small text-decoration-none">
+                <i class="bi bi-x-circle me-1"></i>Clear
+              </a>
+            </div>
+          </div>
+
+          {# Search input #}
+          <div id="accountSearchWrap">
+            <label class="form-label">
               Account <span class="text-danger" id="accountRequired">*</span>
             </label>
-            {{ form.account }}
-            {% if form.account.errors %}
-            <div class="text-danger small mt-1">{{ form.account.errors|join:", " }}</div>
-            {% endif %}
-            <div class="form-text">Select an account to filter the Ambassador and Event Manager dropdowns.</div>
+            <input
+              type="text"
+              id="accountSearchInput"
+              class="form-control"
+              placeholder="Search by account name, address, or city..."
+              autocomplete="off"
+            >
+            <div id="accountSearchResults" class="mt-1" style="display:none;"></div>
+            <div id="accountSearchHint" class="form-text">Type 2+ characters to search accounts.</div>
           </div>
+
+          {% if form.account.errors %}
+          <div class="text-danger small mt-1">{{ form.account.errors|join:", " }}</div>
+          {% endif %}
+
+          {% endif %}{# end account_search_disabled #}
+
         </div>
       </div>
     </div>
@@ -95,7 +154,7 @@
               {{ form.date }}
               {% if form.date.errors %}<div class="text-danger small mt-1">{{ form.date.errors|join:", " }}</div>{% endif %}
             </div>
-            <div class="col-12 col-sm-6 col-md-4">
+            <div class="col-12 col-sm-6 col-md-4" id="startTimeWrapper">
               <label for="{{ form.start_time.id_for_label }}" class="form-label">Start Time</label>
               {{ form.start_time }}
               {% if form.start_time.errors %}<div class="text-danger small mt-1">{{ form.start_time.errors|join:", " }}</div>{% endif %}
@@ -127,7 +186,7 @@
               {% if form.ambassador.errors %}<div class="text-danger small mt-1">{{ form.ambassador.errors|join:", " }}</div>{% endif %}
               <div class="form-text" id="ambassadorHint">Select an account above to filter ambassadors by coverage area.</div>
             </div>
-            <div class="col-12 col-sm-6">
+            <div class="col-12 col-sm-6" id="eventManagerWrapper">
               <label for="{{ form.event_manager.id_for_label }}" class="form-label">Event Manager</label>
               {{ form.event_manager }}
               {% if form.event_manager.errors %}<div class="text-danger small mt-1">{{ form.event_manager.errors|join:", " }}</div>{% endif %}
@@ -189,12 +248,22 @@
 
   const ambassadorSelect    = document.getElementById('{{ form.ambassador.id_for_label }}');
   const eventManagerSelect  = document.getElementById('{{ form.event_manager.id_for_label }}');
-  const accountSelect       = document.getElementById('{{ form.account.id_for_label }}');
+  const accountHidden       = document.getElementById('id_account');
   const accountSection      = document.getElementById('accountSection');
   const itemsSection        = document.getElementById('itemsSection');
+  const startTimeWrapper    = document.getElementById('startTimeWrapper');
+  const eventManagerWrapper = document.getElementById('eventManagerWrapper');
   const ambassadorHint      = document.getElementById('ambassadorHint');
   const eventManagerHint    = document.getElementById('eventManagerHint');
   const eventTypeRadios     = document.querySelectorAll('input[name="event_type"]');
+
+  // Account live search elements
+  const accountSearchInput   = document.getElementById('accountSearchInput');
+  const accountSearchResults = document.getElementById('accountSearchResults');
+  const accountSearchHint    = document.getElementById('accountSearchHint');
+  const accountSelected      = document.getElementById('accountSelected');
+  const accountSelectedName  = document.getElementById('accountSelectedName');
+  const accountClear         = document.getElementById('accountClear');
 
   // ---- helpers ----
 
@@ -213,13 +282,19 @@
     if (etype === 'admin') {
       accountSection.classList.add('hidden');
       itemsSection.classList.add('hidden');
+      if (startTimeWrapper)    startTimeWrapper.classList.add('hidden');
+      if (eventManagerWrapper) eventManagerWrapper.classList.add('hidden');
     } else if (etype === 'tasting') {
       accountSection.classList.remove('hidden');
       itemsSection.classList.remove('hidden');
+      if (startTimeWrapper)    startTimeWrapper.classList.remove('hidden');
+      if (eventManagerWrapper) eventManagerWrapper.classList.remove('hidden');
     } else {
       // festival
       accountSection.classList.remove('hidden');
       itemsSection.classList.add('hidden');
+      if (startTimeWrapper)    startTimeWrapper.classList.remove('hidden');
+      if (eventManagerWrapper) eventManagerWrapper.classList.remove('hidden');
     }
     // When switching to admin, refresh people dropdowns without account filter
     if (etype === 'admin') {
@@ -283,32 +358,139 @@
     }
   }
 
+  // ---- Account live search ----
+
+  var searchDebounceTimer = null;
+
+  function showAccountSelected(id, name) {
+    if (accountHidden)       accountHidden.value = id;
+    if (accountSelectedName) accountSelectedName.textContent = name;
+    if (accountSelected)     accountSelected.style.display = '';
+    if (accountSearchInput)  accountSearchInput.value = '';
+    if (accountSearchResults){ accountSearchResults.style.display = 'none'; accountSearchResults.innerHTML = ''; }
+    if (accountSearchHint)   accountSearchHint.textContent = 'Account selected. Click Clear to change.';
+    refreshPeopleDropdowns(id);
+  }
+
+  function clearAccountSelection() {
+    if (accountHidden)       accountHidden.value = '';
+    if (accountSelected)     accountSelected.style.display = 'none';
+    if (accountSelectedName) accountSelectedName.textContent = '';
+    if (accountSearchInput)  { accountSearchInput.value = ''; accountSearchInput.focus(); }
+    if (accountSearchResults){ accountSearchResults.style.display = 'none'; accountSearchResults.innerHTML = ''; }
+    if (accountSearchHint)   accountSearchHint.textContent = 'Type 2+ characters to search accounts.';
+    refreshPeopleDropdowns(null);
+  }
+
+  function renderSearchResults(accounts) {
+    if (!accountSearchResults) return;
+    if (!accounts || accounts.length === 0) {
+      accountSearchResults.innerHTML = '<div class="p-3 text-muted small">No accounts found matching your search.</div>';
+      accountSearchResults.style.display = '';
+      return;
+    }
+    const html = accounts.map(function(a) {
+      const street = a.street ? a.street + ', ' : '';
+      const loc = street + a.city + (a.city && a.state ? ', ' : '') + a.state;
+      const dist = a.distributor ? '<span class="text-muted small">' + escapeHtml(a.distributor) + '</span>' : '';
+      return '<div class="account-result-item">' +
+        '<div>' +
+          '<div class="fw-medium">' + escapeHtml(a.name) + '</div>' +
+          (loc ? '<div class="text-muted small">' + escapeHtml(loc) + '</div>' : '') +
+          dist +
+        '</div>' +
+        '<button type="button" class="btn btn-sm btn-outline-primary flex-shrink-0" ' +
+          'data-account-id="' + a.id + '" data-account-name="' + escapeHtml(a.name) + '">' +
+          'Select' +
+        '</button>' +
+      '</div>';
+    }).join('');
+    accountSearchResults.innerHTML = html;
+    accountSearchResults.style.display = '';
+
+    // Wire up select buttons
+    accountSearchResults.querySelectorAll('button[data-account-id]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        showAccountSelected(this.dataset.accountId, this.dataset.accountName);
+      });
+    });
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  if (accountSearchInput) {
+    accountSearchInput.addEventListener('input', function() {
+      clearTimeout(searchDebounceTimer);
+      const q = this.value.trim();
+      if (q.length < 2) {
+        if (accountSearchResults) { accountSearchResults.style.display = 'none'; }
+        return;
+      }
+      searchDebounceTimer = setTimeout(function() {
+        fetch('{% url "ajax_event_accounts" %}?q=' + encodeURIComponent(q), {
+          headers: {'X-Requested-With': 'XMLHttpRequest'}
+        })
+        .then(r => r.json())
+        .then(function(data) { renderSearchResults(data.accounts || []); });
+      }, 300);
+    });
+
+    // Hide results when clicking outside
+    document.addEventListener('click', function(e) {
+      if (accountSearchResults && !accountSearchResults.contains(e.target) && e.target !== accountSearchInput) {
+        accountSearchResults.style.display = 'none';
+      }
+    });
+
+    accountSearchInput.addEventListener('focus', function() {
+      if (accountSearchResults && accountSearchResults.innerHTML && this.value.trim().length >= 2) {
+        accountSearchResults.style.display = '';
+      }
+    });
+  }
+
+  if (accountClear) {
+    accountClear.addEventListener('click', function(e) {
+      e.preventDefault();
+      clearAccountSelection();
+    });
+  }
+
+  // On edit page: if account already selected, show the selected state
+  {% if not is_create and form.account.value %}
+  (function() {
+    var initialId = '{{ form.account.value }}';
+    var initialName = '{{ selected_account_name|escapejs }}';
+    if (initialId && initialName) {
+      showAccountSelected(initialId, initialName);
+    }
+  })();
+  {% endif %}
+
   // ---- wire up event type radios ----
   eventTypeRadios.forEach(function (radio) {
     radio.addEventListener('change', function () {
       updateVisibility();
       const etype = currentEventType();
-      if (etype !== 'admin' && accountSelect && accountSelect.value) {
-        refreshPeopleDropdowns(accountSelect.value);
+      const currentAccountId = accountHidden ? accountHidden.value : '';
+      if (etype !== 'admin' && currentAccountId) {
+        refreshPeopleDropdowns(currentAccountId);
       } else if (etype === 'admin') {
         refreshPeopleDropdowns(null);
       }
     });
   });
 
-  // ---- wire up account dropdown ----
-  if (accountSelect) {
-    accountSelect.addEventListener('change', function () {
-      const accountId = this.value;
-      refreshPeopleDropdowns(accountId || null);
-    });
-  }
-
   // ---- initial page load ----
   updateVisibility();
-  // On edit page, trigger account-based refresh if account already selected
-  if (accountSelect && accountSelect.value) {
-    refreshPeopleDropdowns(accountSelect.value);
+  // On page load, trigger account-based refresh if account already selected
+  const currentAccountId = accountHidden ? accountHidden.value : '';
+  if (currentAccountId) {
+    refreshPeopleDropdowns(currentAccountId);
   } else if (currentEventType() === 'admin') {
     refreshPeopleDropdowns(null);
   }

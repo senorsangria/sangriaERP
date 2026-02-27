@@ -28,15 +28,11 @@ from apps.accounts.views import _build_enhanced_coverage_areas
 USER_MGMT_ROLES = {
     User.Role.SAAS_ADMIN,
     User.Role.SUPPLIER_ADMIN,
-    User.Role.SALES_MANAGER,
-    User.Role.TERRITORY_MANAGER,
-    User.Role.AMBASSADOR_MANAGER,
 }
 
 PASSWORD_RESET_ROLES = {
     User.Role.SAAS_ADMIN,
     User.Role.SUPPLIER_ADMIN,
-    User.Role.SALES_MANAGER,
 }
 
 

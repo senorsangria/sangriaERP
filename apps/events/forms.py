@@ -1,6 +1,8 @@
 """
 Event forms.
 """
+from datetime import datetime
+
 from django import forms
 
 from apps.catalog.models import Item
@@ -48,6 +50,11 @@ class EventForm(forms.ModelForm):
     def __init__(self, *args, company=None, user=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.company = company
+
+        # Change 4: Default start_time to current hour with :00 minutes on create
+        if not self.instance.pk:
+            now = datetime.now()
+            self.fields['start_time'].initial = now.strftime('%H:00')
 
         # Scope account dropdown through coverage area union logic
         from apps.accounts.models import Account

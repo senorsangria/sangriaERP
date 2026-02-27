@@ -153,9 +153,11 @@
                 <i class="bi bi-eye d-sm-none"></i>
                 <span class="d-none d-sm-inline">View</span>
               </a>
+              {% if not account.auto_created %}
               <a href="{% url 'account_edit' account.pk %}" class="btn btn-outline-secondary btn-sm">
                 <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
               </a>
+              {% endif %}
             </div>
           </td>
         </tr>

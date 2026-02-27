@@ -119,10 +119,10 @@ def account_list(request):
     accounts = get_accounts_for_user(request.user).select_related('distributor')
 
     # Determine if we should show the "no coverage areas" message:
-    # only for roles that use coverage area filtering (not SA/SM) and only
-    # when the user has no coverage areas assigned at all.
+    # Only Supplier Admin and SaaS Admin are not coverage-area scoped.
+    # All other roles (including Sales Manager) use coverage area filtering.
     is_privileged = request.user.role in (
-        User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER
+        User.Role.SUPPLIER_ADMIN, User.Role.SAAS_ADMIN
     )
     show_no_coverage_message = False
     if not is_privileged:
@@ -222,6 +222,13 @@ def account_edit(request, pk):
         return denied
 
     account = get_object_or_404(Account, pk=pk, company=request.user.company)
+
+    if account.auto_created:
+        messages.error(
+            request,
+            'This account was created from a sales data import and cannot be edited manually.',
+        )
+        return redirect('account_detail', pk=pk)
 
     if request.method == 'POST':
         form = AccountForm(request.POST, instance=account, company=request.user.company)
@@ -484,7 +491,8 @@ def ajax_cities(request):
 def ajax_accounts_search(request):
     """
     GET /accounts/ajax/search/?q=barrel
-    Returns accounts matching the search query (max 20).
+    Returns accounts matching the search query (max 20), filtered through
+    get_accounts_for_user() to respect coverage area rules.
     Searches name, street, city, state.
     """
     if not request.user.is_authenticated:
@@ -495,8 +503,7 @@ def ajax_accounts_search(request):
         return JsonResponse({'accounts': []})
 
     accounts = (
-        Account.active_accounts
-        .filter(company=request.user.company)
+        get_accounts_for_user(request.user)
         .filter(
             Q(name__icontains=q)
             | Q(street__icontains=q)

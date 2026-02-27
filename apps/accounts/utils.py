@@ -13,6 +13,12 @@ def get_accounts_for_user(user):
     Return a queryset of active accounts visible to user based on their
     coverage areas (union logic).
 
+    Final visibility rules:
+      - SaaS Admin:      all accounts across all companies (no company filter)
+      - Supplier Admin:  all active accounts for their company (no coverage filter)
+      - All other roles: coverage area union logic; empty queryset if no areas assigned
+        (this includes Sales Manager, TM, AM, Ambassador, Distributor Contact)
+
     A user's coverage areas define which accounts they see. The result is the
     union of all accounts matching ANY of their coverage area entries:
       - Distributor coverage → all accounts under that distributor
@@ -20,18 +26,22 @@ def get_accounts_for_user(user):
       - County coverage     → all accounts in that county + state
       - City coverage       → all accounts in that city + state
       - Account coverage    → that specific account directly
-
-    Supplier Admin and Sales Manager always see all company accounts.
     """
     from apps.core.models import User as UserModel
+
+    if user.role == UserModel.Role.SAAS_ADMIN:
+        # SaaS Admin sees all accounts across all companies
+        return Account.active_accounts.all()
 
     company = user.company
     if not company:
         return Account.active_accounts.none()
 
-    if user.role in (UserModel.Role.SUPPLIER_ADMIN, UserModel.Role.SALES_MANAGER):
+    if user.role == UserModel.Role.SUPPLIER_ADMIN:
+        # Supplier Admin sees all accounts for their company
         return Account.active_accounts.filter(company=company)
 
+    # All other roles: coverage area union logic
     coverage_areas = list(
         UserCoverageArea.objects.filter(user=user, company=company)
         .select_related('distributor', 'account')
@@ -63,10 +73,15 @@ def get_users_covering_account(account, roles):
     Return a queryset of users with the given roles whose coverage areas
     include the given account.
 
-    Uses the same union logic as get_accounts_for_user but in reverse: checks
-    whether each user has at least one coverage area that covers the account.
+    Special rule for Supplier Admin:
+      - If 'supplier_admin' is in roles, Supplier Admins are always included
+        for any account regardless of coverage area.
 
-    An ambassador/TM/AM covers an account if ANY of these are true:
+    For all other roles, uses the same union logic as get_accounts_for_user
+    but in reverse: checks whether each user has at least one coverage area
+    that covers the account.
+
+    An ambassador/TM/AM/SM covers an account if ANY of these are true:
       - They have a Distributor coverage matching the account's distributor
       - They have a State coverage matching the account's state_normalized
       - They have a County coverage matching account's county + state_normalized
@@ -75,7 +90,7 @@ def get_users_covering_account(account, roles):
 
     Args:
         account: Account instance
-        roles:   iterable of role strings (e.g. ['ambassador', 'ambassador_manager'])
+        roles:   iterable of role strings (e.g. ['ambassador', 'territory_manager'])
 
     Returns:
         QuerySet of User instances ordered by last_name, first_name
@@ -83,6 +98,11 @@ def get_users_covering_account(account, roles):
     from apps.core.models import User as UserModel
 
     company = account.company
+    roles = list(roles)
+
+    # Separate Supplier Admin (always included) from coverage-filtered roles
+    include_supplier_admin = UserModel.Role.SUPPLIER_ADMIN in roles
+    filtered_roles = [r for r in roles if r != UserModel.Role.SUPPLIER_ADMIN]
 
     # Build Q matching UserCoverageArea records that cover this account
     coverage_q = Q(pk__in=[])
@@ -114,19 +134,30 @@ def get_users_covering_account(account, roles):
         account_id=account.pk,
     )
 
-    covering_user_pks = (
-        UserCoverageArea.objects.filter(company=company)
-        .filter(coverage_q)
-        .values_list('user_id', flat=True)
-        .distinct()
-    )
+    # Coverage-filtered users
+    result_qs = UserModel.objects.none()
 
-    return (
-        UserModel.objects.filter(
+    if filtered_roles:
+        covering_user_pks = (
+            UserCoverageArea.objects.filter(company=company)
+            .filter(coverage_q)
+            .values_list('user_id', flat=True)
+            .distinct()
+        )
+        coverage_filtered = UserModel.objects.filter(
             company=company,
-            role__in=roles,
+            role__in=filtered_roles,
+            is_active=True,
+            pk__in=covering_user_pks,
+        )
+        result_qs = coverage_filtered
+
+    if include_supplier_admin:
+        supplier_admins = UserModel.objects.filter(
+            company=company,
+            role=UserModel.Role.SUPPLIER_ADMIN,
             is_active=True,
         )
-        .filter(pk__in=covering_user_pks)
-        .order_by('last_name', 'first_name')
-    )
+        result_qs = result_qs | supplier_admins
+
+    return result_qs.order_by('last_name', 'first_name').distinct()

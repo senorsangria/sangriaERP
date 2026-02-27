@@ -695,19 +695,35 @@ Admin:
   not for ownership or authority
 - Many-to-many relationships needed for each geographic dimension
 
-### Universal Account Visibility Rule
-- Any time any user sees a list of accounts anywhere in the system the list is
-  filtered through their coverage area union logic
-- Supplier Admin: sees all company accounts
-- Sales Manager: sees all company accounts
-- All other roles: sees only accounts within their coverage area via
-  get_accounts_for_user()
-- If a user has no coverage areas assigned they see zero accounts and receive
-  a message to contact their Supplier Admin
-- This rule applies everywhere accounts are displayed: account list, event
-  create/edit dropdowns, and all future views
+### Universal Account Visibility Rule (Final)
+- SaaS Admin: sees all accounts across all companies, no filtering
+- Supplier Admin: sees all accounts for their company, no coverage area filtering
+- All other roles including Sales Manager, TM, AM, Ambassador: coverage area
+  filtering applies
+- Zero accounts shown if no coverage areas assigned (with explanatory message)
 - get_accounts_for_user() in accounts/utils.py is the single source of truth
   for this logic and must be used consistently everywhere
+
+### User Management Access
+- Only Supplier Admin and SaaS Admin can create, edit, and manage users
+- Only Supplier Admin and SaaS Admin can see the Users area in navigation
+- All other roles have no user management access
+
+### Imported Account Editing
+- Accounts created by sales data import (auto_created=True) cannot be manually edited
+- Edit button hidden in list and detail views
+- Server-side guard prevents direct URL access to edit page for imported accounts
+- Explanatory note shown on detail page
+
+### Admin Event Rules
+- Start time not captured for admin events
+- Event Manager always set to creator for admin events, field not shown
+- Duration (hours + minutes) is the only time-related field for admin events
+
+### Ambassador Dropdown Roles
+- Ambassador, AM, TM, Sales Manager filtered by coverage area
+- Supplier Admin appears for all events regardless of coverage area
+- SaaS Admin and Distributor Contact excluded from ambassador dropdown
 
 ### Manual Account Creation (Phase 2.5)
 - Lightweight form to manually create an account when it doesn't

@@ -18,4 +18,5 @@ urlpatterns = [
     # AJAX
     path('events/ajax/ambassadors/', views.ajax_ambassadors, name='ajax_event_ambassadors'),
     path('events/ajax/event_managers/', views.ajax_event_managers, name='ajax_event_managers'),
+    path('events/ajax/accounts/', views.ajax_event_accounts, name='ajax_event_accounts'),
 ]
