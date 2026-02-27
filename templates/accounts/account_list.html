@@ -170,21 +170,18 @@
 <div class="card border-0 shadow-sm">
   <div class="card-body text-center py-5">
     <i class="bi bi-shop fs-1 text-muted d-block mb-3"></i>
-    <h5 class="fw-semibold">
-      {% if search or selected_distributor or selected_on_off or selected_source %}
-        No accounts match those filters
-      {% else %}
-        No accounts yet
-      {% endif %}
-    </h5>
+    {% if show_no_coverage_message %}
+    <h5 class="fw-semibold">No accounts assigned to your coverage area</h5>
     <p class="text-muted mb-3">
-      {% if search or selected_distributor or selected_on_off or selected_source %}
-        Try adjusting your filters.
-      {% else %}
-        Create your first account to get started.
-      {% endif %}
+      No accounts are currently assigned to your coverage area.
+      Please contact your Supplier Admin to set up your coverage areas.
     </p>
-    {% if not search and not selected_distributor and not selected_on_off and not selected_source %}
+    {% elif search or selected_distributor or selected_on_off or selected_source %}
+    <h5 class="fw-semibold">No accounts match those filters</h5>
+    <p class="text-muted mb-3">Try adjusting your filters.</p>
+    {% else %}
+    <h5 class="fw-semibold">No accounts yet</h5>
+    <p class="text-muted mb-3">Create your first account to get started.</p>
     <a href="{% url 'account_create' %}" class="btn btn-primary">
       <i class="bi bi-plus-lg me-1"></i>New Account
     </a>

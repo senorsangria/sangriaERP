@@ -166,7 +166,7 @@ class UserEditForm(forms.ModelForm):
         self.fields['phone'].required = False
 
     def clean_username(self):
-        username = self.cleaned_data.get('username')
+        username = self.cleaned_data.get('username', '').lower()
         qs = User.objects.filter(username=username)
         if self.instance and self.instance.pk:
             qs = qs.exclude(pk=self.instance.pk)

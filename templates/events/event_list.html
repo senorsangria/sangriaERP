@@ -46,7 +46,7 @@
             aria-expanded="false" aria-controls="filterCard">
       <i class="bi bi-funnel me-1"></i>Filters
     </button>
-    {% if user.role in "supplier_admin sales_manager territory_manager ambassador_manager" %}
+    {% if user.role == 'supplier_admin' or user.role == 'sales_manager' or user.role == 'territory_manager' or user.role == 'ambassador_manager' %}
     <a href="{% url 'event_create' %}" class="btn btn-sm btn-primary">
       <i class="bi bi-plus-lg me-1"></i>New Event
     </a>

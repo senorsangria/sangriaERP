@@ -18,6 +18,7 @@ from utils.normalize import normalize_address
 from .models import Account, UserCoverageArea
 from .forms import AccountForm
 from .constants import US_STATES, US_STATES_DICT
+from .utils import get_accounts_for_user
 
 
 _ALLOWED_ROLES = {
@@ -114,11 +115,22 @@ def account_list(request):
     if denied:
         return denied
 
-    accounts = (
-        Account.active_accounts
-        .filter(company=request.user.company)
-        .select_related('distributor')
+    # Apply universal coverage area scoping
+    accounts = get_accounts_for_user(request.user).select_related('distributor')
+
+    # Determine if we should show the "no coverage areas" message:
+    # only for roles that use coverage area filtering (not SA/SM) and only
+    # when the user has no coverage areas assigned at all.
+    is_privileged = request.user.role in (
+        User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER
     )
+    show_no_coverage_message = False
+    if not is_privileged:
+        has_coverage = UserCoverageArea.objects.filter(
+            user=request.user, company=request.user.company
+        ).exists()
+        if not has_coverage:
+            show_no_coverage_message = True
 
     # Search by name or city
     search = request.GET.get('q', '').strip()
@@ -158,6 +170,7 @@ def account_list(request):
         'selected_distributor': distributor_id,
         'selected_on_off': on_off,
         'selected_source': source,
+        'show_no_coverage_message': show_no_coverage_message,
     })
 
 

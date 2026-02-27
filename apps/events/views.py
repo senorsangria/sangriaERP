@@ -352,7 +352,7 @@ def event_create(request):
     company = request.user.company
 
     if request.method == 'POST':
-        form = EventForm(request.POST, company=company)
+        form = EventForm(request.POST, company=company, user=request.user)
         if form.is_valid():
             event = form.save(commit=False)
             event.company = company
@@ -368,7 +368,7 @@ def event_create(request):
             messages.success(request, 'Event created successfully.')
             return redirect('event_detail', pk=event.pk)
     else:
-        form = EventForm(company=company)
+        form = EventForm(company=company, user=request.user)
 
     return render(request, 'events/event_form.html', {
         'form':       form,
@@ -391,7 +391,7 @@ def event_edit(request, pk):
     event = get_object_or_404(visible, pk=pk, company=company)
 
     if request.method == 'POST':
-        form = EventForm(request.POST, instance=event, company=company)
+        form = EventForm(request.POST, instance=event, company=company, user=request.user)
         if form.is_valid():
             event = form.save(commit=False)
             event.duration_hours = int(form.cleaned_data.get('duration_hours', 0))
@@ -400,7 +400,7 @@ def event_edit(request, pk):
             messages.success(request, 'Event updated successfully.')
             return redirect('event_detail', pk=event.pk)
     else:
-        form = EventForm(instance=event, company=company)
+        form = EventForm(instance=event, company=company, user=request.user)
         form.fields['duration_hours'].initial = event.duration_hours
 
     return render(request, 'events/event_form.html', {

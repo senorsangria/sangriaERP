@@ -32,9 +32,13 @@ def get_accounts_for_user(user):
     if user.role in (UserModel.Role.SUPPLIER_ADMIN, UserModel.Role.SALES_MANAGER):
         return Account.active_accounts.filter(company=company)
 
-    coverage_areas = UserCoverageArea.objects.filter(
-        user=user, company=company
-    ).select_related('distributor', 'account')
+    coverage_areas = list(
+        UserCoverageArea.objects.filter(user=user, company=company)
+        .select_related('distributor', 'account')
+    )
+
+    if not coverage_areas:
+        return Account.active_accounts.none()
 
     # Build union Q across all coverage areas
     q = Q(pk__in=[])  # start with an empty match

@@ -45,16 +45,23 @@ class EventForm(forms.ModelForm):
             'notes': forms.Textarea(attrs={'rows': 3, 'class': 'form-control'}),
         }
 
-    def __init__(self, *args, company=None, **kwargs):
+    def __init__(self, *args, company=None, user=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.company = company
 
-        # Scope account dropdown to active company accounts
+        # Scope account dropdown through coverage area union logic
         from apps.accounts.models import Account
-        self.fields['account'].queryset = (
-            Account.active_accounts.filter(company=company).order_by('name')
-            if company else Account.active_accounts.none()
-        )
+        from apps.accounts.utils import get_accounts_for_user
+        if user is not None:
+            self.fields['account'].queryset = (
+                get_accounts_for_user(user).order_by('name')
+            )
+        elif company:
+            self.fields['account'].queryset = (
+                Account.active_accounts.filter(company=company).order_by('name')
+            )
+        else:
+            self.fields['account'].queryset = Account.active_accounts.none()
         self.fields['account'].required = False
         self.fields['account'].empty_label = '— Select account —'
 

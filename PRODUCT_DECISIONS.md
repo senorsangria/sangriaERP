@@ -695,6 +695,20 @@ Admin:
   not for ownership or authority
 - Many-to-many relationships needed for each geographic dimension
 
+### Universal Account Visibility Rule
+- Any time any user sees a list of accounts anywhere in the system the list is
+  filtered through their coverage area union logic
+- Supplier Admin: sees all company accounts
+- Sales Manager: sees all company accounts
+- All other roles: sees only accounts within their coverage area via
+  get_accounts_for_user()
+- If a user has no coverage areas assigned they see zero accounts and receive
+  a message to contact their Supplier Admin
+- This rule applies everywhere accounts are displayed: account list, event
+  create/edit dropdowns, and all future views
+- get_accounts_for_user() in accounts/utils.py is the single source of truth
+  for this logic and must be used consistently everywhere
+
 ### Manual Account Creation (Phase 2.5)
 - Lightweight form to manually create an account when it doesn't
   exist in the system
