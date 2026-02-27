@@ -5,22 +5,29 @@ from .models import Event
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
     list_display = (
-        'account', 'brand', 'event_type', 'scheduled_date',
-        'scheduled_time', 'ambassador', 'status', 'company',
+        'account', 'event_type', 'date', 'start_time',
+        'ambassador', 'event_manager', 'status', 'company',
     )
-    list_filter = ('company', 'event_type', 'status', 'brand', 'scheduled_date')
-    search_fields = ('account__name', 'brand__name', 'ambassador__first_name', 'ambassador__last_name')
-    date_hierarchy = 'scheduled_date'
+    list_filter = ('company', 'event_type', 'status', 'date')
+    search_fields = (
+        'account__name', 'ambassador__first_name', 'ambassador__last_name',
+        'event_manager__first_name', 'event_manager__last_name',
+    )
+    date_hierarchy = 'date'
     readonly_fields = ('created_at', 'updated_at')
+    filter_horizontal = ('items',)
     fieldsets = (
         (None, {
-            'fields': ('company', 'account', 'brand', 'event_type', 'status'),
+            'fields': ('company', 'event_type', 'status', 'account'),
         }),
         ('Schedule', {
-            'fields': ('scheduled_date', 'scheduled_time', 'duration_minutes'),
+            'fields': ('date', 'start_time', 'duration_hours', 'duration_minutes'),
         }),
-        ('Staff', {
-            'fields': ('ambassador', 'ambassador_manager'),
+        ('People', {
+            'fields': ('ambassador', 'event_manager', 'created_by'),
+        }),
+        ('Items & Notes', {
+            'fields': ('items', 'notes', 'revision_note'),
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

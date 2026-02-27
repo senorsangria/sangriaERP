@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}Event Detail{% endblock %}
+
+{% block extra_css %}
+<style>
+  .info-label { font-size: .75rem; font-weight: 600; color: #6c757d; text-transform: uppercase; letter-spacing: .04em; }
+  .revision-alert { border-left: 4px solid #dc3545; background: #fff5f5; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center mb-3 gap-2 flex-wrap">
+  <a href="{% url 'event_list' %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Events
+  </a>
+  <h4 class="mb-0 fw-semibold flex-grow-1">
+    {% if event.account %}{{ event.account.name }}{% else %}Admin Event{% endif %}
+  </h4>
+  {% if can_edit %}
+  <a href="{% url 'event_edit' event.pk %}" class="btn btn-sm btn-outline-primary">
+    <i class="bi bi-pencil me-1"></i>Edit
+  </a>
+  {% endif %}
+</div>
+
+<!-- Status badges row -->
+<div class="d-flex gap-2 mb-4 flex-wrap">
+  <span class="badge bg-light text-dark border fs-6">
+    <i class="bi bi-calendar-event me-1"></i>{{ event.get_event_type_display }}
+  </span>
+  <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status == 'recap_submitted' %}dark{% else %}white{% endif %} fs-6">
+    {{ event.get_status_display }}
+  </span>
+</div>
+
+<!-- Revision note alert (shown prominently when status = Revision Requested) -->
+{% if event.status == 'revision_requested' and event.revision_note %}
+<div class="alert revision-alert mb-4" role="alert">
+  <strong><i class="bi bi-exclamation-triangle-fill me-2"></i>Revision Requested</strong>
+  <p class="mb-0 mt-1">{{ event.revision_note }}</p>
+</div>
+{% endif %}
+
+<div class="row g-3">
+
+  <!-- Left column -->
+  <div class="col-12 col-md-6">
+    <div class="card h-100">
+      <div class="card-header fw-semibold small text-muted">Location</div>
+      <div class="card-body">
+        {% if event.account %}
+        <div class="fw-semibold">{{ event.account.name }}</div>
+        {% if event.account.street %}
+        <div class="text-muted small">{{ event.account.street }}</div>
+        {% endif %}
+        {% if event.account.city or event.account.state %}
+        <div class="text-muted small">
+          {{ event.account.city }}{% if event.account.city and event.account.state %}, {% endif %}{{ event.account.state }}
+          {% if event.account.zip_code %} {{ event.account.zip_code }}{% endif %}
+        </div>
+        {% endif %}
+        {% if event.account.distributor %}
+        <div class="mt-2 small">
+          <span class="info-label">Distributor</span><br>
+          {{ event.account.distributor.name }}
+        </div>
+        {% endif %}
+        {% else %}
+        <span class="text-muted fst-italic">Admin Event — no account</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Right column -->
+  <div class="col-12 col-md-6">
+    <div class="card h-100">
+      <div class="card-header fw-semibold small text-muted">Schedule</div>
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-6">
+            <div class="info-label">Date</div>
+            {% if event.date %}{{ event.date|date:"N j, Y" }}{% else %}<span class="text-muted">Not set</span>{% endif %}
+          </div>
+          <div class="col-6">
+            <div class="info-label">Start Time</div>
+            {% if event.start_time %}{{ event.start_time|time:"g:i A" }}{% else %}<span class="text-muted">Not set</span>{% endif %}
+          </div>
+          <div class="col-6">
+            <div class="info-label">Duration</div>
+            {{ event.duration_display }}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- People -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header fw-semibold small text-muted">People</div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-12 col-sm-4">
+            <div class="info-label">Ambassador</div>
+            {% if event.ambassador %}
+              {{ event.ambassador.get_full_name|default:event.ambassador.username }}
+              <div class="small text-muted">{{ event.ambassador.get_role_display }}</div>
+            {% else %}
+              <span class="text-muted fst-italic">Unassigned</span>
+            {% endif %}
+          </div>
+          <div class="col-12 col-sm-4">
+            <div class="info-label">Event Manager</div>
+            {% if event.event_manager %}
+              {{ event.event_manager.get_full_name|default:event.event_manager.username }}
+              <div class="small text-muted">{{ event.event_manager.get_role_display }}</div>
+            {% else %}
+              <span class="text-muted fst-italic">Not assigned</span>
+            {% endif %}
+          </div>
+          <div class="col-12 col-sm-4">
+            <div class="info-label">Created By</div>
+            {% if event.created_by %}
+              {{ event.created_by.get_full_name|default:event.created_by.username }}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Items (Tasting only) -->
+  {% if event.event_type == 'tasting' %}
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header fw-semibold small text-muted">Items to be Sampled</div>
+      <div class="card-body">
+        {% with items=event.items.all %}
+        {% if items %}
+        <ul class="list-unstyled mb-0">
+          {% for item in items %}
+          <li class="d-flex align-items-center gap-2 py-1 border-bottom">
+            <i class="bi bi-dot text-muted"></i>
+            <div>
+              <div>{{ item.name }}</div>
+              <div class="small text-muted">{{ item.item_code }} &mdash; {{ item.brand.name }}</div>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <span class="text-muted fst-italic">No items selected</span>
+        {% endif %}
+        {% endwith %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Notes -->
+  {% if event.notes %}
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header fw-semibold small text-muted">Notes</div>
+      <div class="card-body">
+        <p class="mb-0" style="white-space: pre-wrap;">{{ event.notes }}</p>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Status action buttons -->
+  {% if can_action %}
+  <div class="col-12">
+    <div class="card border-0 bg-transparent">
+      <div class="card-body px-0 pt-0">
+
+        <!-- Draft → Scheduled -->
+        {% if event.status == 'draft' %}
+        <form method="post" action="{% url 'event_release' event.pk %}" class="d-inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-primary"
+                  onclick="return confirm('Release this event and mark it as Scheduled?')">
+            <i class="bi bi-send me-1"></i>Release Event
+          </button>
+        </form>
+        {% endif %}
+
+        <!-- Recap Submitted → Complete or Revision Requested -->
+        {% if event.status == 'recap_submitted' %}
+        <form method="post" action="{% url 'event_approve' event.pk %}" class="d-inline me-2">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-success"
+                  onclick="return confirm('Approve this recap and mark the event as Complete?')">
+            <i class="bi bi-check-circle me-1"></i>Approve &amp; Complete
+          </button>
+        </form>
+        <button type="button" class="btn btn-outline-danger"
+                data-bs-toggle="modal" data-bs-target="#revisionModal">
+          <i class="bi bi-arrow-counterclockwise me-1"></i>Request Revision
+        </button>
+        {% endif %}
+
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div><!-- /row -->
+
+<!-- ================================================================
+     Revision request modal
+     ================================================================ -->
+{% if can_action and event.status == 'recap_submitted' %}
+<div class="modal fade" id="revisionModal" tabindex="-1" aria-labelledby="revisionModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{% url 'event_request_revision' event.pk %}">
+        {% csrf_token %}
+        <div class="modal-header">
+          <h5 class="modal-title" id="revisionModalLabel">
+            <i class="bi bi-arrow-counterclockwise me-2"></i>Request Revision
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small">Explain what needs to be fixed. The ambassador will see this note.</p>
+          <div class="mb-3">
+            <label for="revision_note" class="form-label fw-semibold">Revision Note <span class="text-danger">*</span></label>
+            <textarea name="revision_note" id="revision_note" class="form-control" rows="4"
+                      placeholder="Describe what needs to be corrected or added…" required></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-danger">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>Send Revision Request
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

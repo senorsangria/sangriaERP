@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+{% block title %}{{ form_title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .field-section { border-left: 3px solid #dee2e6; padding-left: 1rem; }
+  .section-heading { font-size: .8rem; font-weight: 700; text-transform: uppercase;
+                     letter-spacing: .06em; color: #6c757d; margin-bottom: .75rem; }
+  /* Hide account / items sections until type is chosen */
+  #accountSection, #itemsSection { transition: opacity .2s; }
+  #accountSection.hidden, #itemsSection.hidden { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-2 mb-3">
+  {% if is_create %}
+  <a href="{% url 'event_list' %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Events
+  </a>
+  {% else %}
+  <a href="{% url 'event_detail' event.pk %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back
+  </a>
+  {% endif %}
+  <h4 class="mb-0 fw-semibold">{{ form_title }}</h4>
+</div>
+
+{% if not is_create %}
+<div class="mb-3">
+  <span class="text-muted small">Status:</span>
+  <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status == 'recap_submitted' %}dark{% else %}white{% endif %} ms-1">
+    {{ event.get_status_display }}
+  </span>
+  <span class="small text-muted ms-2">(status changes via action buttons on the detail page)</span>
+</div>
+{% endif %}
+
+<form method="post" id="eventForm">
+  {% csrf_token %}
+
+  <div class="row g-3">
+
+    <!-- ---- Event Type (always shown first) ---- -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <div class="section-heading">Event Type</div>
+          <div class="row g-2">
+            {% for val, label in form.fields.event_type.choices %}
+            <div class="col-auto">
+              <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="event_type"
+                       id="et_{{ val }}" value="{{ val }}"
+                       {% if form.event_type.value == val %}checked{% elif is_create and val == 'tasting' and not form.event_type.value %}checked{% endif %}>
+                <label class="form-check-label" for="et_{{ val }}">{{ label }}</label>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% if form.event_type.errors %}
+          <div class="text-danger small mt-1">{{ form.event_type.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- ---- Account (hidden for Admin) ---- -->
+    <div class="col-12" id="accountSection">
+      <div class="card">
+        <div class="card-body">
+          <div class="section-heading">Account</div>
+          <div class="mb-0">
+            <label for="{{ form.account.id_for_label }}" class="form-label">
+              Account <span class="text-danger" id="accountRequired">*</span>
+            </label>
+            {{ form.account }}
+            {% if form.account.errors %}
+            <div class="text-danger small mt-1">{{ form.account.errors|join:", " }}</div>
+            {% endif %}
+            <div class="form-text">Select an account to filter the Ambassador and Event Manager dropdowns.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---- Schedule ---- -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <div class="section-heading">Schedule</div>
+          <div class="row g-3">
+            <div class="col-12 col-sm-6 col-md-4">
+              <label for="{{ form.date.id_for_label }}" class="form-label">Date</label>
+              {{ form.date }}
+              {% if form.date.errors %}<div class="text-danger small mt-1">{{ form.date.errors|join:", " }}</div>{% endif %}
+            </div>
+            <div class="col-12 col-sm-6 col-md-4">
+              <label for="{{ form.start_time.id_for_label }}" class="form-label">Start Time</label>
+              {{ form.start_time }}
+              {% if form.start_time.errors %}<div class="text-danger small mt-1">{{ form.start_time.errors|join:", " }}</div>{% endif %}
+            </div>
+            <div class="col-12 col-md-4">
+              <label class="form-label">Duration</label>
+              <div class="d-flex gap-2">
+                {{ form.duration_hours }}
+                {{ form.duration_minutes }}
+              </div>
+              {% if form.duration_hours.errors or form.duration_minutes.errors %}
+              <div class="text-danger small mt-1">{{ form.duration_hours.errors|join:", " }} {{ form.duration_minutes.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---- People ---- -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <div class="section-heading">People</div>
+          <div class="row g-3">
+            <div class="col-12 col-sm-6">
+              <label for="{{ form.ambassador.id_for_label }}" class="form-label">Ambassador</label>
+              {{ form.ambassador }}
+              {% if form.ambassador.errors %}<div class="text-danger small mt-1">{{ form.ambassador.errors|join:", " }}</div>{% endif %}
+              <div class="form-text" id="ambassadorHint">Select an account above to filter ambassadors by coverage area.</div>
+            </div>
+            <div class="col-12 col-sm-6">
+              <label for="{{ form.event_manager.id_for_label }}" class="form-label">Event Manager</label>
+              {{ form.event_manager }}
+              {% if form.event_manager.errors %}<div class="text-danger small mt-1">{{ form.event_manager.errors|join:", " }}</div>{% endif %}
+              <div class="form-text" id="eventManagerHint">Select an account above to filter event managers by coverage area.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---- Items (Tasting only) ---- -->
+    <div class="col-12" id="itemsSection">
+      <div class="card">
+        <div class="card-body">
+          <div class="section-heading">Items to be Sampled</div>
+          <label for="{{ form.items.id_for_label }}" class="form-label">Select items</label>
+          {{ form.items }}
+          {% if form.items.errors %}<div class="text-danger small mt-1">{{ form.items.errors|join:", " }}</div>{% endif %}
+          <div class="form-text">Hold Ctrl (or Cmd on Mac) to select multiple items.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---- Notes ---- -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <div class="section-heading">Notes</div>
+          <label for="{{ form.notes.id_for_label }}" class="form-label">Notes (optional)</label>
+          {{ form.notes }}
+          {% if form.notes.errors %}<div class="text-danger small mt-1">{{ form.notes.errors|join:", " }}</div>{% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- ---- Submit ---- -->
+    <div class="col-12">
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-check-circle me-1"></i>
+          {% if is_create %}Create Event{% else %}Save Changes{% endif %}
+        </button>
+        {% if is_create %}
+        <a href="{% url 'event_list' %}" class="btn btn-outline-secondary">Cancel</a>
+        {% else %}
+        <a href="{% url 'event_detail' event.pk %}" class="btn btn-outline-secondary">Cancel</a>
+        {% endif %}
+      </div>
+    </div>
+
+  </div><!-- /row -->
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+
+  const ambassadorSelect    = document.getElementById('{{ form.ambassador.id_for_label }}');
+  const eventManagerSelect  = document.getElementById('{{ form.event_manager.id_for_label }}');
+  const accountSelect       = document.getElementById('{{ form.account.id_for_label }}');
+  const accountSection      = document.getElementById('accountSection');
+  const itemsSection        = document.getElementById('itemsSection');
+  const ambassadorHint      = document.getElementById('ambassadorHint');
+  const eventManagerHint    = document.getElementById('eventManagerHint');
+  const eventTypeRadios     = document.querySelectorAll('input[name="event_type"]');
+
+  // ---- helpers ----
+
+  function getCsrfToken() {
+    const m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+  }
+
+  function currentEventType() {
+    const checked = document.querySelector('input[name="event_type"]:checked');
+    return checked ? checked.value : 'tasting';
+  }
+
+  function updateVisibility() {
+    const etype = currentEventType();
+    if (etype === 'admin') {
+      accountSection.classList.add('hidden');
+      itemsSection.classList.add('hidden');
+    } else if (etype === 'tasting') {
+      accountSection.classList.remove('hidden');
+      itemsSection.classList.remove('hidden');
+    } else {
+      // festival
+      accountSection.classList.remove('hidden');
+      itemsSection.classList.add('hidden');
+    }
+    // When switching to admin, refresh people dropdowns without account filter
+    if (etype === 'admin') {
+      refreshPeopleDropdowns(null);
+    }
+  }
+
+  function populateSelect(selectEl, data, valueKey, labelKey, currentVal) {
+    const prev = currentVal || selectEl.value;
+    selectEl.innerHTML = '';
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = selectEl.dataset.blank || '— Select —';
+    selectEl.appendChild(blank);
+    data.forEach(function (item) {
+      const opt = document.createElement('option');
+      opt.value = item[valueKey];
+      opt.textContent = item[labelKey];
+      if (String(item[valueKey]) === String(prev)) opt.selected = true;
+      selectEl.appendChild(opt);
+    });
+  }
+
+  function refreshPeopleDropdowns(accountId) {
+    const ambassadorCurrent = ambassadorSelect ? ambassadorSelect.value : '';
+    const managerCurrent    = eventManagerSelect ? eventManagerSelect.value : '';
+
+    const baseAmbUrl  = '{% url "ajax_event_ambassadors" %}';
+    const baseEmUrl   = '{% url "ajax_event_managers" %}';
+    const ambUrl      = accountId ? baseAmbUrl  + '?account_id=' + accountId : baseAmbUrl;
+    const emUrl       = accountId ? baseEmUrl   + '?account_id=' + accountId : baseEmUrl;
+
+    if (ambassadorSelect) {
+      fetch(ambUrl, {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+        .then(r => r.json())
+        .then(function (data) {
+          populateSelect(ambassadorSelect, data.ambassadors || [], 'id', 'name', ambassadorCurrent);
+          if (data.ambassadors && data.ambassadors.length > 0) {
+            ambassadorHint.textContent = data.ambassadors.length + ' ambassador(s) available.';
+          } else {
+            ambassadorHint.textContent = accountId
+              ? 'No ambassadors have a coverage area covering this account.'
+              : 'No ambassadors found in the company.';
+          }
+        });
+    }
+
+    if (eventManagerSelect) {
+      fetch(emUrl, {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+        .then(r => r.json())
+        .then(function (data) {
+          populateSelect(eventManagerSelect, data.event_managers || [], 'id', 'name', managerCurrent);
+          if (data.event_managers && data.event_managers.length > 0) {
+            eventManagerHint.textContent = data.event_managers.length + ' event manager(s) available.';
+          } else {
+            eventManagerHint.textContent = accountId
+              ? 'No event managers have a coverage area covering this account.'
+              : 'No event managers found in the company.';
+          }
+        });
+    }
+  }
+
+  // ---- wire up event type radios ----
+  eventTypeRadios.forEach(function (radio) {
+    radio.addEventListener('change', function () {
+      updateVisibility();
+      const etype = currentEventType();
+      if (etype !== 'admin' && accountSelect && accountSelect.value) {
+        refreshPeopleDropdowns(accountSelect.value);
+      } else if (etype === 'admin') {
+        refreshPeopleDropdowns(null);
+      }
+    });
+  });
+
+  // ---- wire up account dropdown ----
+  if (accountSelect) {
+    accountSelect.addEventListener('change', function () {
+      const accountId = this.value;
+      refreshPeopleDropdowns(accountId || null);
+    });
+  }
+
+  // ---- initial page load ----
+  updateVisibility();
+  // On edit page, trigger account-based refresh if account already selected
+  if (accountSelect && accountSelect.value) {
+    refreshPeopleDropdowns(accountSelect.value);
+  } else if (currentEventType() === 'admin') {
+    refreshPeopleDropdowns(null);
+  }
+
+  // Set blank option data attributes
+  if (ambassadorSelect)   ambassadorSelect.dataset.blank   = '— Unassigned —';
+  if (eventManagerSelect) eventManagerSelect.dataset.blank = '— Select event manager —';
+
+})();
+</script>
+{% endblock %}

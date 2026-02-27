@@ -268,7 +268,7 @@ Searchable list for one-off or exception assignments
 | Phase 8 | Production Ordering | ⬜ Pending |
 | Phase 9 | Projection Planning | ⬜ Pending |
 | Phase 10.1 | Account Assignment & Ambassador Coverage Areas | ✅ Complete |
-| Phase 10.2 | Event Scheduling & Status Workflow | ⬜ Pending |
+| Phase 10.2 | Event Scheduling & Status Workflow | 🔄 In Progress |
 | Phase 10.3 | Event Recap | ⬜ Pending |
 | Phase 10.4 | Expense Management | ⬜ Pending |
 | Phase 10.5 | Event Export | ⬜ Pending |
@@ -607,7 +607,9 @@ Five statuses in order:
 2. Scheduled — event released, now visible to assigned ambassador
 3. Recap Submitted — ambassador has completed and submitted
    recap information
-4. Complete — event creator has reviewed recap and marked event
+4. Revision Requested — Event Manager or above found issues in
+   the recap; revision_note field captures what needs to be fixed
+5. Complete — event creator has reviewed recap and marked event
    as complete
 
 Admin events follow a simpler flow:
@@ -615,6 +617,15 @@ Draft → Scheduled → Complete (no recap step)
 
 Festival events follow:
 Draft → Scheduled → Recap Submitted → Complete
+
+### revision_note Field
+- Added to Event model in Phase 10.2
+- TextField, blank=True
+- Populated by Event Manager / Sales Manager / Supplier Admin
+  when requesting revision on a Recap Submitted event
+- Displayed prominently in a highlighted alert box on the event
+  detail page when status = Revision Requested
+- Ambassador sees this note so they know what to fix in their recap
 
 ### Event Permissions
 - Event setup fields: editable by AM, TM, Sales Manager,
@@ -896,5 +907,75 @@ Admin:
 - Add and Remove return rendered table HTML in JSON response; table container
   replaced in-place without full page reload
 
-*Last updated: February 26, 2026*
+---
+
+## Phase 10.2 — Completed Features
+
+### Event Model (Phase 10.2)
+- Replaced foundation Event model with full Phase 10.2 model
+- EventType choices: Tasting, Festival, Admin
+- Status choices: Draft, Scheduled, Recap Submitted, Revision Requested, Complete
+- Fields: company, event_type, status, account (nullable for Admin events),
+  date, start_time, duration_hours, duration_minutes, ambassador, event_manager,
+  created_by, items (M2M to catalog.Item), notes, revision_note
+- duration_display property returns human-readable string ('2h 30m', '1h', etc.)
+- status_badge_class property returns Bootstrap badge color class
+
+### Coverage Area Utilities (apps/accounts/utils.py)
+- get_accounts_for_user(user) — returns queryset of active accounts visible to
+  a user based on their UserCoverageArea records (union logic); Supplier Admin
+  and Sales Manager see all company accounts
+- get_users_covering_account(account, roles) — returns users with given roles
+  whose coverage areas include the given account; used for ambassador and
+  event manager dropdown filtering on event create/edit forms
+
+### Event List (/events/)
+- Access: all roles except Distributor Contact
+- Status group ordering: Revision Requested → Draft → Recap Submitted →
+  Scheduled → Complete
+- Revision Requested group highlighted with red left border
+- Section header rows between status groups
+- Mobile card layout; desktop table layout
+- Collapsible filter bar with session persistence (key: 'event_list_filters')
+- Filters: status (multi-select), year, month, event type, creator,
+  distributor, account name, city
+- "Filters Active" badge and Clear Filters button
+- Ambassadors do not see Draft events
+
+### Event Detail (/events/<id>/)
+- Shows all event fields; items list for Tasting type
+- Status-appropriate action buttons (Release, Approve & Complete, Request Revision)
+- Revision note displayed in highlighted alert box when status = Revision Requested
+- Request Revision uses Bootstrap modal with required textarea
+- Role-based access: all viewer roles; action buttons for Event Manager and above
+
+### Event Create/Edit (/events/create/, /events/<id>/edit/)
+- Event Type drives form visibility (account hidden for Admin, items hidden for
+  Festival and Admin)
+- AJAX-powered ambassador and event manager dropdowns update when account selected
+- Coverage area union logic filters people by account coverage
+- Admin events show all company ambassadors/TMs/AMs (no coverage filter)
+- created_by = logged-in user on create; event_manager defaults to creator
+  if creator is TM or AM; status always starts as Draft
+
+### AJAX Endpoints
+- GET /events/ajax/ambassadors/?account_id=X — ambassadors and AMs covering account
+- GET /events/ajax/event_managers/?account_id=X — TMs and AMs covering account
+- Both return all company users of the role when no account_id provided (Admin events)
+- Both require authentication
+
+### Status Transitions
+- POST /events/<id>/release/ — Draft → Scheduled; validates date, ambassador,
+  and account (account not required for Admin)
+- POST /events/<id>/request-revision/ — Recap Submitted → Revision Requested;
+  requires revision_note explaining what needs fixing
+- POST /events/<id>/approve/ — Recap Submitted → Complete
+- All transitions accessible to Event Manager, Sales Manager, Supplier Admin
+
+### Navigation
+- Events link added to sidebar and mobile nav for: Supplier Admin, Sales Manager,
+  Territory Manager, Ambassador Manager, Ambassador (shows as "My Events")
+- Active state highlighting via 'event' in url_name
+
+*Last updated: February 27, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*

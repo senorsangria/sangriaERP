@@ -154,6 +154,7 @@
           <li class="nav-item"><a class="nav-link" href="{% url 'brand_list' %}"><i class="bi bi-bookmark me-1"></i>Brands</a></li>
           <li class="nav-item"><a class="nav-link" href="{% url 'distributor_list' %}"><i class="bi bi-truck me-1"></i>Distributors</a></li>
           <li class="nav-item"><a class="nav-link" href="{% url 'account_list' %}"><i class="bi bi-shop me-1"></i>Accounts</a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'event_list' %}"><i class="bi bi-calendar-event me-1"></i>Events</a></li>
           <li class="nav-item"><a class="nav-link" href="{% url 'import_upload' %}"><i class="bi bi-cloud-upload me-1"></i>Sales Import</a></li>
           <li class="nav-item"><a class="nav-link" href="{% url 'mapping_list' %}"><i class="bi bi-arrow-left-right me-1"></i>Item Mapping</a></li>
           <li class="nav-item"><a class="nav-link" href="{% url 'batch_list' %}"><i class="bi bi-clock-history me-1"></i>Import History</a></li>
@@ -169,11 +170,15 @@
 
           {% if user.is_ambassador_manager %}
           <li class="nav-item"><a class="nav-link" href="{% url 'account_list' %}"><i class="bi bi-shop me-1"></i>Accounts</a></li>
-          <li class="nav-item"><a class="nav-link text-white-50" href="#"><i class="bi bi-calendar-event me-1"></i>Events <small>(soon)</small></a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'event_list' %}"><i class="bi bi-calendar-event me-1"></i>Events</a></li>
+          {% endif %}
+
+          {% if user.is_sales_manager or user.is_territory_manager %}
+          <li class="nav-item"><a class="nav-link" href="{% url 'event_list' %}"><i class="bi bi-calendar-event me-1"></i>Events</a></li>
           {% endif %}
 
           {% if user.is_ambassador %}
-          <li class="nav-item"><a class="nav-link text-white-50" href="#"><i class="bi bi-calendar-check me-1"></i>My Events <small>(soon)</small></a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'event_list' %}"><i class="bi bi-calendar-check me-1"></i>My Events</a></li>
           {% endif %}
 
           {% if user.is_distributor_contact %}
@@ -298,15 +303,21 @@
             <i class="bi bi-bookmark me-2"></i>Brands
           </a>
         </li>
+        <li class="nav-section">Field</li>
+        <li class="nav-item">
+          <a class="nav-link {% if 'account' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'account_list' %}">
+            <i class="bi bi-shop me-2"></i>Accounts
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
+            <i class="bi bi-calendar-event me-2"></i>Events
+          </a>
+        </li>
         <li class="nav-section">Operations</li>
         <li class="nav-item">
           <a class="nav-link {% if 'distributor' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'distributor_list' %}">
             <i class="bi bi-truck me-2"></i>Distributors
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'account' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'account_list' %}">
-            <i class="bi bi-shop me-2"></i>Accounts
           </a>
         </li>
         <li class="nav-section">Imports</li>
@@ -344,6 +355,11 @@
             <i class="bi bi-shop me-2"></i>Accounts
           </a>
         </li>
+        <li class="nav-item">
+          <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
+            <i class="bi bi-calendar-event me-2"></i>Events
+          </a>
+        </li>
 
         {% elif user.is_territory_manager %}
         <!-- ---- Territory Manager ---- -->
@@ -361,6 +377,11 @@
         <li class="nav-item">
           <a class="nav-link {% if 'account' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'account_list' %}">
             <i class="bi bi-shop me-2"></i>Accounts
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
+            <i class="bi bi-calendar-event me-2"></i>Events
           </a>
         </li>
 
@@ -383,9 +404,8 @@
           </a>
         </li>
         <li class="nav-item">
-          <a class="nav-link placeholder-link" href="#" tabindex="-1">
+          <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
             <i class="bi bi-calendar-event me-2"></i>Events
-            <span class="soon-badge">Soon</span>
           </a>
         </li>
 
@@ -398,9 +418,8 @@
         </li>
         <li class="nav-section">Field</li>
         <li class="nav-item">
-          <a class="nav-link placeholder-link" href="#" tabindex="-1">
+          <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
             <i class="bi bi-calendar-check me-2"></i>My Events
-            <span class="soon-badge">Soon</span>
           </a>
         </li>
 

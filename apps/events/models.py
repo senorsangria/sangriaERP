@@ -1,98 +1,134 @@
 """
-Events model: tasting events and field activities.
-
-This model is intentionally lean for the foundation phase.
-Recap and photo-upload support will be added in a later feature build.
+Events models: Event scheduling and status workflow.
 """
-from django.conf import settings
 from django.db import models
 from apps.core.models import TimeStampedModel
 
 
 class Event(TimeStampedModel):
     """
-    A tasting event or other field activity at a retail Account.
+    A field activity: in-store tasting, festival, or admin hours.
 
-    Future additions (not built yet):
-      - EventRecap: notes, outcome, attendance
-      - EventPhoto: uploaded photos linked to a recap
+    Status workflow:
+      Draft → Scheduled → Recap Submitted → Revision Requested → Complete
+      Admin events: Draft → Scheduled → Complete (no recap step)
+
+    Visibility rules enforced in views/utils — not at model level.
     """
 
     class EventType(models.TextChoices):
-        IN_STORE_TASTING = 'in_store_tasting', 'In-Store Tasting'
+        TASTING  = 'tasting',  'Tasting'
         FESTIVAL = 'festival', 'Festival'
-        SPECIAL_EVENT = 'special_event', 'Special Event'
-        ADMIN_HOURS = 'admin_hours', 'Admin Hours'
+        ADMIN    = 'admin',    'Admin'
 
     class Status(models.TextChoices):
-        SCHEDULED = 'scheduled', 'Scheduled'
-        COMPLETED = 'completed', 'Completed'
-        CANCELLED = 'cancelled', 'Cancelled'
+        DRAFT              = 'draft',              'Draft'
+        SCHEDULED          = 'scheduled',          'Scheduled'
+        RECAP_SUBMITTED    = 'recap_submitted',    'Recap Submitted'
+        REVISION_REQUESTED = 'revision_requested', 'Revision Requested'
+        COMPLETE           = 'complete',           'Complete'
 
+    # Core fields
     company = models.ForeignKey(
         'core.Company',
         on_delete=models.PROTECT,
         related_name='events',
     )
-    account = models.ForeignKey(
-        'accounts.Account',
-        on_delete=models.PROTECT,
-        related_name='events',
-    )
-    brand = models.ForeignKey(
-        'catalog.Brand',
-        on_delete=models.PROTECT,
-        related_name='events',
-    )
     event_type = models.CharField(
-        max_length=30,
+        max_length=20,
         choices=EventType.choices,
-        default=EventType.IN_STORE_TASTING,
+        default=EventType.TASTING,
+    )
+    status = models.CharField(
+        max_length=30,
+        choices=Status.choices,
+        default=Status.DRAFT,
     )
 
-    # Staff assignments — nullable; not every event has both roles filled at creation
+    # Location — required for Tasting and Festival, not required for Admin
+    account = models.ForeignKey(
+        'accounts.Account',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='events',
+    )
+
+    # Scheduling
+    date = models.DateField(null=True, blank=True)
+    start_time = models.TimeField(null=True, blank=True)
+    duration_hours = models.PositiveSmallIntegerField(default=0)
+    duration_minutes = models.PositiveSmallIntegerField(
+        default=0,
+        choices=[(0, '0 min'), (15, '15 min'), (30, '30 min'), (45, '45 min')],
+    )
+
+    # People
     ambassador = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+        'core.User',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='ambassador_events',
-        limit_choices_to={'role': 'ambassador'},
     )
-    ambassador_manager = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+    event_manager = models.ForeignKey(
+        'core.User',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='managed_events',
-        limit_choices_to={'role': 'ambassador_manager'},
+    )
+    created_by = models.ForeignKey(
+        'core.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_events',
     )
 
-    scheduled_date = models.DateField()
-    scheduled_time = models.TimeField()
-    # Duration stored in minutes for flexibility; can render as h:mm in UI
-    duration_minutes = models.PositiveIntegerField(
-        default=120,
-        help_text='Duration of the event in minutes.',
+    # Items to be sampled (Tasting only)
+    items = models.ManyToManyField(
+        'catalog.Item',
+        blank=True,
+        related_name='events',
     )
 
-    status = models.CharField(
-        max_length=20,
-        choices=Status.choices,
-        default=Status.SCHEDULED,
-    )
+    # Notes
+    notes = models.TextField(blank=True)
 
-    # Stub fields for future recap / photo support (not built yet)
-    # recap: OneToOneField(EventRecap) — to be added
-    # photos: ManyToManyField(EventPhoto) — to be added
+    # Populated when Event Manager requests revision on a Recap Submitted event
+    revision_note = models.TextField(blank=True)
 
     class Meta:
+        app_label = 'events'
         verbose_name = 'Event'
         verbose_name_plural = 'Events'
-        ordering = ['-scheduled_date', '-scheduled_time']
 
     def __str__(self):
-        return (
-            f'{self.get_event_type_display()} — '
-            f'{self.account.name} on {self.scheduled_date}'
-        )
+        if self.account:
+            return f'{self.get_event_type_display()} — {self.account.name} on {self.date}'
+        return f'{self.get_event_type_display()} — Admin on {self.date}'
+
+    @property
+    def duration_display(self):
+        """Human-readable duration: '2h 30m', '1h', '45m', etc."""
+        h = self.duration_hours or 0
+        m = self.duration_minutes or 0
+        if h and m:
+            return f'{h}h {m}m'
+        elif h:
+            return f'{h}h'
+        elif m:
+            return f'{m}m'
+        return '—'
+
+    @property
+    def status_badge_class(self):
+        """Bootstrap badge class for the current status."""
+        return {
+            self.Status.DRAFT:              'secondary',
+            self.Status.SCHEDULED:          'primary',
+            self.Status.RECAP_SUBMITTED:    'warning',
+            self.Status.REVISION_REQUESTED: 'danger',
+            self.Status.COMPLETE:           'success',
+        }.get(self.status, 'secondary')

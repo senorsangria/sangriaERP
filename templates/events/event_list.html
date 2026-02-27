@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+{% block title %}Events{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* Status group header rows */
+  .group-header td {
+    font-size: .75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: #6c757d;
+    background: #f8f9fa;
+    padding: .35rem .75rem;
+    border-top: 1px solid #dee2e6;
+  }
+  /* Revision Requested highlight */
+  .event-row-revision td {
+    background: #fff5f5 !important;
+    border-left: 3px solid #dc3545;
+  }
+  /* Collapsible filter card */
+  #filterCard { border: 1px solid #dce3ec; }
+  .filter-label { font-size: .8rem; font-weight: 600; color: #495057; margin-bottom: .25rem; }
+  /* Mobile event card */
+  .event-card { border-left: 3px solid #dee2e6; }
+  .event-card.revision { border-left-color: #dc3545; background: #fff5f5; }
+  .event-card.draft     { border-left-color: #6c757d; }
+  .event-card.scheduled { border-left-color: #0d6efd; }
+  .event-card.recap     { border-left-color: #ffc107; }
+  .event-card.complete  { border-left-color: #198754; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+  <h4 class="mb-0 fw-semibold"><i class="bi bi-calendar-event me-2"></i>Events</h4>
+  <div class="d-flex gap-2 align-items-center">
+    {% if filters_active %}
+    <a href="?clear_filters=1" class="badge bg-warning text-dark text-decoration-none">
+      <i class="bi bi-funnel-fill me-1"></i>Filters Active
+    </a>
+    {% endif %}
+    <button class="btn btn-sm btn-outline-secondary" type="button"
+            data-bs-toggle="collapse" data-bs-target="#filterCard"
+            aria-expanded="false" aria-controls="filterCard">
+      <i class="bi bi-funnel me-1"></i>Filters
+    </button>
+    {% if user.role in "supplier_admin sales_manager territory_manager ambassador_manager" %}
+    <a href="{% url 'event_create' %}" class="btn btn-sm btn-primary">
+      <i class="bi bi-plus-lg me-1"></i>New Event
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Filter bar -->
+<div class="collapse {% if filters_active %}show{% endif %} mb-3" id="filterCard">
+  <div class="card card-body py-3" id="filterCard">
+    <form method="get" action="{% url 'event_list' %}">
+      <div class="row g-2">
+
+        <!-- Status checkboxes -->
+        <div class="col-12 col-md-6 col-lg-4">
+          <div class="filter-label">Status</div>
+          <div class="d-flex flex-wrap gap-2">
+            {% for val, label in status_choices %}
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="checkbox" name="status"
+                     value="{{ val }}" id="st_{{ val }}"
+                     {% if val in filters.status %}checked{% endif %}>
+              <label class="form-check-label small" for="st_{{ val }}">{{ label }}</label>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <!-- Event Type -->
+        <div class="col-6 col-md-3 col-lg-2">
+          <label class="filter-label" for="filter_type">Type</label>
+          <select name="event_type" id="filter_type" class="form-select form-select-sm">
+            <option value="">All Types</option>
+            {% for val, label in event_type_choices %}
+            <option value="{{ val }}" {% if filters.event_type == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Year -->
+        <div class="col-6 col-md-3 col-lg-2">
+          <label class="filter-label" for="filter_year">Year</label>
+          <select name="year" id="filter_year" class="form-select form-select-sm">
+            <option value="">All Years</option>
+            {% for y in years %}
+            <option value="{{ y }}" {% if filters.year == y|stringformat:"d" %}selected{% endif %}>{{ y }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Month -->
+        <div class="col-6 col-md-3 col-lg-2">
+          <label class="filter-label" for="filter_month">Month</label>
+          <select name="month" id="filter_month" class="form-select form-select-sm">
+            <option value="">All Months</option>
+            {% for num, name in months %}
+            <option value="{{ num }}" {% if filters.month == num|stringformat:"d" %}selected{% endif %}>{{ name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Creator -->
+        <div class="col-6 col-md-3 col-lg-2">
+          <label class="filter-label" for="filter_creator">Creator</label>
+          <select name="creator" id="filter_creator" class="form-select form-select-sm">
+            <option value="">All Creators</option>
+            {% for c in creators %}
+            <option value="{{ c.pk }}" {% if filters.creator == c.pk|stringformat:"d" %}selected{% endif %}>
+              {{ c.get_full_name|default:c.username }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Distributor -->
+        <div class="col-6 col-md-3 col-lg-3">
+          <label class="filter-label" for="filter_dist">Distributor</label>
+          <select name="distributor" id="filter_dist" class="form-select form-select-sm">
+            <option value="">All Distributors</option>
+            {% for d in distributors %}
+            <option value="{{ d.pk }}" {% if filters.distributor == d.pk|stringformat:"d" %}selected{% endif %}>{{ d.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Account name search -->
+        <div class="col-6 col-md-3 col-lg-3">
+          <label class="filter-label" for="filter_acct">Account</label>
+          <input type="text" name="account_name" id="filter_acct"
+                 class="form-control form-control-sm"
+                 placeholder="Account name…"
+                 value="{{ filters.account_name }}">
+        </div>
+
+        <!-- City -->
+        <div class="col-6 col-md-3 col-lg-3">
+          <label class="filter-label" for="filter_city">City</label>
+          <input type="text" name="city" id="filter_city"
+                 class="form-control form-control-sm"
+                 placeholder="City…"
+                 value="{{ filters.city }}">
+        </div>
+
+        <!-- Buttons -->
+        <div class="col-12 d-flex gap-2 mt-1">
+          <button type="submit" class="btn btn-sm btn-primary">
+            <i class="bi bi-search me-1"></i>Apply Filters
+          </button>
+          <a href="?clear_filters=1" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-x-circle me-1"></i>Clear Filters
+          </a>
+        </div>
+
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ====================================================================
+     MOBILE view (cards, < lg)
+     ==================================================================== -->
+<div class="d-lg-none">
+  {% if not event_groups %}
+  <div class="text-center text-muted py-5">
+    <i class="bi bi-calendar-x fs-1 d-block mb-2"></i>
+    No events found.
+    {% if filters_active %}<br><a href="?clear_filters=1">Clear filters</a>{% endif %}
+  </div>
+  {% else %}
+  {% for group_label, group_key, group_events in event_groups %}
+  <!-- Group header -->
+  <div class="px-1 py-2 mt-3 mb-1 border-bottom">
+    <span class="text-muted small fw-semibold text-uppercase">
+      <span class="me-2">──</span>{{ group_label }}<span class="ms-2">──</span>
+    </span>
+  </div>
+  {% for event in group_events %}
+  <a href="{% url 'event_detail' event.pk %}" class="text-decoration-none text-dark">
+    <div class="card mb-2 event-card {% if event.status == 'revision_requested' %}revision{% elif event.status == 'draft' %}draft{% elif event.status == 'scheduled' %}scheduled{% elif event.status == 'recap_submitted' %}recap{% elif event.status == 'complete' %}complete{% endif %}">
+      <div class="card-body py-2 px-3">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <div class="fw-semibold">
+              {% if event.account %}{{ event.account.name }}{% else %}<span class="text-muted fst-italic">Admin Event</span>{% endif %}
+            </div>
+            <div class="small text-muted">
+              {% if event.date %}{{ event.date|date:"N j, Y" }}{% else %}<span class="fst-italic">No date</span>{% endif %}
+              {% if event.start_time %} &middot; {{ event.start_time|time:"g:i A" }}{% endif %}
+              {% if event.duration_display != '—' %} &middot; {{ event.duration_display }}{% endif %}
+            </div>
+            <div class="small mt-1">
+              <i class="bi bi-person me-1 text-muted"></i>
+              {% if event.ambassador %}{{ event.ambassador.get_full_name|default:event.ambassador.username }}{% else %}<span class="text-muted fst-italic">Unassigned</span>{% endif %}
+            </div>
+          </div>
+          <div class="text-end ps-2">
+            <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status == 'recap_submitted' %}dark{% else %}white{% endif %}">
+              {{ event.get_status_display }}
+            </span>
+            <div class="small text-muted mt-1">{{ event.get_event_type_display }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </a>
+  {% endfor %}
+  {% endfor %}
+  {% endif %}
+</div>
+
+<!-- ====================================================================
+     DESKTOP view (table, lg+)
+     ==================================================================== -->
+<div class="d-none d-lg-block">
+  {% if not event_groups %}
+  <div class="text-center text-muted py-5">
+    <i class="bi bi-calendar-x fs-1 d-block mb-2"></i>
+    No events found.
+    {% if filters_active %}<br><a href="?clear_filters=1">Clear filters</a>{% endif %}
+  </div>
+  {% else %}
+  <div class="card">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Account</th>
+            <th>Type</th>
+            <th>Duration</th>
+            <th>Ambassador</th>
+            <th>Event Manager</th>
+            <th>Distributor</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for group_label, group_key, group_events in event_groups %}
+          <!-- Group separator row -->
+          <tr class="group-header">
+            <td colspan="9">── {{ group_label }} ──</td>
+          </tr>
+          {% for event in group_events %}
+          <tr class="{% if event.status == 'revision_requested' %}event-row-revision{% endif %}">
+            <td>
+              <a href="{% url 'event_detail' event.pk %}" class="text-decoration-none fw-semibold">
+                {% if event.date %}{{ event.date|date:"N j, Y" }}{% else %}<span class="text-muted fst-italic">No date</span>{% endif %}
+              </a>
+            </td>
+            <td class="text-muted">
+              {% if event.start_time %}{{ event.start_time|time:"g:i A" }}{% else %}—{% endif %}
+            </td>
+            <td>
+              {% if event.account %}
+                <a href="{% url 'account_detail' event.account.pk %}" class="text-decoration-none">{{ event.account.name }}</a>
+                <div class="small text-muted">{{ event.account.city }}{% if event.account.state %}, {{ event.account.state }}{% endif %}</div>
+              {% else %}
+                <span class="text-muted fst-italic">Admin Event</span>
+              {% endif %}
+            </td>
+            <td><span class="badge bg-light text-dark border">{{ event.get_event_type_display }}</span></td>
+            <td class="text-muted small">{{ event.duration_display }}</td>
+            <td>
+              {% if event.ambassador %}
+                {{ event.ambassador.get_full_name|default:event.ambassador.username }}
+              {% else %}
+                <span class="text-muted fst-italic">Unassigned</span>
+              {% endif %}
+            </td>
+            <td class="text-muted small">
+              {% if event.event_manager %}{{ event.event_manager.get_full_name|default:event.event_manager.username }}{% else %}—{% endif %}
+            </td>
+            <td class="text-muted small">
+              {% if event.account and event.account.distributor %}{{ event.account.distributor.name }}{% else %}—{% endif %}
+            </td>
+            <td>
+              <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status == 'recap_submitted' %}dark{% else %}white{% endif %}">
+                {{ event.get_status_display }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
