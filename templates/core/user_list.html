@@ -120,7 +120,7 @@
               <a href="{% url 'user_edit' u.pk %}" class="btn btn-outline-secondary btn-sm">
                 <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
               </a>
-              {% if user.role in "saas_admin supplier_admin sales_manager" %}
+              {% if user.role == 'saas_admin' or user.role == 'supplier_admin' or user.role == 'sales_manager' %}
               <a href="{% url 'user_password_reset' u.pk %}" class="btn btn-outline-secondary btn-sm">
                 <i class="bi bi-key d-sm-none"></i>
                 <span class="d-none d-sm-inline">Reset PW</span>
