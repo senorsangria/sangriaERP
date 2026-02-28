@@ -12,8 +12,10 @@ urlpatterns = [
 
     # Status transitions
     path('events/<int:pk>/release/', views.event_release, name='event_release'),
+    path('events/<int:pk>/unrelease/', views.event_unrelease, name='event_unrelease'),
     path('events/<int:pk>/request-revision/', views.event_request_revision, name='event_request_revision'),
     path('events/<int:pk>/approve/', views.event_approve, name='event_approve'),
+    path('events/<int:pk>/delete/', views.event_delete, name='event_delete'),
 
     # AJAX
     path('events/ajax/ambassadors/', views.ajax_ambassadors, name='ajax_event_ambassadors'),

@@ -1,8 +1,6 @@
 """
 Event forms.
 """
-from datetime import datetime
-
 from django import forms
 
 from apps.catalog.models import Item
@@ -51,10 +49,9 @@ class EventForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.company = company
 
-        # Change 4: Default start_time to current hour with :00 minutes on create
+        # Default start_time to 1:00 PM on create (most events are in the afternoon)
         if not self.instance.pk:
-            now = datetime.now()
-            self.fields['start_time'].initial = now.strftime('%H:00')
+            self.fields['start_time'].initial = '13:00'
 
         # Scope account dropdown through coverage area union logic
         from apps.accounts.models import Account
@@ -84,15 +81,29 @@ class EventForm(forms.ModelForm):
         self.fields['ambassador'].required = False
         self.fields['ambassador'].empty_label = '— Unassigned —'
 
-        # Event Manager: all TMs and AMs in the company (refined via AJAX)
-        self.fields['event_manager'].queryset = (
-            User.objects.filter(
-                company=company,
-                is_active=True,
-                role__in=[User.Role.TERRITORY_MANAGER, User.Role.AMBASSADOR_MANAGER],
-            ).order_by('last_name', 'first_name')
-            if company else User.objects.none()
-        )
+        # Event Manager: AM, TM, Sales Manager, Supplier Admin (refined via AJAX)
+        # On create form, also include the current user regardless of role so
+        # the dropdown shows them pre-selected before any account is chosen.
+        em_roles = [
+            User.Role.AMBASSADOR_MANAGER,
+            User.Role.TERRITORY_MANAGER,
+            User.Role.SALES_MANAGER,
+            User.Role.SUPPLIER_ADMIN,
+        ]
+        if company:
+            em_qs = User.objects.filter(
+                company=company, is_active=True, role__in=em_roles,
+            )
+            if user is not None and not self.instance.pk:
+                # Ensure the creating user is always in the queryset
+                em_qs = (em_qs | User.objects.filter(pk=user.pk)).distinct()
+            self.fields['event_manager'].queryset = em_qs.order_by('last_name', 'first_name')
+        else:
+            self.fields['event_manager'].queryset = User.objects.none()
+
+        if user is not None and not self.instance.pk:
+            self.fields['event_manager'].initial = user.pk
+
         self.fields['event_manager'].required = False
         self.fields['event_manager'].empty_label = '— Select event manager —'
 

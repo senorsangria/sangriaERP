@@ -518,6 +518,28 @@ def event_request_revision(request, pk):
 
 
 @login_required
+def event_unrelease(request, pk):
+    """POST: Scheduled → Draft"""
+    if request.user.role not in _ACTION_ROLES:
+        return render(request, '403.html', status=403)
+    if request.method != 'POST':
+        return redirect('event_detail', pk=pk)
+
+    company = request.user.company
+    visible = _get_visible_events(request.user)
+    event = get_object_or_404(visible, pk=pk, company=company)
+
+    if event.status != Event.Status.SCHEDULED:
+        messages.error(request, 'Only Scheduled events can be moved back to Draft.')
+        return redirect('event_detail', pk=pk)
+
+    event.status = Event.Status.DRAFT
+    event.save(update_fields=['status', 'updated_at'])
+    messages.success(request, 'Event moved back to Draft.')
+    return redirect('event_detail', pk=pk)
+
+
+@login_required
 def event_approve(request, pk):
     """POST: Recap Submitted → Complete"""
     if request.user.role not in _ACTION_ROLES:
@@ -537,6 +559,27 @@ def event_approve(request, pk):
     event.save(update_fields=['status', 'updated_at'])
     messages.success(request, 'Event approved and marked as Complete.')
     return redirect('event_detail', pk=pk)
+
+
+@login_required
+def event_delete(request, pk):
+    """POST: Permanently delete a Draft event."""
+    if request.user.role not in _ACTION_ROLES:
+        return render(request, '403.html', status=403)
+    if request.method != 'POST':
+        return redirect('event_detail', pk=pk)
+
+    company = request.user.company
+    visible = _get_visible_events(request.user)
+    event = get_object_or_404(visible, pk=pk, company=company)
+
+    if event.status != Event.Status.DRAFT:
+        messages.error(request, 'Only Draft events can be deleted.')
+        return redirect('event_detail', pk=pk)
+
+    event.delete()
+    messages.success(request, 'Event deleted successfully.')
+    return redirect('event_list')
 
 
 # ---------------------------------------------------------------------------
@@ -593,8 +636,11 @@ def ajax_ambassadors(request):
 def ajax_event_managers(request):
     """
     GET /events/ajax/event_managers/?account_id=X
-    Returns TMs and AMs covering the given account.
-    For Admin events (no account_id), returns all company TMs and AMs.
+    Returns users eligible as event managers for the given account.
+    Roles: Ambassador Manager, Territory Manager, Sales Manager (coverage-filtered)
+           + Supplier Admin (always included regardless of coverage area).
+    For Admin events (no account_id), returns all company users in those roles.
+    Also returns current_user_id so the JS can pre-select the creating user.
     """
     if not request.user.is_authenticated:
         return JsonResponse({'error': 'Authentication required.'}, status=403)
@@ -602,20 +648,28 @@ def ajax_event_managers(request):
     company = request.user.company
     account_id = request.GET.get('account_id', '').strip()
 
-    roles = [User.Role.TERRITORY_MANAGER, User.Role.AMBASSADOR_MANAGER]
+    roles = [
+        User.Role.AMBASSADOR_MANAGER,
+        User.Role.TERRITORY_MANAGER,
+        User.Role.SALES_MANAGER,
+        User.Role.SUPPLIER_ADMIN,
+    ]
 
     if account_id:
         try:
             account = Account.active_accounts.get(pk=account_id, company=company)
         except Account.DoesNotExist:
-            return JsonResponse({'event_managers': []})
+            return JsonResponse({'event_managers': [], 'current_user_id': request.user.pk})
         users = get_users_covering_account(account, roles)
     else:
         users = User.objects.filter(
             company=company, role__in=roles, is_active=True
         ).order_by('last_name', 'first_name')
 
-    return JsonResponse({'event_managers': _ambassador_list_response(users)})
+    return JsonResponse({
+        'event_managers': _ambassador_list_response(users),
+        'current_user_id': request.user.pk,
+    })
 
 
 @login_required

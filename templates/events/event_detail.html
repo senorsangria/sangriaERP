@@ -180,11 +180,27 @@
 
         <!-- Draft → Scheduled -->
         {% if event.status == 'draft' %}
-        <form method="post" action="{% url 'event_release' event.pk %}" class="d-inline">
+        <form method="post" action="{% url 'event_release' event.pk %}" class="d-inline me-2">
           {% csrf_token %}
           <button type="submit" class="btn btn-primary"
                   onclick="return confirm('Release this event and mark it as Scheduled?')">
             <i class="bi bi-send me-1"></i>Release Event
+          </button>
+        </form>
+        <!-- Delete Draft event -->
+        <button type="button" class="btn btn-outline-danger"
+                data-bs-toggle="modal" data-bs-target="#deleteModal">
+          <i class="bi bi-trash me-1"></i>Delete Event
+        </button>
+        {% endif %}
+
+        <!-- Scheduled → Draft -->
+        {% if event.status == 'scheduled' %}
+        <form method="post" action="{% url 'event_unrelease' event.pk %}" class="d-inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-outline-secondary"
+                  onclick="return confirm('Move this event back to Draft status?')">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>Move Back to Draft
           </button>
         </form>
         {% endif %}
@@ -210,6 +226,40 @@
   {% endif %}
 
 </div><!-- /row -->
+
+<!-- ================================================================
+     Delete confirmation modal (Draft events only)
+     ================================================================ -->
+{% if can_action and event.status == 'draft' %}
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteModalLabel">
+          <i class="bi bi-trash me-2 text-danger"></i>Delete Event
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to permanently delete this event? <strong>This cannot be undone.</strong></p>
+        <p class="text-muted small mb-0">
+          {% if event.account %}{{ event.account.name }}{% else %}Admin Event{% endif %}
+          {% if event.date %} &mdash; {{ event.date|date:"N j, Y" }}{% endif %}
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <form method="post" action="{% url 'event_delete' event.pk %}" class="d-inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-danger">
+            <i class="bi bi-trash me-1"></i>Delete Permanently
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <!-- ================================================================
      Revision request modal

@@ -725,6 +725,38 @@ Admin:
 - Supplier Admin appears for all events regardless of coverage area
 - SaaS Admin and Distributor Contact excluded from ambassador dropdown
 
+### Event Manager Rules (Updated)
+- Event Manager dropdown includes same roles as Ambassador dropdown:
+  AM, TM, Sales Manager (coverage-filtered), Supplier Admin (always included)
+- Ambassador role itself is excluded from Event Manager dropdown
+- Event Manager defaults to the event creator for all roles
+- For Admin events: Event Manager is always the creator, field not shown
+- Recap approval authority: Event Manager OR any role above them in hierarchy
+
+### Event Deletion Rules
+- Only Draft events can be permanently deleted
+- Deletion requires confirmation modal (Bootstrap modal, POST only)
+- Access: Event Manager role and above (AM, TM, Sales Manager, Supplier Admin)
+- Once released (Scheduled or beyond) events can only be moved back to Draft
+  first, then deleted if needed
+
+### Move Back to Draft
+- Scheduled events can be moved back to Draft status
+- Endpoint: POST /events/<id>/unrelease/
+- Access: same as Release action (AM, TM, Sales Manager, Supplier Admin)
+- Events beyond Scheduled status cannot be moved back to Draft
+
+### Ambassador Dropdown — Event Type Behavior
+- Tasting and Festival events: Ambassador dropdown is empty on page load until
+  an account is selected via live search; placeholder text guides the user
+- Admin events: Ambassador dropdown is populated immediately on page load with
+  all eligible company users (no account required for Admin events)
+
+### Login Redirect — AM and Ambassador
+- Ambassador Manager and Ambassador roles are redirected to /events/ after login
+- Direct navigation to /dashboard/ also redirects these roles to /events/
+- All other roles use existing dashboard redirect
+
 ### Manual Account Creation (Phase 2.5)
 - Lightweight form to manually create an account when it doesn't
   exist in the system
@@ -997,15 +1029,18 @@ Admin:
 ### Status Transitions
 - POST /events/<id>/release/ — Draft → Scheduled; validates date, ambassador,
   and account (account not required for Admin)
+- POST /events/<id>/unrelease/ — Scheduled → Draft (Move Back to Draft)
 - POST /events/<id>/request-revision/ — Recap Submitted → Revision Requested;
   requires revision_note explaining what needs fixing
 - POST /events/<id>/approve/ — Recap Submitted → Complete
-- All transitions accessible to Event Manager, Sales Manager, Supplier Admin
+- POST /events/<id>/delete/ — Permanently deletes Draft events; shows
+  Bootstrap confirmation modal before submitting
+- All transitions accessible to AM, TM, Sales Manager, Supplier Admin
 
 ### Navigation
 - Events link added to sidebar and mobile nav for: Supplier Admin, Sales Manager,
   Territory Manager, Ambassador Manager, Ambassador (shows as "My Events")
 - Active state highlighting via 'event' in url_name
 
-*Last updated: February 27, 2026*
+*Last updated: February 28, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*

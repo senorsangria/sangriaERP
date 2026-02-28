@@ -258,6 +258,10 @@ def account_toggle(request, pk):
 
     account = get_object_or_404(Account, pk=pk, company=request.user.company)
 
+    if account.auto_created:
+        messages.error(request, 'Imported accounts cannot be deactivated manually.')
+        return redirect('account_detail', pk=pk)
+
     if request.method == 'POST':
         account.is_active = not account.is_active
         account.save(update_fields=['is_active'])

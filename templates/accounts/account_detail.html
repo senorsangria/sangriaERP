@@ -23,7 +23,6 @@
       <a href="{% url 'account_edit' account.pk %}" class="btn btn-outline-secondary btn-sm">
         <i class="bi bi-pencil me-1"></i>Edit Account
       </a>
-      {% endif %}
       <form method="post" action="{% url 'account_toggle' account.pk %}" class="d-inline">
         {% csrf_token %}
         {% if account.is_active %}
@@ -38,6 +37,7 @@
         </button>
         {% endif %}
       </form>
+      {% endif %}
     </div>
   </div>
 </div>
@@ -46,8 +46,8 @@
 <div class="alert alert-secondary d-flex align-items-start gap-2 mb-4 py-2 px-3" style="font-size:.875rem;">
   <i class="bi bi-info-circle-fill text-muted mt-1 flex-shrink-0"></i>
   <span class="text-muted">
-    This account was created from a sales data import and cannot be edited manually.
-    Account details are managed through the import process.
+    This account was created from a sales data import and cannot be edited or
+    deactivated manually. Account details are managed through the import process.
   </span>
 </div>
 {% endif %}

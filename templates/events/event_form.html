@@ -346,7 +346,9 @@
       fetch(emUrl, {headers: {'X-Requested-With': 'XMLHttpRequest'}})
         .then(r => r.json())
         .then(function (data) {
-          populateSelect(eventManagerSelect, data.event_managers || [], 'id', 'name', managerCurrent);
+          // Prefer current user pre-selection; fall back to previous value
+          var emPref = data.current_user_id ? String(data.current_user_id) : managerCurrent;
+          populateSelect(eventManagerSelect, data.event_managers || [], 'id', 'name', emPref);
           if (data.event_managers && data.event_managers.length > 0) {
             eventManagerHint.textContent = data.event_managers.length + ' event manager(s) available.';
           } else {
@@ -471,33 +473,55 @@
   })();
   {% endif %}
 
+  // ---- Ambassador placeholder for Tasting/Festival before account selected ----
+  function showAmbassadorPlaceholder() {
+    if (!ambassadorSelect) return;
+    ambassadorSelect.innerHTML = '';
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '— Unassigned —';
+    ambassadorSelect.appendChild(opt);
+    if (ambassadorHint) {
+      ambassadorHint.textContent = 'Select an account first to see available ambassadors.';
+    }
+  }
+
   // ---- wire up event type radios ----
   eventTypeRadios.forEach(function (radio) {
     radio.addEventListener('change', function () {
       updateVisibility();
       const etype = currentEventType();
       const currentAccountId = accountHidden ? accountHidden.value : '';
-      if (etype !== 'admin' && currentAccountId) {
-        refreshPeopleDropdowns(currentAccountId);
-      } else if (etype === 'admin') {
+      if (etype === 'admin') {
         refreshPeopleDropdowns(null);
+      } else if (currentAccountId) {
+        refreshPeopleDropdowns(currentAccountId);
+      } else {
+        // Tasting/Festival with no account: show placeholder for ambassador
+        showAmbassadorPlaceholder();
       }
     });
   });
 
-  // ---- initial page load ----
-  updateVisibility();
-  // On page load, trigger account-based refresh if account already selected
-  const currentAccountId = accountHidden ? accountHidden.value : '';
-  if (currentAccountId) {
-    refreshPeopleDropdowns(currentAccountId);
-  } else if (currentEventType() === 'admin') {
-    refreshPeopleDropdowns(null);
-  }
-
-  // Set blank option data attributes
+  // Set blank option data attributes before initial load
   if (ambassadorSelect)   ambassadorSelect.dataset.blank   = '— Unassigned —';
   if (eventManagerSelect) eventManagerSelect.dataset.blank = '— Select event manager —';
+
+  // ---- initial page load ----
+  updateVisibility();
+  const currentAccountId = accountHidden ? accountHidden.value : '';
+  if (currentAccountId) {
+    // Edit form with account already selected — populate both dropdowns
+    refreshPeopleDropdowns(currentAccountId);
+  } else if (currentEventType() === 'admin') {
+    // Admin event — populate all company ambassadors immediately
+    refreshPeopleDropdowns(null);
+  } else {
+    // Tasting/Festival create with no account yet — show ambassador placeholder
+    {% if is_create %}
+    showAmbassadorPlaceholder();
+    {% endif %}
+  }
 
 })();
 </script>

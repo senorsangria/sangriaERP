@@ -117,7 +117,11 @@ def login_view(request):
             else:
                 login(request, user)
                 next_url = request.GET.get('next', '')
-                return redirect(next_url or 'dashboard')
+                if next_url:
+                    return redirect(next_url)
+                if user.role in (User.Role.AMBASSADOR_MANAGER, User.Role.AMBASSADOR):
+                    return redirect('event_list')
+                return redirect('dashboard')
         else:
             error = 'Invalid username or password. Please try again.'
     else:
@@ -157,6 +161,8 @@ PHASE_ROADMAP = [
 
 @login_required
 def dashboard(request):
+    if request.user.role in (User.Role.AMBASSADOR_MANAGER, User.Role.AMBASSADOR):
+        return redirect('event_list')
     return render(request, 'core/dashboard.html', {'phases': PHASE_ROADMAP})
 
 
