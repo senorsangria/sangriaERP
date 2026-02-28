@@ -268,7 +268,7 @@ Searchable list for one-off or exception assignments
 | Phase 8 | Production Ordering | ⬜ Pending |
 | Phase 9 | Projection Planning | ⬜ Pending |
 | Phase 10.1 | Account Assignment & Ambassador Coverage Areas | ✅ Complete |
-| Phase 10.2 | Event Scheduling & Status Workflow | 🔄 In Progress |
+| Phase 10.2 | Event Scheduling & Status Workflow | ✅ Complete |
 | Phase 10.3 | Event Recap | ⬜ Pending |
 | Phase 10.4 | Expense Management | ⬜ Pending |
 | Phase 10.5 | Event Export | ⬜ Pending |
@@ -973,8 +973,7 @@ Admin:
 
 ## Phase 10.2 — Completed Features
 
-### Event Model (Phase 10.2)
-- Replaced foundation Event model with full Phase 10.2 model
+### Event Model
 - EventType choices: Tasting, Festival, Admin
 - Status choices: Draft, Scheduled, Recap Submitted, Revision Requested, Complete
 - Fields: company, event_type, status, account (nullable for Admin events),
@@ -998,33 +997,68 @@ Admin:
 - Revision Requested group highlighted with red left border
 - Section header rows between status groups
 - Mobile card layout; desktop table layout
-- Collapsible filter bar with session persistence (key: 'event_list_filters')
+- Collapsible filter bar with session persistence (key: 'event_list_filters');
+  filters restored on return visit, cleared via Clear Filters button
 - Filters: status (multi-select), year, month, event type, creator,
   distributor, account name, city
-- "Filters Active" badge and Clear Filters button
+- "Filters Active" badge when any filter is applied
 - Ambassadors do not see Draft events
+- "New Event" button opens a Bootstrap modal prompting the user to select
+  event type before proceeding to the create form
 
 ### Event Detail (/events/<id>/)
-- Shows all event fields; items list for Tasting type
-- Status-appropriate action buttons (Release, Approve & Complete, Request Revision)
-- Revision note displayed in highlighted alert box when status = Revision Requested
-- Request Revision uses Bootstrap modal with required textarea
-- Role-based access: all viewer roles; action buttons for Event Manager and above
+- Shows all event fields; items displayed grouped by brand for Tasting events
+  (brand name as a subtle muted header, item names listed below — no item code)
+- Status-appropriate action buttons: Release, Approve & Complete, Request Revision,
+  Move Back to Draft, Delete Event
+- Revision note displayed in a highlighted alert box when status = Revision Requested
+- Request Revision and Delete use Bootstrap confirmation modals
+- Role-based access: all viewer roles can view; action buttons visible to
+  Event Manager role and above
 
-### Event Create/Edit (/events/create/, /events/<id>/edit/)
-- Event Type drives form visibility (account hidden for Admin, items hidden for
-  Festival and Admin)
-- AJAX-powered ambassador and event manager dropdowns update when account selected
-- Coverage area union logic filters people by account coverage
-- Admin events show all company ambassadors/TMs/AMs (no coverage filter)
-- created_by = logged-in user on create; event_manager defaults to creator
-  if creator is TM or AM; status always starts as Draft
+### Event Create (/events/create/)
+- Event type selected via Bootstrap modal on the event list page; three buttons —
+  Tasting, Festival, Admin — each link to /events/create/?type=<value>
+- type URL parameter validated server-side; navigating without a valid type
+  redirects back to /events/
+- Event type rendered as a read-only badge on the form — cannot be changed
+  once selected; a hidden input submits the value with the form
+- Cancel button redirects to /events/ (event list)
+- Account selected via live search (debounced, 2+ character trigger); selected
+  account displayed inline with a Clear option
+- Selecting an account triggers AJAX refresh of ambassador and event manager
+  dropdowns filtered by coverage area
+- Items multi-select (Tasting only) uses HTML optgroup elements to group options
+  by brand; only item name shown, no item code
+- created_by = logged-in user; event_manager defaults to creator for all roles
+  if not explicitly set; status always starts as Draft
+
+### Event Edit (/events/<id>/edit/)
+- Event type shown as read-only badge — event type cannot be changed after
+  creation; a hidden input submits the locked value with the form
+- All other fields editable per the same rules as event create
+- Items multi-select groups by brand using optgroup, pre-selected items
+  highlighted on page load
+
+### Admin Event Rules
+- Account field hidden; not required for release
+- Start time field hidden
+- Event manager always set to creator on save; event manager field not shown
+- Ambassador dropdown populated from all company users on page load
+  (no account-based filtering required)
+- Sales Manager visibility: all admin events in the company are visible
+  to Sales Managers (no account scoping — per spec, admin events are
+  visible to creator and anyone above them in the role hierarchy)
 
 ### AJAX Endpoints
-- GET /events/ajax/ambassadors/?account_id=X — ambassadors and AMs covering account
-- GET /events/ajax/event_managers/?account_id=X — TMs and AMs covering account
-- Both return all company users of the role when no account_id provided (Admin events)
-- Both require authentication
+- GET /events/ajax/ambassadors/?account_id=X — ambassadors, AMs, TMs, Sales
+  Managers, and Supplier Admins covering the given account; all company users
+  in those roles returned when no account_id provided (Admin events)
+- GET /events/ajax/event_managers/?account_id=X — AMs, TMs, Sales Managers,
+  Supplier Admins covering the account; all returned when no account_id provided
+- GET /events/ajax/accounts/?q=<term> — live account search, filtered through
+  user's coverage areas via get_accounts_for_user(); max 20 results
+- All endpoints require authentication
 
 ### Status Transitions
 - POST /events/<id>/release/ — Draft → Scheduled; validates date, ambassador,
@@ -1033,9 +1067,14 @@ Admin:
 - POST /events/<id>/request-revision/ — Recap Submitted → Revision Requested;
   requires revision_note explaining what needs fixing
 - POST /events/<id>/approve/ — Recap Submitted → Complete
-- POST /events/<id>/delete/ — Permanently deletes Draft events; shows
+- POST /events/<id>/delete/ — Permanently deletes Draft events only; requires
   Bootstrap confirmation modal before submitting
 - All transitions accessible to AM, TM, Sales Manager, Supplier Admin
+
+### Login Redirect — AM and Ambassador
+- Ambassador Manager and Ambassador roles redirect to /events/ after login
+- Direct navigation to /dashboard/ also redirects these roles to /events/
+- All other roles use the standard dashboard redirect
 
 ### Navigation
 - Events link added to sidebar and mobile nav for: Supplier Admin, Sales Manager,
