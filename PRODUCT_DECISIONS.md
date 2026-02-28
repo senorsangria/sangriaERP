@@ -269,7 +269,9 @@ Searchable list for one-off or exception assignments
 | Phase 9 | Projection Planning | ⬜ Pending |
 | Phase 10.1 | Account Assignment & Ambassador Coverage Areas | ✅ Complete |
 | Phase 10.2 | Event Scheduling & Status Workflow | ✅ Complete |
-| Phase 10.3 | Event Recap | ⬜ Pending |
+| Phase 10.3.1 | Event Detail UI Reorganization & Admin Event Flow Fix | 🔄 In Progress |
+| Phase 10.3.2 | Event Recap — Tasting | ⬜ Pending |
+| Phase 10.3.3 | Event Recap — Festival | ⬜ Pending |
 | Phase 10.4 | Expense Management | ⬜ Pending |
 | Phase 10.5 | Event Export | ⬜ Pending |
 
@@ -973,6 +975,9 @@ Admin:
 
 ## Phase 10.2 — Completed Features
 
+> ✅ **Complete and tested.** All features in this phase have been built,
+> verified in the running application, and pushed to GitHub.
+
 ### Event Model
 - EventType choices: Tasting, Festival, Admin
 - Status choices: Draft, Scheduled, Recap Submitted, Revision Requested, Complete
@@ -1080,6 +1085,73 @@ Admin:
 - Events link added to sidebar and mobile nav for: Supplier Admin, Sales Manager,
   Territory Manager, Ambassador Manager, Ambassador (shows as "My Events")
 - Active state highlighting via 'event' in url_name
+
+---
+
+## Future Considerations / Unscheduled Features
+
+These items are acknowledged and agreed upon but have no assigned phase or timeline.
+They are recorded here so they are not forgotten and can inform design decisions
+in adjacent phases.
+
+### Account Photos
+Account Detail will eventually display photos associated with that account, sourced
+from event recaps. Photos are associated to both the event and the account at the
+time of recap submission. No timeline or phase assigned.
+
+---
+
+## Phase 10.3.1 — Event Detail UI Reorganization & Admin Event Flow Fix
+
+### Event Detail Screen — Layout Changes
+
+**Top bar**
+- Remove the account name from the top bar. It already appears in the body of
+  the page under the Location section.
+- Move the Event Type badge, Status badge, and Edit button into the top bar,
+  to the right of the Events back button, in the spot where the account name was.
+
+**Location block**
+- Distributor displays inline: `Distributor: [name]` — no stacked header/value layout
+- Date, Start Time, and Duration move into the Location block
+- Duration displays inline to the right of Start Time
+- Remove the "Schedule" card section entirely — date/time/duration live in Location
+- Date displays as MM/DD/YY format
+
+**People section**
+- Remove role title labels from Ambassador and Event Manager
+- Ambassador and Event Manager appear on the same row; Event Manager to the right
+  of Ambassador
+
+**Items section**
+- Items to be Sampled remains visible during Draft and Scheduled status
+- Items section is hidden once the recap form is active (Recap Submitted,
+  Revision Requested, Complete)
+
+### Admin Event Flow Fix
+- Admin events must not show the standard Release button
+- Releasing an Admin event sends it directly to Recap Submitted status — there is
+  no recap form to fill out for admin events; once hours are set the event is ready
+  to be approved
+- Once in Recap Submitted, Event Manager or above can Approve → Complete
+- The Request Revision action is hidden for Admin events — there is no recap to revise
+- The Move Back to Draft action (unrelease) only applies when an event is in
+  Scheduled status; since Admin events skip Scheduled, unrelease is not applicable
+  once past Draft
+
+---
+
+## Phase 10.3.2 — Event Recap: Tasting
+
+*Planned — not yet started. Full spec to be added in a future session.*
+
+---
+
+## Phase 10.3.3 — Event Recap: Festival
+
+*Planned — not yet started. Full spec to be added in a future session.*
+
+---
 
 *Last updated: February 28, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*
