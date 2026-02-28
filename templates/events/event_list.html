@@ -47,9 +47,10 @@
       <i class="bi bi-funnel me-1"></i>Filters
     </button>
     {% if user.role == 'supplier_admin' or user.role == 'sales_manager' or user.role == 'territory_manager' or user.role == 'ambassador_manager' %}
-    <a href="{% url 'event_create' %}" class="btn btn-sm btn-primary">
+    <button type="button" class="btn btn-sm btn-primary"
+            data-bs-toggle="modal" data-bs-target="#newEventModal">
       <i class="bi bi-plus-lg me-1"></i>New Event
-    </a>
+    </button>
     {% endif %}
   </div>
 </div>
@@ -297,4 +298,44 @@
   </div>
   {% endif %}
 </div>
+
+{% if user.role == 'supplier_admin' or user.role == 'sales_manager' or user.role == 'territory_manager' or user.role == 'ambassador_manager' %}
+<!-- ================================================================
+     New Event — Event Type Selection Modal
+     ================================================================ -->
+<div class="modal fade" id="newEventModal" tabindex="-1"
+     aria-labelledby="newEventModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="newEventModalLabel">
+          <i class="bi bi-calendar-plus me-2"></i>Select Event Type
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body d-grid gap-2">
+        <a href="{% url 'event_create' %}?type=tasting"
+           class="btn btn-outline-primary text-start py-3">
+          <i class="bi bi-cup-straw me-2"></i><strong>Tasting</strong>
+          <div class="small text-muted mt-1">In-store tasting event with items &amp; recap</div>
+        </a>
+        <a href="{% url 'event_create' %}?type=festival"
+           class="btn btn-outline-primary text-start py-3">
+          <i class="bi bi-balloon me-2"></i><strong>Festival</strong>
+          <div class="small text-muted mt-1">Festival or special event</div>
+        </a>
+        <a href="{% url 'event_create' %}?type=admin"
+           class="btn btn-outline-secondary text-start py-3">
+          <i class="bi bi-clock me-2"></i><strong>Admin</strong>
+          <div class="small text-muted mt-1">Admin hours — no account required</div>
+        </a>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                data-bs-dismiss="modal">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

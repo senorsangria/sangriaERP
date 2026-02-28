@@ -65,25 +65,15 @@
 
   <div class="row g-3">
 
-    <!-- ---- Event Type (always shown first) ---- -->
+    <!-- ---- Event Type (locked, read-only) ---- -->
     <div class="col-12">
       <div class="card">
         <div class="card-body">
           <div class="section-heading">Event Type</div>
-          <div class="row g-2">
-            {% for val, label in form.fields.event_type.choices %}
-            <div class="col-auto">
-              <div class="form-check form-check-inline">
-                <input class="form-check-input" type="radio" name="event_type"
-                       id="et_{{ val }}" value="{{ val }}"
-                       {% if form.event_type.value == val %}checked{% elif is_create and val == 'tasting' and not form.event_type.value %}checked{% endif %}>
-                <label class="form-check-label" for="et_{{ val }}">{{ label }}</label>
-              </div>
-            </div>
-            {% endfor %}
-          </div>
-          {% if form.event_type.errors %}
-          <div class="text-danger small mt-1">{{ form.event_type.errors|join:", " }}</div>
+          <input type="hidden" name="event_type" value="{{ locked_event_type }}">
+          <span class="badge bg-secondary fs-6 px-3 py-2">{{ locked_event_type_display }}</span>
+          {% if not is_create %}
+          <span class="text-muted small ms-2">Event type cannot be changed after creation.</span>
           {% endif %}
         </div>
       </div>
@@ -190,7 +180,7 @@
               <label for="{{ form.event_manager.id_for_label }}" class="form-label">Event Manager</label>
               {{ form.event_manager }}
               {% if form.event_manager.errors %}<div class="text-danger small mt-1">{{ form.event_manager.errors|join:", " }}</div>{% endif %}
-              <div class="form-text" id="eventManagerHint">Select an account above to filter event managers by coverage area.</div>
+              <div class="form-text" id="eventManagerHint"></div>
             </div>
           </div>
         </div>
@@ -202,8 +192,16 @@
       <div class="card">
         <div class="card-body">
           <div class="section-heading">Items to be Sampled</div>
-          <label for="{{ form.items.id_for_label }}" class="form-label">Select items</label>
-          {{ form.items }}
+          <label for="id_items" class="form-label">Select items</label>
+          <select name="items" id="id_items" class="form-select" size="6" multiple>
+            {% for brand_name, brand_items in items_by_brand %}
+            <optgroup label="{{ brand_name }}">
+              {% for item in brand_items %}
+              <option value="{{ item.pk }}" {% if item.pk in selected_item_pks %}selected{% endif %}>{{ item.name }}</option>
+              {% endfor %}
+            </optgroup>
+            {% endfor %}
+          </select>
           {% if form.items.errors %}<div class="text-danger small mt-1">{{ form.items.errors|join:", " }}</div>{% endif %}
           <div class="form-text">Hold Ctrl (or Cmd on Mac) to select multiple items.</div>
         </div>
@@ -246,6 +244,8 @@
 (function () {
   'use strict';
 
+  const LOCKED_EVENT_TYPE   = '{{ locked_event_type }}';
+
   const ambassadorSelect    = document.getElementById('{{ form.ambassador.id_for_label }}');
   const eventManagerSelect  = document.getElementById('{{ form.event_manager.id_for_label }}');
   const accountHidden       = document.getElementById('id_account');
@@ -255,7 +255,6 @@
   const eventManagerWrapper = document.getElementById('eventManagerWrapper');
   const ambassadorHint      = document.getElementById('ambassadorHint');
   const eventManagerHint    = document.getElementById('eventManagerHint');
-  const eventTypeRadios     = document.querySelectorAll('input[name="event_type"]');
 
   // Account live search elements
   const accountSearchInput   = document.getElementById('accountSearchInput');
@@ -273,8 +272,7 @@
   }
 
   function currentEventType() {
-    const checked = document.querySelector('input[name="event_type"]:checked');
-    return checked ? checked.value : 'tasting';
+    return LOCKED_EVENT_TYPE;
   }
 
   function updateVisibility() {
@@ -295,10 +293,6 @@
       itemsSection.classList.add('hidden');
       if (startTimeWrapper)    startTimeWrapper.classList.remove('hidden');
       if (eventManagerWrapper) eventManagerWrapper.classList.remove('hidden');
-    }
-    // When switching to admin, refresh people dropdowns without account filter
-    if (etype === 'admin') {
-      refreshPeopleDropdowns(null);
     }
   }
 
@@ -349,12 +343,14 @@
           // Prefer current user pre-selection; fall back to previous value
           var emPref = data.current_user_id ? String(data.current_user_id) : managerCurrent;
           populateSelect(eventManagerSelect, data.event_managers || [], 'id', 'name', emPref);
-          if (data.event_managers && data.event_managers.length > 0) {
-            eventManagerHint.textContent = data.event_managers.length + ' event manager(s) available.';
-          } else {
-            eventManagerHint.textContent = accountId
-              ? 'No event managers have a coverage area covering this account.'
-              : 'No event managers found in the company.';
+          if (eventManagerHint) {
+            if (data.event_managers && data.event_managers.length > 0) {
+              eventManagerHint.textContent = data.event_managers.length + ' event manager(s) available.';
+            } else {
+              eventManagerHint.textContent = accountId
+                ? 'No event managers have a coverage area covering this account.'
+                : 'No event managers found in the company.';
+            }
           }
         });
     }
@@ -486,28 +482,13 @@
     }
   }
 
-  // ---- wire up event type radios ----
-  eventTypeRadios.forEach(function (radio) {
-    radio.addEventListener('change', function () {
-      updateVisibility();
-      const etype = currentEventType();
-      const currentAccountId = accountHidden ? accountHidden.value : '';
-      if (etype === 'admin') {
-        refreshPeopleDropdowns(null);
-      } else if (currentAccountId) {
-        refreshPeopleDropdowns(currentAccountId);
-      } else {
-        // Tasting/Festival with no account: show placeholder for ambassador
-        showAmbassadorPlaceholder();
-      }
-    });
-  });
-
   // Set blank option data attributes before initial load
   if (ambassadorSelect)   ambassadorSelect.dataset.blank   = '— Unassigned —';
   if (eventManagerSelect) eventManagerSelect.dataset.blank = '— Select event manager —';
 
   // ---- initial page load ----
+  // Event type is locked (set via URL param on create, from instance on edit).
+  // Apply visibility and load people dropdowns once on load.
   updateVisibility();
   const currentAccountId = accountHidden ? accountHidden.value : '';
   if (currentAccountId) {

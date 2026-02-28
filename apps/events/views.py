@@ -9,6 +9,7 @@ Access rules:
   - Ambassador:        sees only their assigned events (no Drafts)
 """
 from datetime import date as date_type
+from itertools import groupby
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -18,6 +19,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.accounts.models import Account
 from apps.accounts.utils import get_accounts_for_user, get_users_covering_account
+from apps.catalog.models import Brand, Item
 from apps.core.models import User
 from apps.distribution.models import Distributor
 
@@ -60,6 +62,31 @@ _ACTION_ROLES = {
 
 
 # ---------------------------------------------------------------------------
+# Item grouping helper
+# ---------------------------------------------------------------------------
+
+def _get_items_by_brand(company):
+    """
+    Return a list of (brand_name, items_list) tuples for all active items
+    in the given company, ordered by brand name then item name.
+    """
+    if not company:
+        return []
+    brand_pks = Brand.objects.filter(
+        company=company, is_active=True
+    ).values_list('pk', flat=True)
+    items_qs = (
+        Item.objects.filter(brand__in=brand_pks, is_active=True)
+        .select_related('brand')
+        .order_by('brand__name', 'name')
+    )
+    result = []
+    for brand_name, brand_items in groupby(items_qs, key=lambda x: x.brand.name):
+        result.append((brand_name, list(brand_items)))
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Visibility helpers
 # ---------------------------------------------------------------------------
 
@@ -90,14 +117,11 @@ def _get_visible_events(user):
         return qs
 
     if role == User.Role.SALES_MANAGER:
-        below_roles = [
-            User.Role.TERRITORY_MANAGER,
-            User.Role.AMBASSADOR_MANAGER,
-            User.Role.AMBASSADOR,
-        ]
+        # Sales Managers see all events with accounts, plus all admin events
+        # (admin events have no account scoping per the product spec)
         return qs.filter(
             Q(account__isnull=False)
-            | Q(event_type=Event.EventType.ADMIN, created_by__role__in=below_roles)
+            | Q(event_type=Event.EventType.ADMIN)
         )
 
     if role == User.Role.TERRITORY_MANAGER:
@@ -333,10 +357,19 @@ def event_detail(request, pk):
     can_edit = request.user.role in _CREATOR_ROLES
     can_action = request.user.role in _ACTION_ROLES
 
+    tasting_items_by_brand = None
+    if event.event_type == Event.EventType.TASTING:
+        items_qs = event.items.select_related('brand').order_by('brand__name', 'name')
+        tasting_items_by_brand = [
+            (brand_name, list(brand_items))
+            for brand_name, brand_items in groupby(items_qs, key=lambda x: x.brand.name)
+        ]
+
     return render(request, 'events/event_detail.html', {
-        'event':      event,
-        'can_edit':   can_edit,
-        'can_action': can_action,
+        'event':                  event,
+        'can_edit':               can_edit,
+        'can_action':             can_action,
+        'tasting_items_by_brand': tasting_items_by_brand,
     })
 
 
@@ -358,6 +391,9 @@ def _account_search_disabled(user):
     ).exists()
 
 
+_VALID_EVENT_TYPES = {'tasting', 'festival', 'admin'}
+
+
 @login_required
 def event_create(request):
     if request.user.role not in _CREATOR_ROLES:
@@ -366,6 +402,10 @@ def event_create(request):
     company = request.user.company
 
     if request.method == 'POST':
+        locked_event_type = request.POST.get('event_type', '').strip().lower()
+        if locked_event_type not in _VALID_EVENT_TYPES:
+            return redirect('event_list')
+
         form = EventForm(request.POST, company=company, user=request.user)
         if form.is_valid():
             event = form.save(commit=False)
@@ -373,12 +413,10 @@ def event_create(request):
             event.created_by = request.user
             event.status = Event.Status.DRAFT
 
-            # Change 6: Admin events always have event_manager = creator
             if event.event_type == Event.EventType.ADMIN:
                 event.event_manager = request.user
                 event.start_time = None
             else:
-                # Change 5: Default event_manager to creator for ALL roles if not set
                 if not event.event_manager_id:
                     event.event_manager = request.user
 
@@ -387,15 +425,29 @@ def event_create(request):
             form.save_m2m()
             messages.success(request, 'Event created successfully.')
             return redirect('event_detail', pk=event.pk)
+
+        selected_item_pks = set(int(x) for x in request.POST.getlist('items') if x.isdigit())
     else:
+        locked_event_type = request.GET.get('type', '').strip().lower()
+        if locked_event_type not in _VALID_EVENT_TYPES:
+            return redirect('event_list')
+
         form = EventForm(company=company, user=request.user)
+        selected_item_pks = set()
+
+    locked_event_type_display = dict(Event.EventType.choices).get(locked_event_type, locked_event_type.title())
+    items_by_brand = _get_items_by_brand(company)
 
     return render(request, 'events/event_form.html', {
-        'form':                   form,
-        'form_title':             'Create Event',
-        'is_create':              True,
+        'form':                    form,
+        'form_title':              'Create Event',
+        'is_create':               True,
         'account_search_disabled': _account_search_disabled(request.user),
-        'selected_account_name':  '',
+        'selected_account_name':   '',
+        'locked_event_type':         locked_event_type,
+        'locked_event_type_display': locked_event_type_display,
+        'items_by_brand':            items_by_brand,
+        'selected_item_pks':         selected_item_pks,
     })
 
 
@@ -417,7 +469,6 @@ def event_edit(request, pk):
         if form.is_valid():
             event = form.save(commit=False)
             event.duration_hours = int(form.cleaned_data.get('duration_hours', 0))
-            # Change 6: Admin events always have event_manager = creator, clear start_time
             if event.event_type == Event.EventType.ADMIN:
                 event.event_manager = event.created_by or request.user
                 event.start_time = None
@@ -425,27 +476,37 @@ def event_edit(request, pk):
             form.save_m2m()
             messages.success(request, 'Event updated successfully.')
             return redirect('event_detail', pk=event.pk)
+
+        selected_item_pks = set(int(x) for x in request.POST.getlist('items') if x.isdigit())
     else:
         form = EventForm(instance=event, company=company, user=request.user)
         form.fields['duration_hours'].initial = event.duration_hours
+        selected_item_pks = set(event.items.values_list('pk', flat=True))
 
     # For the live search display: resolve the currently-selected account name
     selected_account_name = ''
     if event.account_id:
         try:
-            from apps.accounts.models import Account
             acc = Account.objects.get(pk=event.account_id)
             selected_account_name = acc.name
         except Exception:
             pass
 
+    locked_event_type = event.event_type
+    locked_event_type_display = event.get_event_type_display()
+    items_by_brand = _get_items_by_brand(company)
+
     return render(request, 'events/event_form.html', {
-        'form':                   form,
-        'event':                  event,
-        'form_title':             'Edit Event',
-        'is_create':              False,
+        'form':                    form,
+        'event':                   event,
+        'form_title':              'Edit Event',
+        'is_create':               False,
         'account_search_disabled': _account_search_disabled(request.user),
-        'selected_account_name':  selected_account_name,
+        'selected_account_name':   selected_account_name,
+        'locked_event_type':         locked_event_type,
+        'locked_event_type_display': locked_event_type_display,
+        'items_by_brand':            items_by_brand,
+        'selected_item_pks':         selected_item_pks,
     })
 
 

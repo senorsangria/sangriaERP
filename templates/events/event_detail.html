@@ -138,23 +138,20 @@
     <div class="card">
       <div class="card-header fw-semibold small text-muted">Items to be Sampled</div>
       <div class="card-body">
-        {% with items=event.items.all %}
-        {% if items %}
-        <ul class="list-unstyled mb-0">
-          {% for item in items %}
-          <li class="d-flex align-items-center gap-2 py-1 border-bottom">
-            <i class="bi bi-dot text-muted"></i>
-            <div>
-              <div>{{ item.name }}</div>
-              <div class="small text-muted">{{ item.item_code }} &mdash; {{ item.brand.name }}</div>
-            </div>
-          </li>
+        {% if tasting_items_by_brand %}
+          {% for brand_name, brand_items in tasting_items_by_brand %}
+          <div class="mb-3">
+            <div class="small fw-semibold text-muted mb-1">{{ brand_name }}</div>
+            <ul class="list-unstyled mb-0 ps-2">
+              {% for item in brand_items %}
+              <li class="py-1"><i class="bi bi-dot text-muted"></i>{{ item.name }}</li>
+              {% endfor %}
+            </ul>
+          </div>
           {% endfor %}
-        </ul>
         {% else %}
-        <span class="text-muted fst-italic">No items selected</span>
+          <span class="text-muted fst-italic">No items selected</span>
         {% endif %}
-        {% endwith %}
       </div>
     </div>
   </div>
