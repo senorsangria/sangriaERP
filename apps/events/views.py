@@ -516,7 +516,13 @@ def event_edit(request, pk):
 
 @login_required
 def event_release(request, pk):
-    """POST: Draft → Scheduled"""
+    """
+    POST: Release a Draft event.
+
+    - Tasting / Festival: Draft → Scheduled
+    - Admin:              Draft → Recap Submitted
+      (Admin events have no recap step, so they go straight to awaiting approval.)
+    """
     if request.user.role not in _ACTION_ROLES:
         return render(request, '403.html', status=403)
     if request.method != 'POST':
@@ -544,15 +550,21 @@ def event_release(request, pk):
             messages.error(request, err)
         return redirect('event_detail', pk=pk)
 
-    event.status = Event.Status.SCHEDULED
-    event.save(update_fields=['status', 'updated_at'])
-    messages.success(request, 'Event released and is now Scheduled.')
+    if event.event_type == Event.EventType.ADMIN:
+        event.status = Event.Status.RECAP_SUBMITTED
+        event.save(update_fields=['status', 'updated_at'])
+        messages.success(request, 'Admin event released and is ready for approval.')
+    else:
+        event.status = Event.Status.SCHEDULED
+        event.save(update_fields=['status', 'updated_at'])
+        messages.success(request, 'Event released and is now Scheduled.')
+
     return redirect('event_detail', pk=pk)
 
 
 @login_required
 def event_request_revision(request, pk):
-    """POST: Recap Submitted → Revision Requested"""
+    """POST: Recap Submitted → Revision Requested (Tasting / Festival only)."""
     if request.user.role not in _ACTION_ROLES:
         return render(request, '403.html', status=403)
     if request.method != 'POST':
@@ -561,6 +573,11 @@ def event_request_revision(request, pk):
     company = request.user.company
     visible = _get_visible_events(request.user)
     event = get_object_or_404(visible, pk=pk, company=company)
+
+    # Admin events have no recap — revision requests are not applicable
+    if event.event_type == Event.EventType.ADMIN:
+        messages.error(request, 'Admin events do not have a recap to revise.')
+        return redirect('event_detail', pk=pk)
 
     if event.status != Event.Status.RECAP_SUBMITTED:
         messages.error(request, 'Event is not in Recap Submitted status.')
