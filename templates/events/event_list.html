@@ -188,7 +188,7 @@
   </div>
   {% for event in group_events %}
   <a href="{% url 'event_detail' event.pk %}" class="text-decoration-none text-dark">
-    <div class="card mb-2 event-card {% if event.status == 'revision_requested' %}revision{% elif event.status == 'draft' %}draft{% elif event.status == 'scheduled' %}scheduled{% elif event.status == 'recap_submitted' %}recap{% elif event.status == 'complete' %}complete{% endif %}">
+    <div class="card mb-2 event-card {% if event.status == 'revision_requested' %}revision{% elif event.status == 'draft' %}draft{% elif event.status == 'recap_in_progress' %}draft{% elif event.status == 'scheduled' %}scheduled{% elif event.status == 'recap_submitted' %}recap{% elif event.status == 'complete' %}complete{% endif %}">
       <div class="card-body py-2 px-3">
         <div class="d-flex justify-content-between align-items-start">
           <div>
@@ -211,7 +211,7 @@
             </div>
           </div>
           <div class="text-end ps-2">
-            <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status == 'recap_submitted' %}dark{% else %}white{% endif %}">
+            <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status_badge_class == 'warning' %}dark{% else %}white{% endif %}">
               {{ event.get_status_display }}
             </span>
             <div class="small text-muted mt-1">{{ event.get_event_type_display }}</div>
@@ -259,7 +259,7 @@
             <td colspan="9">── {{ group_label }} ──</td>
           </tr>
           {% for event in group_events %}
-          <tr class="{% if event.status == 'revision_requested' %}event-row-revision{% elif event.status == 'draft' %}event-row-draft{% endif %}">
+          <tr class="{% if event.status == 'revision_requested' %}event-row-revision{% elif event.status == 'draft' or event.status == 'recap_in_progress' %}event-row-draft{% endif %}">
             <td>
               <a href="{% url 'event_detail' event.pk %}" class="text-decoration-none fw-semibold">
                 {% if event.date %}{{ event.date|date:"m/d/y" }}{% else %}<span class="text-muted fst-italic">No date</span>{% endif %}
@@ -292,7 +292,7 @@
               {% if event.account and event.account.distributor %}{{ event.account.distributor.name }}{% else %}—{% endif %}
             </td>
             <td>
-              <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status == 'recap_submitted' %}dark{% else %}white{% endif %}">
+              <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status_badge_class == 'warning' %}dark{% else %}white{% endif %}">
                 {{ event.get_status_display }}
               </span>
             </td>

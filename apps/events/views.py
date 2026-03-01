@@ -183,17 +183,20 @@ def _sort_events(events_qs):
     # Materialize and split by status
     events = list(events_qs)
 
-    revision  = sorted([e for e in events if e.status == Event.Status.REVISION_REQUESTED], key=date_asc_key)
-    drafts    = sorted([e for e in events if e.status == Event.Status.DRAFT],              key=date_asc_no_date_first_key)
-    recap     = sorted([e for e in events if e.status == Event.Status.RECAP_SUBMITTED],    key=date_asc_key)
-    scheduled = sorted([e for e in events if e.status == Event.Status.SCHEDULED],         key=date_asc_key)
-    complete  = sorted([e for e in events if e.status == Event.Status.COMPLETE],           key=date_desc_key)
+    revision       = sorted([e for e in events if e.status == Event.Status.REVISION_REQUESTED], key=date_asc_key)
+    drafts         = sorted([e for e in events if e.status == Event.Status.DRAFT],              key=date_asc_no_date_first_key)
+    recap_in_prog  = sorted([e for e in events if e.status == Event.Status.RECAP_IN_PROGRESS], key=date_asc_key)
+    recap          = sorted([e for e in events if e.status == Event.Status.RECAP_SUBMITTED],    key=date_asc_key)
+    scheduled      = sorted([e for e in events if e.status == Event.Status.SCHEDULED],         key=date_asc_key)
+    complete       = sorted([e for e in events if e.status == Event.Status.COMPLETE],           key=date_desc_key)
 
     groups = []
     if revision:
         groups.append(('Revision Requested', 'revision_requested', revision))
     if drafts:
         groups.append(('Drafts', 'draft', drafts))
+    if recap_in_prog:
+        groups.append(('Recap In Progress', 'recap_in_progress', recap_in_prog))
     if recap:
         groups.append(('Recap Submitted', 'recap_submitted', recap))
     if scheduled:

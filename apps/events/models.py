@@ -10,7 +10,7 @@ class Event(TimeStampedModel):
     A field activity: in-store tasting, festival, or admin hours.
 
     Status workflow:
-      Draft → Scheduled → Recap Submitted → Revision Requested → Complete
+      Draft → Scheduled → Recap In Progress → Recap Submitted → Revision Requested → Complete
       Admin events: Draft → Scheduled → Complete (no recap step)
 
     Visibility rules enforced in views/utils — not at model level.
@@ -24,6 +24,7 @@ class Event(TimeStampedModel):
     class Status(models.TextChoices):
         DRAFT              = 'draft',              'Draft'
         SCHEDULED          = 'scheduled',          'Scheduled'
+        RECAP_IN_PROGRESS  = 'recap_in_progress',  'Recap In Progress'
         RECAP_SUBMITTED    = 'recap_submitted',    'Recap Submitted'
         REVISION_REQUESTED = 'revision_requested', 'Revision Requested'
         COMPLETE           = 'complete',           'Complete'
@@ -128,6 +129,7 @@ class Event(TimeStampedModel):
         return {
             self.Status.DRAFT:              'secondary',
             self.Status.SCHEDULED:          'primary',
+            self.Status.RECAP_IN_PROGRESS:  'warning',
             self.Status.RECAP_SUBMITTED:    'warning',
             self.Status.REVISION_REQUESTED: 'danger',
             self.Status.COMPLETE:           'success',

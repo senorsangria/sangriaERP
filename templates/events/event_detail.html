@@ -21,7 +21,7 @@
   <span class="badge bg-light text-dark border">
     <i class="bi bi-calendar-event me-1"></i>{{ event.get_event_type_display }}
   </span>
-  <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status == 'recap_submitted' %}dark{% else %}white{% endif %}">
+  <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status_badge_class == 'warning' %}dark{% else %}white{% endif %}">
     {{ event.get_status_display }}
   </span>
   {% if can_edit %}
