@@ -44,6 +44,15 @@ on this project including AI coding assistants.
 - Base template uses Bootstrap 5 responsive grid with hamburger nav
   on mobile
 
+### Environment Configuration & Deployment
+- All environment-specific configuration is managed via standard environment
+  variables. No deployment-platform-specific APIs or patterns are used anywhere
+  in the codebase.
+- The platform is portable to any hosting provider (Replit, Render, AWS, or
+  other) without code changes.
+- Required environment variables are documented in DEPLOYMENT.md in the
+  project root.
+
 ---
 
 ## Data Model Decisions
@@ -271,8 +280,7 @@ Searchable list for one-off or exception assignments
 | Phase 10.2 | Event Scheduling & Status Workflow | ✅ Complete |
 | Phase 10.3.1 | Event Detail UI Reorganization & Admin Event Flow Fix | ✅ Complete |
 | Phase 10.3.2 | Account-Item Association (models + import) | ✅ Complete |
-| Phase 10.3.3 | Event Recap — Tasting | ⬜ Pending |
-| Phase 10.3.4 | Event Recap — Festival | ⬜ Pending |
+| Phase 10.3.3 | Event Recap Form (Tasting + Festival) | 🔄 In Progress |
 | Phase 10.4 | Expense Management | ⬜ Pending |
 | Phase 10.5 | Event Export | ⬜ Pending |
 
@@ -603,23 +611,29 @@ Event setup fields (set by creator, not ambassador):
   the event
 
 ### Event Status Workflow
-Five statuses in order:
+Six statuses in order:
 
 1. Draft — event is being set up, not yet visible to ambassador.
    Creator is still coordinating with account.
 2. Scheduled — event released, now visible to assigned ambassador
-3. Recap Submitted — ambassador has completed and submitted
+3. Recap In Progress — ambassador has started but not yet submitted the recap;
+   set automatically on first recap save
+4. Recap Submitted — ambassador has completed and submitted
    recap information
-4. Revision Requested — Event Manager or above found issues in
+5. Revision Requested — Event Manager or above found issues in
    the recap; revision_note field captures what needs to be fixed
-5. Complete — event creator has reviewed recap and marked event
+6. Complete — event creator has reviewed recap and marked event
    as complete
 
 Admin events follow a simpler flow:
-Draft → Scheduled → Complete (no recap step)
+Draft → Recap Submitted → Complete (no recap step, no Scheduled)
 
-Festival events follow:
-Draft → Scheduled → Recap Submitted → Complete
+Tasting and Festival events follow:
+Draft → Scheduled → Recap In Progress → Recap Submitted → Complete
+
+Unlock behavior: Recap Submitted → Recap In Progress (not back to Scheduled)
+
+Badge color for Recap In Progress: bg-warning text-dark (yellow/amber)
 
 ### revision_note Field
 - Added to Event model in Phase 10.2
@@ -998,9 +1012,11 @@ Admin:
 
 ### Event List (/events/)
 - Access: all roles except Distributor Contact
-- Status group ordering: Revision Requested → Draft → Recap Submitted →
-  Scheduled → Complete
-- Revision Requested group highlighted with red left border
+- Status group ordering: Revision Requested → Draft → Recap In Progress →
+  Recap Submitted → Scheduled → Complete
+- Revision Requested and Draft groups highlighted with light red background;
+  Recap In Progress also gets light red background (all three require user action)
+- Revision Requested retains its red left border in addition
 - Section header rows between status groups
 - Mobile card layout; desktop table layout
 - Collapsible filter bar with session persistence (key: 'event_list_filters');
@@ -1070,9 +1086,16 @@ Admin:
 - POST /events/<id>/release/ — Draft → Scheduled; validates date, ambassador,
   and account (account not required for Admin)
 - POST /events/<id>/unrelease/ — Scheduled → Draft (Move Back to Draft)
+- POST /events/<id>/save-recap/ — saves recap data; moves Scheduled → Recap In
+  Progress on first save; stays in Recap In Progress on subsequent saves
+- POST /events/<id>/submit-recap/ — saves recap data and moves status to
+  Recap Submitted; validates minimum required fields
+- POST /events/<id>/unlock-recap/ — Recap Submitted → Recap In Progress; available
+  to Ambassador, Event Manager, and coverage-area users
 - POST /events/<id>/request-revision/ — Recap Submitted → Revision Requested;
   requires revision_note explaining what needs fixing
-- POST /events/<id>/approve/ — Recap Submitted → Complete
+- POST /events/<id>/approve/ — Recap Submitted → Complete; includes race condition
+  guard that verifies status is still Recap Submitted at moment of approval
 - POST /events/<id>/delete/ — Permanently deletes Draft events only; requires
   Bootstrap confirmation modal before submitting
 - All transitions accessible to AM, TM, Sales Manager, Supplier Admin
@@ -1201,15 +1224,113 @@ tasting event recap (shelf price capture per item per account).
 
 ---
 
-## Phase 10.3.3 — Event Recap: Tasting
+## Phase 10.3.3 — Event Recap Form (Tasting + Festival)
 
-*Planned — not yet started. Full spec to be added in a future session.*
+*In Progress.*
 
----
+### Status: Recap In Progress
+- New status added between Scheduled and Recap Submitted
+- Set automatically on first recap save (Scheduled → Recap In Progress)
+- Subsequent saves while in Recap In Progress leave status unchanged
+- Status only moves to Recap Submitted when ambassador hits the Submit button
+- Unlock (Recap Submitted → Recap In Progress) is the reverse of Submit; not
+  a full rollback to Scheduled
 
-## Phase 10.3.4 — Event Recap: Festival
+### Recap Access Rules
+- Assigned Ambassador, assigned Event Manager, and any user whose coverage areas
+  include the event account can fill out the recap
+- Access is determined via get_users_covering_account() (apps/accounts/utils.py)
+- Event setup fields remain read-only to these users — only recap fields are editable
+- Admin events: no recap form shown
 
-*Planned — not yet started. Full spec to be added in a future session.*
+### Recap Form — Placement & Visibility
+- Recap form is embedded in the Event Detail screen below the read-only event info
+- Form is active (editable) when status is Scheduled, Recap In Progress,
+  or Revision Requested
+- Form is shown read-only when status is Recap Submitted or Complete
+- When status is Revision Requested, the revision note displays prominently at the
+  top of the recap form in a highlighted alert box before any input fields
+- Previously entered recap data is preserved and editable after a revision request
+
+### Tasting Recap — Part 1: Overall Event
+- Number of samples poured (integer input)
+- Number of QR codes scanned (integer input)
+- General notes (textarea)
+- Photo upload: multiple files allowed; count indicator shows how many photos are
+  staged ("3 photos selected"); staged client-side, uploaded on form submission;
+  no thumbnail preview required; photos associated to both Event and Account on save
+
+### Tasting Recap — Part 2: Per Item
+- One section per item associated to the event, labeled with item name
+- Fields stacked vertically within each section:
+  - Shelf Price (decimal)
+  - Bottles Sold (integer)
+  - Bottles Used for Samples (integer)
+- On submission, update AccountItem.current_price per Phase 10.3.2 rules:
+  - If no current price exists, set it
+  - If current price exists and new price differs, archive old to AccountItemPriceHistory
+    with recorded_by = submitting user, then overwrite current_price
+  - If price is unchanged, no history record created
+
+### Festival Recap
+- Comment box (textarea)
+- Photo upload — same structure as Tasting overall photos (multiple files, count
+  indicator, staged client-side, associated to Event and Account on save)
+- No per-item section
+
+### New Models
+
+**EventPhoto** (apps/events/models.py)
+- event: FK to Event, CASCADE, related_name='photos'
+- account: FK to accounts.Account, SET_NULL, null/blank
+- file_url: CharField max_length=500
+- uploaded_at: DateTimeField, auto_now_add=True
+- uploaded_by: FK to AUTH_USER_MODEL, SET_NULL, null/blank
+- `__str__`: "Photo for {event} uploaded by {uploaded_by}"
+
+**EventItemRecap** (apps/events/models.py)
+- event: FK to Event, CASCADE, related_name='item_recaps'
+- item: FK to catalog.Item, CASCADE
+- shelf_price: DecimalField max_digits=6 decimal_places=2, null/blank
+- bottles_sold: IntegerField, null/blank
+- bottles_used_for_samples: IntegerField, null/blank
+- Unique together: (event, item)
+- `__str__`: "{item} recap for {event}"
+
+### Event Model — New Fields
+- recap_samples_poured: IntegerField, null/blank
+- recap_qr_codes_scanned: IntegerField, null/blank
+- recap_notes: TextField, blank=True
+- recap_comment: TextField, blank=True (Festival only — general comment box)
+
+### Photo Storage Abstraction (utils/storage.py or similar)
+- Environment-driven via USE_OBJECT_STORAGE env var (True/False)
+- False (development): Django FileSystemStorage; files saved to MEDIA_ROOT
+- True (production): S3-compatible object storage (Cloudflare R2); stub cleanly
+  so actual R2 integration can be added without changing upload logic
+- Required env vars: USE_OBJECT_STORAGE, OBJECT_STORAGE_BUCKET_NAME,
+  OBJECT_STORAGE_ACCOUNT_ID, OBJECT_STORAGE_ACCESS_KEY_ID,
+  OBJECT_STORAGE_SECRET_ACCESS_KEY, OBJECT_STORAGE_PUBLIC_URL
+- DEPLOYMENT.md in project root documents all required env vars
+
+### Save / Submit / Unlock Workflow
+- **Save**: recap data written; if Scheduled → Recap In Progress; else status unchanged;
+  photos uploaded; returns to recap form with success message
+- **Submit**: same as Save but status → Recap Submitted; validates minimum fields
+  (at least one overall note or photo for Tasting and Festival); redirects to event detail
+- **Unlock**: Recap Submitted → Recap In Progress; available to Ambassador, Event Manager,
+  and coverage-area users
+
+### Event List — Action-Required Highlighting
+Light red background (#fff5f5) applies to any event requiring user action:
+- Draft
+- Recap In Progress
+- Revision Requested
+
+### New Status Transitions
+- POST /events/<id>/save-recap/ — saves recap; Scheduled → Recap In Progress on first save
+- POST /events/<id>/submit-recap/ — saves and moves to Recap Submitted
+- POST /events/<id>/unlock-recap/ — Recap Submitted → Recap In Progress
 
 ---
 
