@@ -280,7 +280,7 @@ Searchable list for one-off or exception assignments
 | Phase 10.2 | Event Scheduling & Status Workflow | ✅ Complete |
 | Phase 10.3.1 | Event Detail UI Reorganization & Admin Event Flow Fix | ✅ Complete |
 | Phase 10.3.2 | Account-Item Association (models + import) | ✅ Complete |
-| Phase 10.3.3 | Event Recap Form (Tasting + Festival) | 🔄 In Progress |
+| Phase 10.3.3 | Event Recap Form (Tasting + Festival) | ✅ Complete |
 | Phase 10.4 | Expense Management | ⬜ Pending |
 | Phase 10.5 | Event Export | ⬜ Pending |
 
@@ -1226,7 +1226,8 @@ tasting event recap (shelf price capture per item per account).
 
 ## Phase 10.3.3 — Event Recap Form (Tasting + Festival)
 
-*In Progress.*
+> ✅ **Complete and tested.** All features in this phase have been built,
+> verified, and pushed to GitHub.
 
 ### Status: Recap In Progress
 - New status added between Scheduled and Recap Submitted
