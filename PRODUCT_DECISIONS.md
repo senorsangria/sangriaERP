@@ -269,9 +269,10 @@ Searchable list for one-off or exception assignments
 | Phase 9 | Projection Planning | ⬜ Pending |
 | Phase 10.1 | Account Assignment & Ambassador Coverage Areas | ✅ Complete |
 | Phase 10.2 | Event Scheduling & Status Workflow | ✅ Complete |
-| Phase 10.3.1 | Event Detail UI Reorganization & Admin Event Flow Fix | 🔄 In Progress |
-| Phase 10.3.2 | Event Recap — Tasting | ⬜ Pending |
-| Phase 10.3.3 | Event Recap — Festival | ⬜ Pending |
+| Phase 10.3.1 | Event Detail UI Reorganization & Admin Event Flow Fix | ✅ Complete |
+| Phase 10.3.2 | Account-Item Association (models + import) | ✅ Complete |
+| Phase 10.3.3 | Event Recap — Tasting | ⬜ Pending |
+| Phase 10.3.4 | Event Recap — Festival | ⬜ Pending |
 | Phase 10.4 | Expense Management | ⬜ Pending |
 | Phase 10.5 | Event Export | ⬜ Pending |
 
@@ -1103,55 +1104,114 @@ time of recap submission. No timeline or phase assigned.
 
 ## Phase 10.3.1 — Event Detail UI Reorganization & Admin Event Flow Fix
 
-### Event Detail Screen — Layout Changes
+> ✅ **Complete and tested.** All features in this phase have been built,
+> verified, and pushed to GitHub.
+
+### Event Detail Screen — Final Layout
 
 **Top bar**
-- Remove the account name from the top bar. It already appears in the body of
-  the page under the Location section.
-- Move the Event Type badge, Status badge, and Edit button into the top bar,
-  to the right of the Events back button, in the spot where the account name was.
+- Event Type badge, Status badge, and Edit button are in the top bar to the right
+  of the Events back button. Account name does not appear in the top bar.
 
-**Location block**
-- Distributor displays inline: `Distributor: [name]` — no stacked header/value layout
-- Date, Start Time, and Duration move into the Location block
-- Duration displays inline to the right of Start Time
-- Remove the "Schedule" card section entirely — date/time/duration live in Location
-- Date displays as MM/DD/YY format
+**Event Details card** (renamed from "Location")
+- Date, Start Time, and Duration displayed as **values only** (no labels) at the
+  top of the card, before the account name — values separated by spacing
+- Start Time is hidden for Admin events
+- Account name appears below the date/time block, with address and city displayed
+  inline immediately after: `[Account Name], [Address], [City]`
+- State and Zip Code are not shown
+- Distributor displays inline below the account: `Distributor: [name]`
+- Ambassador and Event Manager appear in the same card below the account block,
+  with their role title labels (info-label style), displayed side by side
 
-**People section**
-- Remove role title labels from Ambassador and Event Manager
-- Ambassador and Event Manager appear on the same row; Event Manager to the right
-  of Ambassador
+**People card — removed**
+- There is no separate People card
+- Ambassador and Event Manager are folded into the Event Details card (above)
+- Created By is not shown anywhere on the detail page
 
 **Items section**
-- Items to be Sampled remains visible during Draft and Scheduled status
-- Items section is hidden once the recap form is active (Recap Submitted,
-  Revision Requested, Complete)
+- Items to be Sampled visible during Draft and Scheduled status
+- Hidden once recap workflow is active (Recap Submitted, Revision Requested, Complete)
 
 ### Admin Event Flow Fix
-- Admin events must not show the standard Release button
-- Releasing an Admin event sends it directly to Recap Submitted status — there is
-  no recap form to fill out for admin events; once hours are set the event is ready
-  to be approved
-- Once in Recap Submitted, Event Manager or above can Approve → Complete
-- The Request Revision action is hidden for Admin events — there is no recap to revise
-- The Move Back to Draft action (unrelease) only applies when an event is in
-  Scheduled status; since Admin events skip Scheduled, unrelease is not applicable
-  once past Draft
+- Releasing an Admin event sends it directly to Recap Submitted (skips Scheduled)
+- The Request Revision action is hidden for Admin events
+- Move Back to Draft (unrelease) only applies to Scheduled events; not available
+  for Admin events since they skip Scheduled
+
+### Event List Screen Updates
+- Address and city displayed below the account name on both mobile cards and
+  desktop table rows: `[Address], [City]`
+- Date format changed to MM/DD/YY throughout (both list and detail)
+- Draft events display with a light red background (`#fff5f5`) on both mobile
+  cards and desktop table rows — same color as Revision Requested, intentional
+  (both require manager action); Revision Requested retains its red left border
+  treatment in addition
+
+### Tasting Event Release Validation
+- A Tasting event cannot be released unless at least one item is associated
+- If attempted with no items, release is blocked and a clear error message is shown
+- Festival and Admin events are not subject to this requirement
 
 ---
 
-## Phase 10.3.2 — Event Recap: Tasting
+## Phase 10.3.2 — Account-Item Association
+
+> ✅ **Complete and tested.** All features in this phase have been built,
+> verified, and pushed to GitHub.
+
+### Purpose
+Tracks which productERP Items have been sold at which Accounts, derived
+automatically from sales data imports. This is the foundation for the
+tasting event recap (shelf price capture per item per account).
+
+### AccountItem Model (apps/accounts/models.py)
+- `account`: FK to accounts.Account, CASCADE
+- `item`: FK to catalog.Item, CASCADE — always the internal productERP Item record,
+  never the raw distributor item code
+- `date_first_associated`: DateField — set on creation (the import date), never updated
+- `current_price`: DecimalField (max_digits=6, decimal_places=2), null/blank —
+  populated only via event recap, never during import
+- Unique together: (account, item)
+- `__str__`: "{account} — {item}"
+
+### AccountItemPriceHistory Model (apps/accounts/models.py)
+- `account_item`: FK to AccountItem, CASCADE, related_name='price_history'
+- `price`: DecimalField (max_digits=6, decimal_places=2)
+- `recorded_at`: DateTimeField, auto_now_add=True
+- `recorded_by`: FK to AUTH_USER_MODEL, SET_NULL, null/blank — null when set by
+  the system; populated with the submitting user when captured via recap
+- `__str__`: "{account_item} @ {price} on {recorded_at}"
+- No price history records are created during import
+
+### Sales Import Update (_execute_import in apps/imports/views.py)
+- After bulk account creation (so all Account PKs are available), collects all
+  unique (account, item) pairs from the import rows into a `seen_pairs` set
+- Calls `AccountItem.objects.get_or_create(account=..., item=...,
+  defaults={'date_first_associated': today})` for each unique pair
+- If the pair already exists, nothing changes — date_first_associated is never
+  overwritten on re-import
+- No current_price set during import
+- No AccountItemPriceHistory records created during import
+- `account_items_created` count stored on ImportBatch and shown in batch detail
+
+### ImportBatch Statistics
+- New field `account_items_created` (IntegerField, default=0) added to ImportBatch
+- Displayed as "Account-Item Links Created" in the batch detail template
+
+---
+
+## Phase 10.3.3 — Event Recap: Tasting
 
 *Planned — not yet started. Full spec to be added in a future session.*
 
 ---
 
-## Phase 10.3.3 — Event Recap: Festival
+## Phase 10.3.4 — Event Recap: Festival
 
 *Planned — not yet started. Full spec to be added in a future session.*
 
 ---
 
-*Last updated: February 28, 2026*
+*Last updated: March 1, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*
