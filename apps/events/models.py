@@ -1,6 +1,7 @@
 """
 Events models: Event scheduling and status workflow.
 """
+from django.conf import settings
 from django.db import models
 from apps.core.models import TimeStampedModel
 
@@ -100,6 +101,14 @@ class Event(TimeStampedModel):
     # Populated when Event Manager requests revision on a Recap Submitted event
     revision_note = models.TextField(blank=True)
 
+    # Recap fields — populated by ambassador during recap submission
+    # Tasting Part 1
+    recap_samples_poured = models.IntegerField(null=True, blank=True)
+    recap_qr_codes_scanned = models.IntegerField(null=True, blank=True)
+    recap_notes = models.TextField(blank=True)
+    # Festival
+    recap_comment = models.TextField(blank=True)
+
     class Meta:
         app_label = 'events'
         verbose_name = 'Event'
@@ -134,3 +143,78 @@ class Event(TimeStampedModel):
             self.Status.REVISION_REQUESTED: 'danger',
             self.Status.COMPLETE:           'success',
         }.get(self.status, 'secondary')
+
+
+class EventPhoto(models.Model):
+    """
+    Photo uploaded during event recap.
+
+    Photos are associated to both the Event and the Account at upload time.
+    file_url stores the path returned by the photo storage backend (local
+    media path in development, object storage URL in production).
+    """
+
+    event = models.ForeignKey(
+        'events.Event',
+        on_delete=models.CASCADE,
+        related_name='photos',
+    )
+    account = models.ForeignKey(
+        'accounts.Account',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='event_photos',
+    )
+    file_url = models.CharField(max_length=500)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='uploaded_event_photos',
+    )
+
+    class Meta:
+        app_label = 'events'
+        ordering = ['uploaded_at']
+
+    def __str__(self):
+        return f'Photo for {self.event} uploaded by {self.uploaded_by}'
+
+
+class EventItemRecap(models.Model):
+    """
+    Per-item recap data captured during a Tasting event recap.
+
+    One record per (event, item) pair. Created on first save; updated on
+    subsequent saves. Shelf price is used to update AccountItem.current_price
+    when the recap is submitted (not on save).
+    """
+
+    event = models.ForeignKey(
+        'events.Event',
+        on_delete=models.CASCADE,
+        related_name='item_recaps',
+    )
+    item = models.ForeignKey(
+        'catalog.Item',
+        on_delete=models.CASCADE,
+        related_name='event_item_recaps',
+    )
+    shelf_price = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    bottles_sold = models.IntegerField(null=True, blank=True)
+    bottles_used_for_samples = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        app_label = 'events'
+        unique_together = [['event', 'item']]
+
+    def __str__(self):
+        return f'{self.item} recap for {self.event}'

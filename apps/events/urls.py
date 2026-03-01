@@ -17,6 +17,11 @@ urlpatterns = [
     path('events/<int:pk>/approve/', views.event_approve, name='event_approve'),
     path('events/<int:pk>/delete/', views.event_delete, name='event_delete'),
 
+    # Recap
+    path('events/<int:pk>/save-recap/', views.event_save_recap, name='event_save_recap'),
+    path('events/<int:pk>/submit-recap/', views.event_submit_recap, name='event_submit_recap'),
+    path('events/<int:pk>/unlock-recap/', views.event_unlock_recap, name='event_unlock_recap'),
+
     # AJAX
     path('events/ajax/ambassadors/', views.ajax_ambassadors, name='ajax_event_ambassadors'),
     path('events/ajax/event_managers/', views.ajax_event_managers, name='ajax_event_managers'),

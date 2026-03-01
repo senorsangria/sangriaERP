@@ -493,3 +493,374 @@ class TastingReleaseItemsRequiredTest(TestCase):
         self.client.post(reverse("event_release", args=[event.pk]))
         event.refresh_from_db()
         self.assertEqual(event.status, Event.Status.RECAP_SUBMITTED)
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.3.3 — Recap form: save, submit, unlock, price updates
+# ---------------------------------------------------------------------------
+
+from apps.accounts.models import AccountItem, AccountItemPriceHistory, UserCoverageArea
+from apps.distribution.models import Distributor
+from apps.events.models import EventItemRecap, EventPhoto
+
+
+class RecapSaveTest(TestCase):
+    """event_save_recap: saves data, advances Scheduled → Recap In Progress on first save."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
+        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.account = make_account(self.company)
+        self.item = make_item(self.company)
+        self.event = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            date=date.today(),
+            ambassador=self.ambassador,
+            account=self.account,
+        )
+        self.event.items.add(self.item)
+        self.client = Client()
+        self.client.login(username="mgr", password="testpass123")
+
+    def test_scheduled_to_recap_in_progress_on_first_save(self):
+        self.client.post(reverse("event_save_recap", args=[self.event.pk]), {
+            "samples_poured": "10",
+            "qr_codes_scanned": "5",
+            "recap_notes": "Went well",
+        })
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.RECAP_IN_PROGRESS)
+
+    def test_recap_data_saved_on_save(self):
+        self.client.post(reverse("event_save_recap", args=[self.event.pk]), {
+            "samples_poured": "25",
+            "qr_codes_scanned": "3",
+            "recap_notes": "Great turnout",
+        })
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.recap_samples_poured, 25)
+        self.assertEqual(self.event.recap_qr_codes_scanned, 3)
+        self.assertEqual(self.event.recap_notes, "Great turnout")
+
+    def test_status_stays_recap_in_progress_on_subsequent_save(self):
+        self.event.status = Event.Status.RECAP_IN_PROGRESS
+        self.event.save()
+        self.client.post(reverse("event_save_recap", args=[self.event.pk]), {
+            "samples_poured": "10",
+            "recap_notes": "Updated notes",
+        })
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.RECAP_IN_PROGRESS)
+
+    def test_item_recap_created_on_save(self):
+        self.client.post(reverse("event_save_recap", args=[self.event.pk]), {
+            "samples_poured": "10",
+            f"shelf_price_{self.item.pk}": "14.99",
+            f"bottles_sold_{self.item.pk}": "3",
+            f"bottles_samples_{self.item.pk}": "1",
+        })
+        recap = EventItemRecap.objects.get(event=self.event, item=self.item)
+        self.assertEqual(recap.shelf_price, round_decimal("14.99"))
+        self.assertEqual(recap.bottles_sold, 3)
+        self.assertEqual(recap.bottles_used_for_samples, 1)
+
+    def test_save_blocked_for_non_recap_user(self):
+        """A user without recap access gets 403."""
+        other = make_user(self.company, User.Role.SALES_MANAGER, "other")
+        c = Client()
+        c.login(username="other", password="testpass123")
+        response = c.post(reverse("event_save_recap", args=[self.event.pk]), {
+            "recap_notes": "Should not save",
+        })
+        self.assertEqual(response.status_code, 403)
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.recap_notes, "")
+
+    def test_save_blocked_when_status_not_active(self):
+        """Save is rejected when status is Complete."""
+        self.event.status = Event.Status.COMPLETE
+        self.event.save()
+        self.client.post(reverse("event_save_recap", args=[self.event.pk]), {
+            "recap_notes": "Should not save",
+        })
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.recap_notes, "")
+
+
+def round_decimal(s):
+    from decimal import Decimal
+    return Decimal(s)
+
+
+class RecapSubmitTest(TestCase):
+    """event_submit_recap: saves data, updates prices, moves to Recap Submitted."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
+        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.account = make_account(self.company)
+        self.item = make_item(self.company)
+        self.event = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.RECAP_IN_PROGRESS,
+            date=date.today(),
+            ambassador=self.ambassador,
+            account=self.account,
+        )
+        self.event.items.add(self.item)
+        self.client = Client()
+        self.client.login(username="mgr", password="testpass123")
+
+    def test_submit_moves_to_recap_submitted(self):
+        self.client.post(reverse("event_submit_recap", args=[self.event.pk]), {
+            "recap_notes": "All done",
+            f"shelf_price_{self.item.pk}": "12.99",
+        })
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.RECAP_SUBMITTED)
+
+    def test_submit_blocked_without_notes_or_photos(self):
+        """Submit without notes or photos leaves status unchanged."""
+        self.client.post(reverse("event_submit_recap", args=[self.event.pk]), {
+            "recap_notes": "",
+        })
+        self.event.refresh_from_db()
+        self.assertNotEqual(self.event.status, Event.Status.RECAP_SUBMITTED)
+
+    def test_submit_updates_account_item_price(self):
+        # Pre-create AccountItem with no price
+        ai = AccountItem.objects.create(
+            account=self.account,
+            item=self.item,
+            date_first_associated=date.today(),
+        )
+        self.client.post(reverse("event_submit_recap", args=[self.event.pk]), {
+            "recap_notes": "Done",
+            f"shelf_price_{self.item.pk}": "14.99",
+        })
+        ai.refresh_from_db()
+        self.assertEqual(ai.current_price, round_decimal("14.99"))
+
+    def test_submit_archives_changed_price_to_history(self):
+        from decimal import Decimal
+        ai = AccountItem.objects.create(
+            account=self.account,
+            item=self.item,
+            date_first_associated=date.today(),
+            current_price=Decimal("9.99"),
+        )
+        self.client.post(reverse("event_submit_recap", args=[self.event.pk]), {
+            "recap_notes": "Price changed",
+            f"shelf_price_{self.item.pk}": "12.99",
+        })
+        ai.refresh_from_db()
+        self.assertEqual(ai.current_price, round_decimal("12.99"))
+        history = AccountItemPriceHistory.objects.filter(account_item=ai)
+        self.assertEqual(history.count(), 1)
+        self.assertEqual(history.first().price, round_decimal("9.99"))
+
+    def test_submit_no_history_if_price_unchanged(self):
+        from decimal import Decimal
+        ai = AccountItem.objects.create(
+            account=self.account,
+            item=self.item,
+            date_first_associated=date.today(),
+            current_price=Decimal("12.99"),
+        )
+        self.client.post(reverse("event_submit_recap", args=[self.event.pk]), {
+            "recap_notes": "Same price",
+            f"shelf_price_{self.item.pk}": "12.99",
+        })
+        self.assertEqual(AccountItemPriceHistory.objects.count(), 0)
+
+    def test_submit_from_revision_requested_goes_to_recap_submitted(self):
+        self.event.status = Event.Status.REVISION_REQUESTED
+        self.event.recap_notes = "Previously saved"
+        self.event.save()
+        self.client.post(reverse("event_submit_recap", args=[self.event.pk]), {
+            "recap_notes": "Fixed per revision",
+        })
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.RECAP_SUBMITTED)
+
+
+class RecapUnlockTest(TestCase):
+    """event_unlock_recap: Recap Submitted → Recap In Progress."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
+        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.account = make_account(self.company)
+        self.event = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.RECAP_SUBMITTED,
+            date=date.today(),
+            ambassador=self.ambassador,
+            account=self.account,
+        )
+        self.client = Client()
+        self.client.login(username="mgr", password="testpass123")
+
+    def test_unlock_moves_to_recap_in_progress(self):
+        self.client.post(reverse("event_unlock_recap", args=[self.event.pk]))
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.RECAP_IN_PROGRESS)
+
+    def test_unlock_blocked_when_not_recap_submitted(self):
+        self.event.status = Event.Status.SCHEDULED
+        self.event.save()
+        self.client.post(reverse("event_unlock_recap", args=[self.event.pk]))
+        self.event.refresh_from_db()
+        self.assertNotEqual(self.event.status, Event.Status.RECAP_IN_PROGRESS)
+
+    def test_unlock_blocked_for_non_recap_user(self):
+        other = make_user(self.company, User.Role.SALES_MANAGER, "other")
+        c = Client()
+        c.login(username="other", password="testpass123")
+        response = c.post(reverse("event_unlock_recap", args=[self.event.pk]))
+        self.assertEqual(response.status_code, 403)
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.RECAP_SUBMITTED)
+
+    def test_ambassador_can_unlock(self):
+        c = Client()
+        c.login(username="amb", password="testpass123")
+        c.post(reverse("event_unlock_recap", args=[self.event.pk]))
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.RECAP_IN_PROGRESS)
+
+
+class FestivalRecapTest(TestCase):
+    """Festival event recap: comment + photos only (no per-item)."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
+        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.account = make_account(self.company)
+        self.event = make_event(
+            self.company, self.manager, Event.EventType.FESTIVAL,
+            status=Event.Status.SCHEDULED,
+            date=date.today(),
+            ambassador=self.ambassador,
+            account=self.account,
+        )
+        self.client = Client()
+        self.client.login(username="mgr", password="testpass123")
+
+    def test_festival_save_saves_comment(self):
+        self.client.post(reverse("event_save_recap", args=[self.event.pk]), {
+            "recap_comment": "Great festival!",
+        })
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.recap_comment, "Great festival!")
+        self.assertEqual(self.event.status, Event.Status.RECAP_IN_PROGRESS)
+
+    def test_festival_submit_requires_comment_or_photo(self):
+        self.event.status = Event.Status.RECAP_IN_PROGRESS
+        self.event.save()
+        self.client.post(reverse("event_submit_recap", args=[self.event.pk]), {
+            "recap_comment": "",
+        })
+        self.event.refresh_from_db()
+        self.assertNotEqual(self.event.status, Event.Status.RECAP_SUBMITTED)
+
+    def test_festival_submit_with_comment_succeeds(self):
+        self.event.status = Event.Status.RECAP_IN_PROGRESS
+        self.event.save()
+        self.client.post(reverse("event_submit_recap", args=[self.event.pk]), {
+            "recap_comment": "Great event!",
+        })
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.RECAP_SUBMITTED)
+
+
+class RecapAccessRulesTest(TestCase):
+    """_can_recap: verify access for different user types."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
+        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.other_user = make_user(self.company, User.Role.SALES_MANAGER, "other")
+        self.account = make_account(self.company)
+        self.event = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            date=date.today(),
+            ambassador=self.ambassador,
+            account=self.account,
+        )
+        self.client = Client()
+
+    def test_assigned_ambassador_can_save_recap(self):
+        self.client.login(username="amb", password="testpass123")
+        self.event.items.add(make_item(self.company))
+        self.client.post(reverse("event_save_recap", args=[self.event.pk]), {
+            "recap_notes": "Ambassador saving",
+        })
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.RECAP_IN_PROGRESS)
+
+    def test_event_manager_can_save_recap(self):
+        self.event.event_manager = self.manager
+        self.event.save()
+        self.client.login(username="mgr", password="testpass123")
+        self.event.items.add(make_item(self.company))
+        self.client.post(reverse("event_save_recap", args=[self.event.pk]), {
+            "recap_notes": "Manager saving",
+        })
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.RECAP_IN_PROGRESS)
+
+    def test_unrelated_user_cannot_save_recap(self):
+        """A Sales Manager with no coverage area cannot access recap."""
+        self.client.login(username="other", password="testpass123")
+        response = self.client.post(reverse("event_save_recap", args=[self.event.pk]), {
+            "recap_notes": "Unauthorized",
+        })
+        self.assertEqual(response.status_code, 403)
+
+    def test_admin_event_has_no_recap(self):
+        """_can_recap returns False for Admin events."""
+        from apps.events.views import _can_recap
+        admin_event = make_event(
+            self.company, self.manager, Event.EventType.ADMIN,
+            status=Event.Status.SCHEDULED,
+        )
+        self.assertFalse(_can_recap(self.ambassador, admin_event))
+
+
+class ApproveRaceConditionTest(TestCase):
+    """event_approve: race condition guard prevents double-approval."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
+        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.account = make_account(self.company)
+        self.event = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.RECAP_SUBMITTED,
+            date=date.today(),
+            ambassador=self.ambassador,
+            account=self.account,
+        )
+        self.client = Client()
+        self.client.login(username="mgr", password="testpass123")
+
+    def test_approve_recap_submitted_goes_to_complete(self):
+        self.client.post(reverse("event_approve", args=[self.event.pk]))
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.COMPLETE)
+
+    def test_approve_blocked_when_not_recap_submitted(self):
+        self.event.status = Event.Status.RECAP_IN_PROGRESS
+        self.event.save()
+        self.client.post(reverse("event_approve", args=[self.event.pk]))
+        self.event.refresh_from_db()
+        self.assertNotEqual(self.event.status, Event.Status.COMPLETE)

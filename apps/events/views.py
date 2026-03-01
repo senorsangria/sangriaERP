@@ -24,7 +24,8 @@ from apps.core.models import User
 from apps.distribution.models import Distributor
 
 from .forms import EventForm
-from .models import Event
+from .models import Event, EventItemRecap, EventPhoto
+from .storage import save_event_photo
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +60,34 @@ _ACTION_ROLES = {
     User.Role.AMBASSADOR_MANAGER,
     User.Role.TERRITORY_MANAGER,
 }
+
+# Statuses where the recap form is editable
+_RECAP_ACTIVE_STATUSES = {
+    Event.Status.SCHEDULED,
+    Event.Status.RECAP_IN_PROGRESS,
+    Event.Status.REVISION_REQUESTED,
+}
+
+
+def _can_recap(user, event):
+    """
+    Return True if the user can access the recap form for this event.
+
+    Eligible users:
+      - The assigned ambassador
+      - The assigned event manager
+      - Any user whose coverage areas include the event account
+        (Supplier Admin always qualifies since they see all accounts)
+    """
+    if event.event_type == Event.EventType.ADMIN:
+        return False
+    if event.account_id is None:
+        return False
+    if event.ambassador_id and event.ambassador_id == user.pk:
+        return True
+    if event.event_manager_id and event.event_manager_id == user.pk:
+        return True
+    return get_accounts_for_user(user).filter(pk=event.account_id).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +388,7 @@ def event_detail(request, pk):
 
     can_edit = request.user.role in _CREATOR_ROLES
     can_action = request.user.role in _ACTION_ROLES
+    can_recap = _can_recap(request.user, event)
 
     tasting_items_by_brand = None
     if event.event_type == Event.EventType.TASTING:
@@ -368,11 +398,35 @@ def event_detail(request, pk):
             for brand_name, brand_items in groupby(items_qs, key=lambda x: x.brand.name)
         ]
 
+    # Recap context
+    recap_active = event.status in _RECAP_ACTIVE_STATUSES
+    show_recap = (
+        event.event_type != Event.EventType.ADMIN
+        and event.status not in (Event.Status.DRAFT,)
+    )
+
+    # Build (item, recap_or_None) list for tasting recap form
+    items_with_recaps = []
+    if event.event_type == Event.EventType.TASTING:
+        existing_recaps = {
+            r.item_id: r
+            for r in EventItemRecap.objects.filter(event=event)
+        }
+        for item in event.items.select_related('brand').order_by('brand__name', 'name'):
+            items_with_recaps.append((item, existing_recaps.get(item.pk)))
+
+    photos = event.photos.all() if show_recap else []
+
     return render(request, 'events/event_detail.html', {
         'event':                  event,
         'can_edit':               can_edit,
         'can_action':             can_action,
+        'can_recap':              can_recap,
+        'recap_active':           recap_active,
+        'show_recap':             show_recap,
         'tasting_items_by_brand': tasting_items_by_brand,
+        'items_with_recaps':      items_with_recaps,
+        'photos':                 photos,
     })
 
 
@@ -624,7 +678,7 @@ def event_unrelease(request, pk):
 
 @login_required
 def event_approve(request, pk):
-    """POST: Recap Submitted → Complete"""
+    """POST: Recap Submitted → Complete (with race condition guard)."""
     if request.user.role not in _ACTION_ROLES:
         return render(request, '403.html', status=403)
     if request.method != 'POST':
@@ -634,13 +688,227 @@ def event_approve(request, pk):
     visible = _get_visible_events(request.user)
     event = get_object_or_404(visible, pk=pk, company=company)
 
+    # Race condition guard: re-check status at moment of approval
     if event.status != Event.Status.RECAP_SUBMITTED:
         messages.error(request, 'Event is not in Recap Submitted status.')
         return redirect('event_detail', pk=pk)
 
-    event.status = Event.Status.COMPLETE
-    event.save(update_fields=['status', 'updated_at'])
-    messages.success(request, 'Event approved and marked as Complete.')
+    updated = Event.objects.filter(
+        pk=event.pk, status=Event.Status.RECAP_SUBMITTED
+    ).update(status=Event.Status.COMPLETE)
+    if updated:
+        messages.success(request, 'Event approved and marked as Complete.')
+    else:
+        messages.error(request, 'Event status changed before approval could be saved. Please try again.')
+    return redirect('event_detail', pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# Recap: save, submit, unlock
+# ---------------------------------------------------------------------------
+
+def _save_recap_data(request, event):
+    """
+    Parse POST data and persist recap fields, per-item recap records,
+    and any uploaded photos.
+
+    Called by both save_recap and submit_recap. Does NOT update event status
+    or AccountItem prices — those are handled by the calling view.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    update_fields = ['updated_at']
+
+    if event.event_type == Event.EventType.TASTING:
+        # Part 1 — Overall event fields
+        samples_str = request.POST.get('samples_poured', '').strip()
+        qr_str = request.POST.get('qr_codes_scanned', '').strip()
+        notes = request.POST.get('recap_notes', '').strip()
+
+        try:
+            event.recap_samples_poured = int(samples_str) if samples_str else None
+        except ValueError:
+            event.recap_samples_poured = None
+        update_fields.append('recap_samples_poured')
+
+        try:
+            event.recap_qr_codes_scanned = int(qr_str) if qr_str else None
+        except ValueError:
+            event.recap_qr_codes_scanned = None
+        update_fields.append('recap_qr_codes_scanned')
+
+        event.recap_notes = notes
+        update_fields.append('recap_notes')
+
+        event.save(update_fields=update_fields)
+
+        # Part 2 — Per item recap
+        for item in event.items.all():
+            price_str = request.POST.get(f'shelf_price_{item.pk}', '').strip()
+            sold_str = request.POST.get(f'bottles_sold_{item.pk}', '').strip()
+            samples_str = request.POST.get(f'bottles_samples_{item.pk}', '').strip()
+
+            shelf_price = None
+            bottles_sold = None
+            bottles_used_for_samples = None
+
+            if price_str:
+                try:
+                    shelf_price = Decimal(price_str)
+                except InvalidOperation:
+                    pass
+            if sold_str:
+                try:
+                    bottles_sold = int(sold_str)
+                except ValueError:
+                    pass
+            if samples_str:
+                try:
+                    bottles_used_for_samples = int(samples_str)
+                except ValueError:
+                    pass
+
+            recap, _ = EventItemRecap.objects.get_or_create(event=event, item=item)
+            recap.shelf_price = shelf_price
+            recap.bottles_sold = bottles_sold
+            recap.bottles_used_for_samples = bottles_used_for_samples
+            recap.save(update_fields=['shelf_price', 'bottles_sold', 'bottles_used_for_samples'])
+
+    elif event.event_type == Event.EventType.FESTIVAL:
+        comment = request.POST.get('recap_comment', '').strip()
+        event.recap_comment = comment
+        update_fields.append('recap_comment')
+        event.save(update_fields=update_fields)
+
+    # Photos (both Tasting and Festival)
+    for photo_file in request.FILES.getlist('photos'):
+        file_url = save_event_photo(photo_file, event.pk)
+        EventPhoto.objects.create(
+            event=event,
+            account=event.account,
+            file_url=file_url,
+            uploaded_by=request.user,
+        )
+
+
+def _apply_price_updates(event, user):
+    """
+    On recap submission, update AccountItem.current_price for each item in the
+    event. Archives the old price to AccountItemPriceHistory if it changed.
+    """
+    from apps.accounts.models import AccountItem, AccountItemPriceHistory
+
+    if event.event_type != Event.EventType.TASTING or event.account_id is None:
+        return
+
+    recaps = EventItemRecap.objects.filter(event=event).select_related('item')
+    for recap in recaps:
+        if recap.shelf_price is None:
+            continue
+        try:
+            account_item = AccountItem.objects.get(
+                account_id=event.account_id, item=recap.item
+            )
+        except AccountItem.DoesNotExist:
+            continue
+
+        if account_item.current_price is None:
+            account_item.current_price = recap.shelf_price
+            account_item.save(update_fields=['current_price'])
+        elif account_item.current_price != recap.shelf_price:
+            AccountItemPriceHistory.objects.create(
+                account_item=account_item,
+                price=account_item.current_price,
+                recorded_by=user,
+            )
+            account_item.current_price = recap.shelf_price
+            account_item.save(update_fields=['current_price'])
+        # If price unchanged, do nothing
+
+
+@login_required
+def event_save_recap(request, pk):
+    """POST: Save recap data. Scheduled → Recap In Progress on first save."""
+    if request.method != 'POST':
+        return redirect('event_detail', pk=pk)
+
+    visible = _get_visible_events(request.user)
+    event = get_object_or_404(visible, pk=pk)
+
+    if not _can_recap(request.user, event):
+        return render(request, '403.html', status=403)
+
+    if event.status not in _RECAP_ACTIVE_STATUSES:
+        messages.error(request, 'Recap cannot be edited in the current event status.')
+        return redirect('event_detail', pk=pk)
+
+    _save_recap_data(request, event)
+
+    if event.status == Event.Status.SCHEDULED:
+        Event.objects.filter(pk=event.pk).update(status=Event.Status.RECAP_IN_PROGRESS)
+
+    messages.success(request, 'Recap saved.')
+    return redirect('event_detail', pk=pk)
+
+
+@login_required
+def event_submit_recap(request, pk):
+    """POST: Save recap data and move event to Recap Submitted."""
+    if request.method != 'POST':
+        return redirect('event_detail', pk=pk)
+
+    visible = _get_visible_events(request.user)
+    event = get_object_or_404(visible, pk=pk)
+
+    if not _can_recap(request.user, event):
+        return render(request, '403.html', status=403)
+
+    if event.status not in _RECAP_ACTIVE_STATUSES:
+        messages.error(request, 'Recap cannot be submitted in the current event status.')
+        return redirect('event_detail', pk=pk)
+
+    _save_recap_data(request, event)
+
+    # Reload to get latest recap fields (saved by _save_recap_data)
+    event.refresh_from_db()
+
+    # Validate minimum required fields
+    if event.event_type == Event.EventType.TASTING:
+        has_content = bool(event.recap_notes) or event.photos.exists()
+    elif event.event_type == Event.EventType.FESTIVAL:
+        has_content = bool(event.recap_comment) or event.photos.exists()
+    else:
+        has_content = True
+
+    if not has_content:
+        messages.error(request, 'Please add at least one note or photo before submitting.')
+        return redirect('event_detail', pk=pk)
+
+    _apply_price_updates(event, request.user)
+
+    Event.objects.filter(pk=event.pk).update(status=Event.Status.RECAP_SUBMITTED)
+    messages.success(request, 'Recap submitted successfully.')
+    return redirect('event_detail', pk=pk)
+
+
+@login_required
+def event_unlock_recap(request, pk):
+    """POST: Recap Submitted → Recap In Progress."""
+    if request.method != 'POST':
+        return redirect('event_detail', pk=pk)
+
+    visible = _get_visible_events(request.user)
+    event = get_object_or_404(visible, pk=pk)
+
+    if not _can_recap(request.user, event):
+        return render(request, '403.html', status=403)
+
+    if event.status != Event.Status.RECAP_SUBMITTED:
+        messages.error(request, 'Only Recap Submitted events can be unlocked.')
+        return redirect('event_detail', pk=pk)
+
+    Event.objects.filter(pk=event.pk).update(status=Event.Status.RECAP_IN_PROGRESS)
+    messages.success(request, 'Recap unlocked. You can now edit and resubmit.')
     return redirect('event_detail', pk=pk)
 
 
