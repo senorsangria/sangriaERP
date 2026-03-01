@@ -15,6 +15,7 @@ from django.test import Client, TestCase
 from django.urls import reverse
 
 from apps.accounts.models import Account
+from apps.catalog.models import Brand, Item
 from apps.core.models import Company, User
 from apps.events.models import Event
 
@@ -44,6 +45,11 @@ def make_account(company, name="Test Liquors"):
         city="Hoboken",
         state="NJ",
     )
+
+
+def make_item(company, item_code="Red0750"):
+    brand, _ = Brand.objects.get_or_create(company=company, name="Test Brand")
+    return Item.objects.create(brand=brand, name="Test Item", item_code=item_code)
 
 
 def make_event(company, creator, event_type, status=Event.Status.DRAFT, **kwargs):
@@ -94,10 +100,12 @@ class AdminEventReleaseTransitionTest(TestCase):
 
     def test_tasting_event_release_goes_to_scheduled(self):
         account = make_account(self.company)
+        item = make_item(self.company)
         event = make_event(
             self.company, self.manager, Event.EventType.TASTING,
             date=date.today(), ambassador=self.ambassador, account=account,
         )
+        event.items.add(item)
         self.client.post(reverse("event_release", args=[event.pk]))
         event.refresh_from_db()
         self.assertEqual(event.status, Event.Status.SCHEDULED)
@@ -403,3 +411,85 @@ class EventDetailLayoutTest(TestCase):
         )
         resp = self.client.get(reverse("event_detail", args=[event.pk]))
         self.assertContains(resp, "Please correct the sample count.")
+
+
+# ---------------------------------------------------------------------------
+# Tasting event release — items required
+# ---------------------------------------------------------------------------
+
+class TastingReleaseItemsRequiredTest(TestCase):
+    """
+    A Tasting event cannot be released unless at least one item is associated.
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "manager")
+        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.account = make_account(self.company)
+        self.client = Client()
+        self.client.login(username="manager", password="testpass123")
+
+    def test_tasting_release_blocked_without_items(self):
+        event = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            date=date.today(), ambassador=self.ambassador, account=self.account,
+        )
+        # No items associated — release must be blocked
+        self.client.post(reverse("event_release", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.DRAFT)
+
+    def test_tasting_release_blocked_message_mentions_items(self):
+        event = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            date=date.today(), ambassador=self.ambassador, account=self.account,
+        )
+        response = self.client.post(
+            reverse("event_release", args=[event.pk]),
+            follow=True,
+        )
+        self.assertContains(response, "item")
+
+    def test_tasting_release_succeeds_with_one_item(self):
+        item = make_item(self.company)
+        event = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            date=date.today(), ambassador=self.ambassador, account=self.account,
+        )
+        event.items.add(item)
+        self.client.post(reverse("event_release", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.SCHEDULED)
+
+    def test_tasting_release_succeeds_with_multiple_items(self):
+        item1 = make_item(self.company, item_code="Red0750")
+        item2 = make_item(self.company, item_code="Wht0750")
+        event = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            date=date.today(), ambassador=self.ambassador, account=self.account,
+        )
+        event.items.add(item1, item2)
+        self.client.post(reverse("event_release", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.SCHEDULED)
+
+    def test_festival_release_not_blocked_without_items(self):
+        """Festival events do not require items to release."""
+        event = make_event(
+            self.company, self.manager, Event.EventType.FESTIVAL,
+            date=date.today(), ambassador=self.ambassador, account=self.account,
+        )
+        self.client.post(reverse("event_release", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.SCHEDULED)
+
+    def test_admin_release_not_blocked_without_items(self):
+        """Admin events do not require items to release."""
+        event = make_event(
+            self.company, self.manager, Event.EventType.ADMIN,
+            date=date.today(), ambassador=self.ambassador,
+        )
+        self.client.post(reverse("event_release", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.RECAP_SUBMITTED)

@@ -42,23 +42,33 @@
 <div class="row g-3">
 
   <!-- ====================================================================
-       Location & Schedule (merged into one card)
+       Event Details card (formerly Location + People merged)
        ==================================================================== -->
   <div class="col-12">
     <div class="card">
-      <div class="card-header fw-semibold small text-muted">Location</div>
+      <div class="card-header fw-semibold small text-muted">Event Details</div>
       <div class="card-body">
-        {% if event.account %}
-        <div class="fw-semibold mb-1">{{ event.account.name }}</div>
-        {% if event.account.street %}
-        <div class="text-muted small">{{ event.account.street }}</div>
-        {% endif %}
-        {% if event.account.city or event.account.state %}
-        <div class="text-muted small">
-          {{ event.account.city }}{% if event.account.city and event.account.state %}, {% endif %}{{ event.account.state }}
-          {% if event.account.zip_code %} {{ event.account.zip_code }}{% endif %}
+
+        <!-- Date / Time / Duration — values only, no labels, above account -->
+        <div class="detail-meta mb-2 d-flex flex-wrap gap-3">
+          <div>
+            {% if event.date %}{{ event.date|date:"m/d/y" }}{% else %}<span class="text-muted">No date</span>{% endif %}
+          </div>
+          {% if event.event_type != 'admin' %}
+          <div>
+            {% if event.start_time %}{{ event.start_time|time:"g:i A" }}{% else %}<span class="text-muted">No time</span>{% endif %}
+          </div>
+          {% endif %}
+          <div>{{ event.duration_display }}</div>
         </div>
-        {% endif %}
+
+        <!-- Account name with inline address and city -->
+        {% if event.account %}
+        <div class="fw-semibold mb-1">
+          {{ event.account.name }}{% if event.account.street or event.account.city %}<span class="fw-normal text-muted">,
+            {% if event.account.street %}{{ event.account.street }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city }}{% endif %}
+          </span>{% endif %}
+        </div>
         {% if event.account.distributor %}
         <div class="small mt-1">Distributor: <span class="fw-medium">{{ event.account.distributor.name }}</span></div>
         {% endif %}
@@ -66,60 +76,26 @@
         <div class="text-muted fst-italic mb-1">Admin Event — no account</div>
         {% endif %}
 
-        <!-- Date / Time / Duration -->
-        <div class="detail-meta mt-3 d-flex flex-wrap gap-3">
+        <!-- Ambassador and Event Manager inline -->
+        <div class="detail-meta mt-3 d-flex flex-wrap gap-4">
           <div>
-            <span class="info-label d-block">Date</span>
-            {% if event.date %}{{ event.date|date:"m/d/y" }}{% else %}<span class="text-muted">Not set</span>{% endif %}
-          </div>
-          {% if event.event_type != 'admin' %}
-          <div>
-            <span class="info-label d-block">Start Time</span>
-            {% if event.start_time %}{{ event.start_time|time:"g:i A" }}{% else %}<span class="text-muted">Not set</span>{% endif %}
-          </div>
-          {% endif %}
-          <div>
-            <span class="info-label d-block">Duration</span>
-            {{ event.duration_display }}
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ====================================================================
-       People
-       ==================================================================== -->
-  <div class="col-12">
-    <div class="card">
-      <div class="card-header fw-semibold small text-muted">People</div>
-      <div class="card-body">
-        <div class="row g-3">
-          <div class="col-6">
-            <div class="info-label">Ambassador</div>
+            <span class="info-label d-block">Ambassador</span>
             {% if event.ambassador %}
               {{ event.ambassador.get_full_name|default:event.ambassador.username }}
             {% else %}
               <span class="text-muted fst-italic">Unassigned</span>
             {% endif %}
           </div>
-          <div class="col-6">
-            <div class="info-label">Event Manager</div>
+          <div>
+            <span class="info-label d-block">Event Manager</span>
             {% if event.event_manager %}
               {{ event.event_manager.get_full_name|default:event.event_manager.username }}
             {% else %}
               <span class="text-muted fst-italic">Not assigned</span>
             {% endif %}
           </div>
-          <div class="col-12">
-            <div class="info-label">Created By</div>
-            {% if event.created_by %}
-              {{ event.created_by.get_full_name|default:event.created_by.username }}
-            {% else %}
-              <span class="text-muted">—</span>
-            {% endif %}
-          </div>
         </div>
+
       </div>
     </div>
   </div>

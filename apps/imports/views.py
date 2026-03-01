@@ -19,14 +19,14 @@ Batch history:
 import csv
 import os
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from django.contrib import messages
 from django.db import transaction
 from django.db.models.functions import ExtractYear
 from django.shortcuts import get_object_or_404, redirect, render
 
-from apps.accounts.models import Account
+from apps.accounts.models import Account, AccountItem
 from apps.catalog.models import Item
 from apps.distribution.models import Distributor
 from apps.imports.forms import ImportUploadForm, ItemMappingForm
@@ -570,10 +570,42 @@ def _execute_import(request, company, distributor, filepath, filename):
         for i in range(0, len(sales_records), 1000):
             SalesRecord.objects.bulk_create(sales_records[i:i + 1000])
 
+        # Create AccountItem records for each unique (account, item) pair
+        # encountered in this import. Uses get_or_create so re-importing
+        # the same data never duplicates records or overwrites the original
+        # date_first_associated.
+        today = date.today()
+        account_items_created = 0
+        seen_pairs = set()
+        for r in rows:
+            item = code_to_item.get(r['item_id'])
+            if item is None:
+                continue
+            key = (
+                normalize_address(r['address']),
+                normalize_address(r['city']),
+                normalize_address(r['state']),
+            )
+            account = account_lookup.get(key)
+            if account is None:
+                continue
+            pair = (account.pk, item.pk)
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            _, created = AccountItem.objects.get_or_create(
+                account=account,
+                item=item,
+                defaults={'date_first_associated': today},
+            )
+            if created:
+                account_items_created += 1
+
         # Update the batch with final statistics
         import_batch.records_imported = len(sales_records)
         import_batch.accounts_created = len(created_accounts)
         import_batch.records_skipped = records_skipped
+        import_batch.account_items_created = account_items_created
         import_batch.status = ImportBatch.Status.COMPLETE
         import_batch.save()
 

@@ -25,10 +25,12 @@
   /* Mobile event card */
   .event-card { border-left: 3px solid #dee2e6; }
   .event-card.revision { border-left-color: #dc3545; background: #fff5f5; }
-  .event-card.draft     { border-left-color: #6c757d; }
+  .event-card.draft     { border-left-color: #dc3545; background: #fff5f5; }
   .event-card.scheduled { border-left-color: #0d6efd; }
   .event-card.recap     { border-left-color: #ffc107; }
   .event-card.complete  { border-left-color: #198754; }
+  /* Desktop table: Draft row light red background */
+  .event-row-draft td { background: #fff5f5 !important; }
 </style>
 {% endblock %}
 
@@ -193,8 +195,13 @@
             <div class="fw-semibold">
               {% if event.account %}{{ event.account.name }}{% else %}<span class="text-muted fst-italic">Admin Event</span>{% endif %}
             </div>
+            {% if event.account and event.account.street or event.account.city %}
             <div class="small text-muted">
-              {% if event.date %}{{ event.date|date:"N j, Y" }}{% else %}<span class="fst-italic">No date</span>{% endif %}
+              {% if event.account.street %}{{ event.account.street }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city }}{% endif %}
+            </div>
+            {% endif %}
+            <div class="small text-muted">
+              {% if event.date %}{{ event.date|date:"m/d/y" }}{% else %}<span class="fst-italic">No date</span>{% endif %}
               {% if event.start_time %} &middot; {{ event.start_time|time:"g:i A" }}{% endif %}
               {% if event.duration_display != '—' %} &middot; {{ event.duration_display }}{% endif %}
             </div>
@@ -252,10 +259,10 @@
             <td colspan="9">── {{ group_label }} ──</td>
           </tr>
           {% for event in group_events %}
-          <tr class="{% if event.status == 'revision_requested' %}event-row-revision{% endif %}">
+          <tr class="{% if event.status == 'revision_requested' %}event-row-revision{% elif event.status == 'draft' %}event-row-draft{% endif %}">
             <td>
               <a href="{% url 'event_detail' event.pk %}" class="text-decoration-none fw-semibold">
-                {% if event.date %}{{ event.date|date:"N j, Y" }}{% else %}<span class="text-muted fst-italic">No date</span>{% endif %}
+                {% if event.date %}{{ event.date|date:"m/d/y" }}{% else %}<span class="text-muted fst-italic">No date</span>{% endif %}
               </a>
             </td>
             <td class="text-muted">
@@ -264,7 +271,7 @@
             <td>
               {% if event.account %}
                 <a href="{% url 'account_detail' event.account.pk %}" class="text-decoration-none">{{ event.account.name }}</a>
-                <div class="small text-muted">{{ event.account.city }}{% if event.account.state %}, {{ event.account.state }}{% endif %}</div>
+                <div class="small text-muted">{% if event.account.street %}{{ event.account.street }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city }}{% endif %}</div>
               {% else %}
                 <span class="text-muted fst-italic">Admin Event</span>
               {% endif %}

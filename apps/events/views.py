@@ -544,6 +544,8 @@ def event_release(request, pk):
         errors.append('Event must have an assigned ambassador before it can be released.')
     if event.event_type != Event.EventType.ADMIN and not event.account:
         errors.append('Tasting and Festival events must have an account assigned.')
+    if event.event_type == Event.EventType.TASTING and not event.items.exists():
+        errors.append('A Tasting event must have at least one item selected before it can be released.')
 
     if errors:
         for err in errors:

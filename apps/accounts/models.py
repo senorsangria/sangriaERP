@@ -1,7 +1,9 @@
 """
-Accounts models: Account and UserCoverageArea.
+Accounts models: Account, UserCoverageArea, AccountItem, AccountItemPriceHistory.
 """
+from django.conf import settings
 from django.db import models
+
 from apps.core.models import TimeStampedModel
 
 
@@ -187,3 +189,81 @@ class UserCoverageArea(TimeStampedModel):
 
     def __str__(self):
         return f'{self.user} — {self.get_coverage_type_display()}'
+
+
+class AccountItem(models.Model):
+    """
+    Records that a specific productERP Item has been sold at an Account.
+
+    Created automatically during sales data import when a new (account, item)
+    pair is encountered. Never duplicated — unique on (account, item).
+
+    current_price is only populated via event recap, never during import.
+    """
+
+    account = models.ForeignKey(
+        'accounts.Account',
+        on_delete=models.CASCADE,
+        related_name='account_items',
+    )
+    item = models.ForeignKey(
+        'catalog.Item',
+        on_delete=models.CASCADE,
+        related_name='account_items',
+        help_text='Always the internal productERP Item — never the raw distributor item code.',
+    )
+    date_first_associated = models.DateField(
+        help_text='Date this item was first seen at this account (set on creation, never updated).',
+    )
+    current_price = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Most recent shelf price captured via event recap. Null until first recap.',
+    )
+
+    class Meta:
+        app_label = 'accounts'
+        verbose_name = 'Account Item'
+        verbose_name_plural = 'Account Items'
+        unique_together = [['account', 'item']]
+        ordering = ['account', 'item']
+
+    def __str__(self):
+        return f'{self.account} — {self.item}'
+
+
+class AccountItemPriceHistory(models.Model):
+    """
+    Historical record of shelf prices for an AccountItem.
+
+    Created when a price is captured via event recap. Not created during import.
+    recorded_by is null when set by the system; populated with the user when
+    captured via recap.
+    """
+
+    account_item = models.ForeignKey(
+        'accounts.AccountItem',
+        on_delete=models.CASCADE,
+        related_name='price_history',
+    )
+    price = models.DecimalField(max_digits=6, decimal_places=2)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='price_history_entries',
+        help_text='Null when set by the system during import; populated via recap submission.',
+    )
+
+    class Meta:
+        app_label = 'accounts'
+        verbose_name = 'Account Item Price History'
+        verbose_name_plural = 'Account Item Price Histories'
+        ordering = ['account_item', '-recorded_at']
+
+    def __str__(self):
+        return f'{self.account_item} @ {self.price} on {self.recorded_at}'
