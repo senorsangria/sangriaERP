@@ -390,6 +390,13 @@ def event_detail(request, pk):
     can_action = request.user.role in _ACTION_ROLES
     can_recap = _can_recap(request.user, event)
 
+    # Revert Complete → Recap Submitted: Supplier Admin, Sales Manager, or this event's manager
+    user = request.user
+    can_revert = (
+        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
+        or (event.event_manager_id and event.event_manager_id == user.pk)
+    )
+
     tasting_items_by_brand = None
     if event.event_type == Event.EventType.TASTING:
         items_qs = event.items.select_related('brand').order_by('brand__name', 'sort_order', 'name')
@@ -901,6 +908,41 @@ def event_unlock_recap(request, pk):
 
     Event.objects.filter(pk=event.pk).update(status=Event.Status.RECAP_IN_PROGRESS)
     messages.success(request, 'Recap unlocked. You can now edit and resubmit.')
+    return redirect('event_detail', pk=pk)
+
+
+@login_required
+def event_revert_complete(request, pk):
+    """
+    POST: Revert a Complete event back to Recap Submitted.
+
+    Access: Supplier Admin, Sales Manager, or the assigned Event Manager
+    on this specific event. The Event Manager check is per-event, not role-based.
+    """
+    if request.method != 'POST':
+        return redirect('event_detail', pk=pk)
+
+    company = request.user.company
+    visible = _get_visible_events(request.user)
+    event = get_object_or_404(visible, pk=pk, company=company)
+
+    # Permission check: Supplier Admin, Sales Manager, or this event's Event Manager
+    user = request.user
+    can_revert = (
+        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
+        or (event.event_manager_id and event.event_manager_id == user.pk)
+    )
+    if not can_revert:
+        return render(request, '403.html', status=403)
+
+    if event.status != Event.Status.COMPLETE:
+        messages.error(request, 'Only Complete events can be reverted.')
+        return redirect('event_detail', pk=pk)
+
+    Event.objects.filter(pk=event.pk, status=Event.Status.COMPLETE).update(
+        status=Event.Status.RECAP_SUBMITTED
+    )
+    messages.success(request, 'Event reverted to Recap Submitted.')
     return redirect('event_detail', pk=pk)
 
 

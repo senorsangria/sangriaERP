@@ -429,6 +429,18 @@
   </div>
   {% endif %}
 
+  <!-- Revert to Recap Submitted (Complete → Recap Submitted) -->
+  {% if can_revert and event.status == 'complete' %}
+  <div class="col-12">
+    <div class="d-flex gap-2 flex-wrap">
+      <button type="button" class="btn btn-outline-warning"
+              data-bs-toggle="modal" data-bs-target="#revertModal">
+        <i class="bi bi-arrow-counterclockwise me-1"></i>Revert to Recap Submitted
+      </button>
+    </div>
+  </div>
+  {% endif %}
+
 </div><!-- /row -->
 
 <!-- ================================================================
@@ -495,6 +507,40 @@
           </button>
         </div>
       </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ================================================================
+     Revert confirmation modal (Complete → Recap Submitted)
+     ================================================================ -->
+{% if can_revert and event.status == 'complete' %}
+<div class="modal fade" id="revertModal" tabindex="-1" aria-labelledby="revertModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="revertModalLabel">
+          <i class="bi bi-arrow-counterclockwise me-2"></i>Revert Event
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to revert this event to <strong>Recap Submitted</strong>?</p>
+        <p class="text-muted small mb-0">
+          {% if event.account %}{{ event.account.name }}{% else %}Admin Event{% endif %}
+          {% if event.date %} &mdash; {{ event.date|date:"m/d/y" }}{% endif %}
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <form method="post" action="{% url 'event_revert_complete' event.pk %}" class="d-inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-warning">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>Revert to Recap Submitted
+          </button>
+        </form>
+      </div>
     </div>
   </div>
 </div>
