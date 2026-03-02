@@ -281,7 +281,7 @@ Searchable list for one-off or exception assignments
 | Phase 10.3.1 | Event Detail UI Reorganization & Admin Event Flow Fix | ✅ Complete |
 | Phase 10.3.2 | Account-Item Association (models + import) | ✅ Complete |
 | Phase 10.3.3 | Event Recap Form (Tasting + Festival) | ✅ Complete |
-| Phase 10.3.3 Tweaks | Festival→Special Event, Sort Order, Revert Complete, Account Mgmt | 🔄 In Progress |
+| Phase 10.3.3 Tweaks | Festival→Special Event, Sort Order, Revert Complete, Account Mgmt | ✅ Complete |
 | Phase 10.4 | Expense Management | ⬜ Pending |
 | Phase 10.5 | Event Export | ⬜ Pending |
 
