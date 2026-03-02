@@ -1,4 +1,6 @@
 """productERP URL configuration."""
+import os
+
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
@@ -14,6 +16,9 @@ urlpatterns = [
     path('', include('apps.events.urls')),
 ]
 
-# Serve media files in development
-if settings.DEBUG:
+# Serve uploaded media files locally whenever object storage is not in use.
+# This covers development regardless of the DEBUG setting — in production
+# USE_OBJECT_STORAGE=true and files are served from R2 directly.
+_use_object_storage = os.environ.get('USE_OBJECT_STORAGE', '').lower() in ('true', '1', 'yes')
+if not _use_object_storage:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
