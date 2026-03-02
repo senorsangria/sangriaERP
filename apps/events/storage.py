@@ -41,3 +41,26 @@ def save_event_photo(uploaded_file, event_id):
     filename = f'events/{event_id}/{uuid.uuid4().hex}{ext}'
     saved_name = storage.save(filename, uploaded_file)
     return storage.url(saved_name)
+
+
+def delete_event_photo(file_url):
+    """
+    Delete a photo file from storage given its file_url.
+
+    For local storage the file_url is a relative URL beginning with MEDIA_URL
+    (e.g. /media/events/1/abc.jpg).  Strip the MEDIA_URL prefix to obtain the
+    storage-relative path and call storage.delete().
+
+    For object storage (future): the stub raises NotImplementedError, so this
+    function will need updating when R2 integration is added.
+    """
+    storage = _get_storage()
+    name = file_url
+    if name.startswith(settings.MEDIA_URL):
+        name = name[len(settings.MEDIA_URL):]
+    try:
+        storage.delete(name)
+    except Exception:
+        # File may already be absent; proceed silently so the DB record
+        # is still cleaned up by the caller.
+        pass

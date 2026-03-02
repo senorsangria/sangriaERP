@@ -25,7 +25,7 @@ from apps.distribution.models import Distributor
 
 from .forms import EventForm
 from .models import Event, EventItemRecap, EventPhoto
-from .storage import save_event_photo
+from .storage import delete_event_photo, save_event_photo
 
 
 # ---------------------------------------------------------------------------
@@ -910,6 +910,37 @@ def event_unlock_recap(request, pk):
     Event.objects.filter(pk=event.pk).update(status=Event.Status.RECAP_IN_PROGRESS)
     messages.success(request, 'Recap unlocked. You can now edit and resubmit.')
     return redirect('event_detail', pk=pk)
+
+
+@login_required
+def event_photo_delete(request, pk, photo_pk):
+    """
+    POST: Delete a single EventPhoto record and its file from storage.
+
+    Access: same users who can fill out the recap (Ambassador, Event Manager,
+    coverage-area users).  Only allowed when recap is editable:
+    Recap In Progress or Revision Requested.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required.'}, status=405)
+
+    company = request.user.company
+    visible = _get_visible_events(request.user)
+    event = get_object_or_404(visible, pk=pk, company=company)
+
+    if not _can_recap(request.user, event):
+        return JsonResponse({'error': 'Permission denied.'}, status=403)
+
+    _PHOTO_DELETE_STATUSES = {Event.Status.RECAP_IN_PROGRESS, Event.Status.REVISION_REQUESTED}
+    if event.status not in _PHOTO_DELETE_STATUSES:
+        return JsonResponse({'error': 'Recap is not in an editable status.'}, status=400)
+
+    photo = get_object_or_404(EventPhoto, pk=photo_pk, event=event)
+    file_url = photo.file_url
+    photo.delete()
+    delete_event_photo(file_url)
+
+    return JsonResponse({'success': True})
 
 
 @login_required

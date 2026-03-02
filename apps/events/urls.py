@@ -22,6 +22,7 @@ urlpatterns = [
     path('events/<int:pk>/save-recap/', views.event_save_recap, name='event_save_recap'),
     path('events/<int:pk>/submit-recap/', views.event_submit_recap, name='event_submit_recap'),
     path('events/<int:pk>/unlock-recap/', views.event_unlock_recap, name='event_unlock_recap'),
+    path('events/<int:pk>/photos/<int:photo_pk>/delete/', views.event_photo_delete, name='event_photo_delete'),
 
     # AJAX
     path('events/ajax/ambassadors/', views.ajax_ambassadors, name='ajax_event_ambassadors'),

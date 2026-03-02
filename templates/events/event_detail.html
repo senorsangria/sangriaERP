@@ -191,13 +191,25 @@
           <div class="mb-4">
             <label class="form-label small fw-semibold">Photos</label>
             {% if photos %}
-            <div class="mb-2 d-flex flex-wrap gap-2">
+            <div class="mb-2 d-flex flex-wrap gap-2" id="photo-grid">
               {% for photo in photos %}
-              <a href="{{ photo.file_url }}" target="_blank">
-                <img src="{{ photo.file_url }}" alt="Event photo" class="recap-photo-thumb">
-              </a>
+              <div class="position-relative photo-item" data-photo-id="{{ photo.pk }}">
+                <a href="{{ photo.file_url }}" target="_blank">
+                  <img src="{{ photo.file_url }}" alt="Event photo" class="recap-photo-thumb">
+                </a>
+                <button type="button"
+                        class="btn btn-danger btn-sm photo-delete-btn position-absolute top-0 end-0"
+                        style="padding:.1rem .3rem;font-size:.65rem;line-height:1;"
+                        data-photo-id="{{ photo.pk }}"
+                        data-event-id="{{ event.pk }}"
+                        title="Delete photo">
+                  <i class="bi bi-x-lg"></i>
+                </button>
+              </div>
               {% endfor %}
             </div>
+            {% else %}
+            <div id="photo-grid" class="mb-2 d-flex flex-wrap gap-2"></div>
             {% endif %}
             <input type="file" class="form-control form-control-sm" name="photos" multiple accept="image/*" id="photo-input">
             <div id="photo-count" class="small text-muted mt-1"></div>
@@ -246,13 +258,25 @@
           <div class="mb-4">
             <label class="form-label small fw-semibold">Photos</label>
             {% if photos %}
-            <div class="mb-2 d-flex flex-wrap gap-2">
+            <div class="mb-2 d-flex flex-wrap gap-2" id="photo-grid">
               {% for photo in photos %}
-              <a href="{{ photo.file_url }}" target="_blank">
-                <img src="{{ photo.file_url }}" alt="Event photo" class="recap-photo-thumb">
-              </a>
+              <div class="position-relative photo-item" data-photo-id="{{ photo.pk }}">
+                <a href="{{ photo.file_url }}" target="_blank">
+                  <img src="{{ photo.file_url }}" alt="Event photo" class="recap-photo-thumb">
+                </a>
+                <button type="button"
+                        class="btn btn-danger btn-sm photo-delete-btn position-absolute top-0 end-0"
+                        style="padding:.1rem .3rem;font-size:.65rem;line-height:1;"
+                        data-photo-id="{{ photo.pk }}"
+                        data-event-id="{{ event.pk }}"
+                        title="Delete photo">
+                  <i class="bi bi-x-lg"></i>
+                </button>
+              </div>
               {% endfor %}
             </div>
+            {% else %}
+            <div id="photo-grid" class="mb-2 d-flex flex-wrap gap-2"></div>
             {% endif %}
             <input type="file" class="form-control form-control-sm" name="photos" multiple accept="image/*" id="photo-input">
             <div id="photo-count" class="small text-muted mt-1"></div>
@@ -556,6 +580,50 @@
   input.addEventListener('change', function () {
     const n = this.files.length;
     counter.textContent = n === 0 ? '' : n + ' photo' + (n !== 1 ? 's' : '') + ' selected';
+  });
+})();
+
+/* Photo delete — AJAX with confirmation */
+(function () {
+  'use strict';
+
+  function getCsrf() {
+    var m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+  }
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.photo-delete-btn');
+    if (!btn) return;
+
+    if (!confirm('Delete this photo? This cannot be undone.')) return;
+
+    var photoId  = btn.dataset.photoId;
+    var eventId  = btn.dataset.eventId;
+    var url      = '/events/' + eventId + '/photos/' + photoId + '/delete/';
+    btn.disabled = true;
+
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': getCsrf(),
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.success) {
+        var item = document.querySelector('.photo-item[data-photo-id="' + photoId + '"]');
+        if (item) item.remove();
+      } else {
+        btn.disabled = false;
+        alert('Could not delete photo: ' + (data.error || 'Unknown error'));
+      }
+    })
+    .catch(function () {
+      btn.disabled = false;
+      alert('Network error — please try again.');
+    });
   });
 })();
 </script>

@@ -1002,3 +1002,90 @@ class EventRevertCompleteTest(TestCase):
         c.login(username="admin", password="testpass123")
         resp = c.get(reverse("event_detail", args=[event.pk]))
         self.assertContains(resp, "Revert to Recap Submitted")
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.3.3 Tweaks — Photo Delete
+# ---------------------------------------------------------------------------
+
+class EventPhotoDeleteTest(TestCase):
+    """event_photo_delete: AJAX delete of a single EventPhoto record."""
+
+    def setUp(self):
+        from apps.events.models import EventPhoto
+        self.EventPhoto = EventPhoto
+
+        self.company  = make_company()
+        self.admin    = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.account  = make_account(self.company)
+        self.brand    = Brand.objects.create(company=self.company, name="TestBrand")
+
+        # Tasting event in Recap In Progress with ambassador assigned
+        from apps.accounts.models import UserCoverageArea
+        UserCoverageArea.objects.create(
+            user=self.ambassador, company=self.company,
+            coverage_type='account', account=self.account,
+        )
+        self.event = make_event(
+            self.company, self.admin, Event.EventType.TASTING,
+            status=Event.Status.RECAP_IN_PROGRESS,
+            date=date.today(), ambassador=self.ambassador, account=self.account,
+        )
+        self.photo = EventPhoto.objects.create(
+            event=self.event,
+            account=self.account,
+            file_url='/media/events/test/test.jpg',
+            uploaded_by=self.ambassador,
+        )
+
+    def _delete(self, username, photo=None):
+        if photo is None:
+            photo = self.photo
+        c = Client()
+        c.login(username=username, password="testpass123")
+        return c.post(reverse("event_photo_delete", args=[self.event.pk, photo.pk]),
+                      HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+
+    def test_ambassador_can_delete_photo(self):
+        resp = self._delete("amb")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['success'])
+        self.assertFalse(self.EventPhoto.objects.filter(pk=self.photo.pk).exists())
+
+    def test_supplier_admin_can_delete_photo(self):
+        from apps.accounts.models import UserCoverageArea
+        UserCoverageArea.objects.create(
+            user=self.admin, company=self.company,
+            coverage_type='account', account=self.account,
+        )
+        resp = self._delete("admin")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['success'])
+
+    def test_delete_blocked_when_recap_submitted(self):
+        self.event.status = Event.Status.RECAP_SUBMITTED
+        self.event.save(update_fields=['status'])
+        resp = self._delete("amb")
+        self.assertEqual(resp.status_code, 400)
+        self.assertTrue(self.EventPhoto.objects.filter(pk=self.photo.pk).exists())
+
+    def test_delete_allowed_when_revision_requested(self):
+        self.event.status = Event.Status.REVISION_REQUESTED
+        self.event.save(update_fields=['status'])
+        resp = self._delete("amb")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['success'])
+
+    def test_delete_requires_post(self):
+        c = Client()
+        c.login(username="amb", password="testpass123")
+        resp = c.get(reverse("event_photo_delete", args=[self.event.pk, self.photo.pk]))
+        self.assertEqual(resp.status_code, 405)
+
+    def test_unrelated_user_cannot_delete(self):
+        stranger = make_user(self.company, User.Role.SALES_MANAGER, "stranger")
+        resp = self._delete("stranger")
+        # Sales Manager without coverage area cannot recap, so 403
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(self.EventPhoto.objects.filter(pk=self.photo.pk).exists())
