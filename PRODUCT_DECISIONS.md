@@ -425,6 +425,14 @@ Searchable list for one-off or exception assignments
 - Brand management UI shows a Sort Order column with up/down arrow
   buttons for AJAX reordering without page reload
 - First item in a brand's list has no up arrow; last has no down arrow
+- **Sort order normalization:** On brand detail page load, if any duplicate
+  sort_order values are detected, all items are normalized to sequential
+  integers (1, 2, 3…) before display. After every move-up or move-down
+  action, all items in the brand are renumbered sequentially. This
+  guarantees unique sort_order values and prevents items from jumping
+  multiple positions.
+- Sort key used everywhere: `('sort_order', 'name')` — pk is never used
+  as a tiebreaker to avoid non-deterministic ordering
 
 ### Distributor Management
 - Full CRUD for Distributors
@@ -1367,6 +1375,13 @@ tasting event recap (shelf price capture per item per account).
   OBJECT_STORAGE_ACCOUNT_ID, OBJECT_STORAGE_ACCESS_KEY_ID,
   OBJECT_STORAGE_SECRET_ACCESS_KEY, OBJECT_STORAGE_PUBLIC_URL
 - DEPLOYMENT.md in project root documents all required env vars
+- `delete_event_photo(file_url)` — strips MEDIA_URL prefix from the stored
+  URL and calls `storage.delete(name)` on whichever backend is active;
+  errors (e.g. file already missing) are silently swallowed so the DB
+  record deletion always succeeds
+- Media serving in development: gated on `USE_OBJECT_STORAGE` env var
+  (not on `DEBUG`); when object storage is not in use, Django's
+  `static()` helper registers `/media/` URL routes automatically
 
 ### Save / Submit / Unlock Workflow
 - **Save**: recap data written; if Scheduled → Recap In Progress; else status unchanged;
@@ -1387,7 +1402,59 @@ Light red background (#fff5f5) applies to any event requiring user action:
 - POST /events/<id>/submit-recap/ — saves and moves to Recap Submitted
 - POST /events/<id>/unlock-recap/ — Recap Submitted → Recap In Progress
 
+### Photo Delete
+- Recap photos can be deleted while the recap is in an editable status
+  (Recap In Progress or Revision Requested)
+- Available to the same users who can edit the recap: the assigned ambassador
+  and users with coverage-area access to the event
+- Delete button displayed on each photo thumbnail in the recap form
+- AJAX POST to /events/<id>/photos/<photo_pk>/delete/ — returns JSON
+- On success: removes the photo element from the DOM without page reload
+- Deletes both the EventPhoto database record and the underlying file via
+  `delete_event_photo()` from the storage abstraction layer
+
 ---
 
-*Last updated: March 2, 2026*
+## Account List — Active/Inactive Filter
+
+- Account list supports filtering by active status: All / Active / Inactive
+- Default view shows only active accounts (uses `active_accounts` manager)
+- Inactive filter shows accounts where `is_active=False` and
+  `merged_into__isnull=True`; uses `Account.objects` directly since the
+  `active_accounts` manager excludes inactive records
+- Coverage area scoping is applied consistently for both active and inactive
+  queries (Supplier Admin sees all; other roles are filtered by their
+  assigned coverage areas)
+- Filter selection is persisted to the user's session under the key
+  `account_list_filters` — returning to the list after navigating away
+  restores the last-used filter state
+- A "Filters Active" badge appears in the filter bar when any filter
+  (search, distributor, on/off, source, status) is active
+- `?clear_filters=1` resets all filters, clears the session entry,
+  and redirects back to the unfiltered list
+
+---
+
+## Event List — CSV Export
+
+- "Export CSV" button in the event list filter bar submits the current
+  filter state as GET parameters to GET /events/export-csv/
+- Export respects all event list filters: status, event type, year,
+  month, creator, distributor, account name, city
+- Access gated to viewer roles (same as event list); Distributor Contact
+  is excluded
+- File download: `events_export_YYYY-MM-DD.csv`
+- Static columns: Event Type, Event Status, Event Date (MM/DD/YY),
+  Event Duration, Account Name ("Admin Hours" for admin events), City,
+  Samples Poured
+- Dynamic columns: one column per distinct item that appears across the
+  filtered events, sorted by brand name then item sort_order then item name
+- Cell values for item columns: bottles sold (integer) or blank if the item
+  was not included in that event or bottles sold was not recorded
+- Filter logic shared via `_apply_event_filters(qs, filters)` helper used
+  by both the event list view and the export view
+
+---
+
+*Last updated: March 2, 2026 (Phase 10.3.3 Tweaks session 2: sort order normalization, photo delete, account active/inactive filter, event list CSV export)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
