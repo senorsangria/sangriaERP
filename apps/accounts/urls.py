@@ -10,6 +10,7 @@ urlpatterns = [
     path('accounts/<int:pk>/', views.account_detail, name='account_detail'),
     path('accounts/<int:pk>/edit/', views.account_edit, name='account_edit'),
     path('accounts/<int:pk>/toggle/', views.account_toggle, name='account_toggle'),
+    path('accounts/<int:pk>/delete/', views.account_delete, name='account_delete'),
 
     # Coverage area management (Supplier Admin only, AJAX-driven)
     path(

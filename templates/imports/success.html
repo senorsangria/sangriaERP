@@ -39,6 +39,12 @@
                 {% endif %}
               </td>
             </tr>
+            {% if batch.accounts_reactivated > 0 %}
+            <tr>
+              <th class="text-muted fw-normal">Accounts Reactivated</th>
+              <td><strong>{{ batch.accounts_reactivated }}</strong></td>
+            </tr>
+            {% endif %}
             {% if batch.records_skipped > 0 %}
             <tr>
               <th class="text-muted fw-normal">Records Skipped</th>

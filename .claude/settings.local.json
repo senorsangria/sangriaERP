@@ -192,7 +192,10 @@
       "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py makemigrations catalog --name=\"add_item_sort_order\" 2>&1)",
       "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py migrate catalog 2>&1)",
       "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py test --keepdb --verbosity=1 2>&1 | tail -20)",
-      "Bash(git add -A && git diff --staged --stat)"
+      "Bash(git add -A && git diff --staged --stat)",
+      "Bash(git commit -m \"$\\(cat <<'EOF'\nPhase 10.3.3 Step 6: Revert completed events\n\nAdd ability for Supplier Admin, Sales Manager, and the assigned Event\nManager to revert a Complete event back to Recap Submitted. Includes\nPOST endpoint, confirmation modal, and permission guard.\n\nCo-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py makemigrations imports --name=add_accounts_reactivated 2>&1)",
+      "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py migrate --run-syncdb 2>&1 | tail -5)"
     ]
   }
 }

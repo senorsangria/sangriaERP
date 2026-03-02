@@ -63,6 +63,7 @@ class ImportBatch(TimeStampedModel):
     # Import statistics
     records_imported = models.IntegerField(default=0)
     accounts_created = models.IntegerField(default=0)
+    accounts_reactivated = models.IntegerField(default=0)
     records_skipped = models.IntegerField(default=0)
     account_items_created = models.IntegerField(default=0)
 

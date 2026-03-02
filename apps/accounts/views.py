@@ -258,10 +258,6 @@ def account_toggle(request, pk):
 
     account = get_object_or_404(Account, pk=pk, company=request.user.company)
 
-    if account.auto_created:
-        messages.error(request, 'Imported accounts cannot be deactivated manually.')
-        return redirect('account_detail', pk=pk)
-
     if request.method == 'POST':
         account.is_active = not account.is_active
         account.save(update_fields=['is_active'])
@@ -271,7 +267,52 @@ def account_toggle(request, pk):
             messages.success(request, f'Account "{account.name}" has been deactivated.')
         return redirect('account_detail', pk=account.pk)
 
-    return render(request, '403.html', status=403)
+    return redirect('account_detail', pk=account.pk)
+
+
+@login_required
+def account_delete(request, pk):
+    """POST: Delete a manually created account if it has no associated data."""
+    denied = _require_account_access(request)
+    if denied:
+        return denied
+
+    account = get_object_or_404(Account, pk=pk, company=request.user.company)
+
+    if account.auto_created:
+        messages.error(request, 'Imported accounts cannot be deleted.')
+        return redirect('account_detail', pk=pk)
+
+    if request.method == 'POST':
+        events_count = account.events.count()
+        items_count = account.account_items.count()
+        photos_count = account.event_photos.count()
+        sales_count = account.sales_records.count()
+
+        blocking = []
+        if events_count:
+            blocking.append(f'{events_count} event{"s" if events_count != 1 else ""}')
+        if items_count:
+            blocking.append(f'{items_count} item record{"s" if items_count != 1 else ""}')
+        if photos_count:
+            blocking.append(f'{photos_count} event photo{"s" if photos_count != 1 else ""}')
+        if sales_count:
+            blocking.append(f'{sales_count} sales record{"s" if sales_count != 1 else ""}')
+
+        if blocking:
+            messages.error(
+                request,
+                f'Cannot delete "{account.name}". Associated data must be removed first: '
+                + ', '.join(blocking) + '.',
+            )
+            return redirect('account_detail', pk=pk)
+
+        account_name = account.name
+        account.delete()
+        messages.success(request, f'Account "{account_name}" has been deleted.')
+        return redirect('account_list')
+
+    return redirect('account_detail', pk=pk)
 
 
 # ---------------------------------------------------------------------------

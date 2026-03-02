@@ -463,7 +463,7 @@ def _execute_import(request, company, distributor, filepath, filename):
     ).select_related('mapped_item')
     code_to_item = {m.raw_item_name: m.mapped_item for m in item_mapping_qs}
 
-    # Pre-load existing accounts into memory dict
+    # Pre-load existing ACTIVE accounts into memory dict
     # Key: (address_normalized, city_normalized, state_normalized)
     existing_account_qs = Account.active_accounts.filter(
         company=company,
@@ -474,8 +474,15 @@ def _execute_import(request, company, distributor, filepath, filename):
         key = (acc.address_normalized, acc.city_normalized, acc.state_normalized)
         account_lookup[key] = acc
 
-    # Process rows: determine new accounts needed
-    new_account_map = {}  # key → Account (not yet saved)
+    # Pre-load INACTIVE accounts (candidates for reactivation)
+    inactive_lookup = {}
+    for acc in Account.objects.filter(company=company, distributor=distributor, is_active=False):
+        key = (acc.address_normalized, acc.city_normalized, acc.state_normalized)
+        inactive_lookup[key] = acc
+
+    # Process rows: determine new accounts and accounts to reactivate
+    new_account_map = {}   # key → Account (not yet saved)
+    reactivate_keys = set()  # keys of inactive accounts seen in this import
 
     for r in rows:
         item = code_to_item.get(r['item_id'])
@@ -489,7 +496,11 @@ def _execute_import(request, company, distributor, filepath, filename):
             normalize_address(r['state']),
         )
 
-        if key not in account_lookup and key not in new_account_map:
+        if key in account_lookup:
+            continue  # already active
+        if key in inactive_lookup:
+            reactivate_keys.add(key)  # will reactivate inside transaction
+        elif key not in new_account_map:
             new_account_map[key] = Account(
                 company=company,
                 distributor=distributor,
@@ -509,6 +520,14 @@ def _execute_import(request, company, distributor, filepath, filename):
             )
 
     with transaction.atomic():
+        # Reactivate inactive accounts found in this import
+        accounts_reactivated = 0
+        if reactivate_keys:
+            reactivate_ids = [inactive_lookup[k].pk for k in reactivate_keys]
+            accounts_reactivated = Account.objects.filter(pk__in=reactivate_ids).update(is_active=True)
+            for k in reactivate_keys:
+                account_lookup[k] = inactive_lookup[k]
+
         # Bulk create new accounts in batches of 500
         new_accounts_list = list(new_account_map.values())
         created_accounts = []
@@ -604,6 +623,7 @@ def _execute_import(request, company, distributor, filepath, filename):
         # Update the batch with final statistics
         import_batch.records_imported = len(sales_records)
         import_batch.accounts_created = len(created_accounts)
+        import_batch.accounts_reactivated = accounts_reactivated
         import_batch.records_skipped = records_skipped
         import_batch.account_items_created = account_items_created
         import_batch.status = ImportBatch.Status.COMPLETE

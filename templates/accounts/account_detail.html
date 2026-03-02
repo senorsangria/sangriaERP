@@ -23,21 +23,20 @@
       <a href="{% url 'account_edit' account.pk %}" class="btn btn-outline-secondary btn-sm">
         <i class="bi bi-pencil me-1"></i>Edit Account
       </a>
-      <form method="post" action="{% url 'account_toggle' account.pk %}" class="d-inline">
-        {% csrf_token %}
-        {% if account.is_active %}
-        <button type="submit" class="btn btn-outline-danger btn-sm"
-          onclick="return confirm('Deactivate {{ account.name|escapejs }}?')">
-          <i class="bi bi-dash-circle me-1"></i>Deactivate
-        </button>
-        {% else %}
-        <button type="submit" class="btn btn-outline-success btn-sm"
-          onclick="return confirm('Reactivate {{ account.name|escapejs }}?')">
-          <i class="bi bi-check-circle me-1"></i>Reactivate
-        </button>
-        {% endif %}
-      </form>
+      <button type="button" class="btn btn-outline-danger btn-sm"
+              data-bs-toggle="modal" data-bs-target="#deleteAccountModal">
+        <i class="bi bi-trash me-1"></i>Delete Account
+      </button>
       {% endif %}
+      <button type="button"
+              class="btn btn-sm {% if account.is_active %}btn-outline-warning{% else %}btn-outline-success{% endif %}"
+              data-bs-toggle="modal" data-bs-target="#toggleAccountModal">
+        {% if account.is_active %}
+        <i class="bi bi-dash-circle me-1"></i>Deactivate
+        {% else %}
+        <i class="bi bi-check-circle me-1"></i>Reactivate
+        {% endif %}
+      </button>
     </div>
   </div>
 </div>
@@ -46,8 +45,8 @@
 <div class="alert alert-secondary d-flex align-items-start gap-2 mb-4 py-2 px-3" style="font-size:.875rem;">
   <i class="bi bi-info-circle-fill text-muted mt-1 flex-shrink-0"></i>
   <span class="text-muted">
-    This account was created from a sales data import and cannot be edited or
-    deactivated manually. Account details are managed through the import process.
+    This account was created from a sales data import and cannot be edited manually.
+    Account details are managed through the import process.
   </span>
 </div>
 {% endif %}
@@ -175,5 +174,75 @@
     </div>
   </div>
 </div>
+
+<!-- Deactivate / Reactivate confirmation modal -->
+<div class="modal fade" id="toggleAccountModal" tabindex="-1" aria-labelledby="toggleAccountModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="toggleAccountModalLabel">
+          {% if account.is_active %}
+          <i class="bi bi-dash-circle me-2 text-warning"></i>Deactivate Account
+          {% else %}
+          <i class="bi bi-check-circle me-2 text-success"></i>Reactivate Account
+          {% endif %}
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        {% if account.is_active %}
+        <p>Are you sure you want to deactivate <strong>{{ account.name }}</strong>?</p>
+        <p class="text-muted small mb-0">The account will no longer appear in active account lists or event creation.</p>
+        {% else %}
+        <p>Are you sure you want to reactivate <strong>{{ account.name }}</strong>?</p>
+        {% endif %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <form method="post" action="{% url 'account_toggle' account.pk %}" class="d-inline">
+          {% csrf_token %}
+          {% if account.is_active %}
+          <button type="submit" class="btn btn-warning">
+            <i class="bi bi-dash-circle me-1"></i>Deactivate
+          </button>
+          {% else %}
+          <button type="submit" class="btn btn-success">
+            <i class="bi bi-check-circle me-1"></i>Reactivate
+          </button>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if not account.auto_created %}
+<!-- Delete confirmation modal (manual accounts only) -->
+<div class="modal fade" id="deleteAccountModal" tabindex="-1" aria-labelledby="deleteAccountModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteAccountModalLabel">
+          <i class="bi bi-trash me-2 text-danger"></i>Delete Account
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to permanently delete <strong>{{ account.name }}</strong>?</p>
+        <p class="text-muted small mb-0">This cannot be undone. The account will only be deleted if it has no associated events, items, or other data.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <form method="post" action="{% url 'account_delete' account.pk %}" class="d-inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-danger">
+            <i class="bi bi-trash me-1"></i>Delete Permanently
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {% endblock %}
