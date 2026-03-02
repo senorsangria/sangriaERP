@@ -237,6 +237,56 @@ def _sort_events(events_qs):
 
 
 # ---------------------------------------------------------------------------
+# Event List helpers
+# ---------------------------------------------------------------------------
+
+def _apply_event_filters(qs, filters):
+    """
+    Apply a filter dict to an event queryset.
+
+    Used by both event_list (which saves filters to session) and
+    event_export_csv (which reads filters from GET parameters).
+    """
+    if filters.get('status'):
+        qs = qs.filter(status__in=filters['status'])
+
+    if filters.get('year'):
+        try:
+            qs = qs.filter(date__year=int(filters['year']))
+        except (ValueError, TypeError):
+            pass
+
+    if filters.get('month'):
+        try:
+            qs = qs.filter(date__month=int(filters['month']))
+        except (ValueError, TypeError):
+            pass
+
+    if filters.get('event_type'):
+        qs = qs.filter(event_type=filters['event_type'])
+
+    if filters.get('creator'):
+        try:
+            qs = qs.filter(created_by_id=int(filters['creator']))
+        except (ValueError, TypeError):
+            pass
+
+    if filters.get('distributor'):
+        try:
+            qs = qs.filter(account__distributor_id=int(filters['distributor']))
+        except (ValueError, TypeError):
+            pass
+
+    if filters.get('account_name'):
+        qs = qs.filter(account__name__icontains=filters['account_name'])
+
+    if filters.get('city'):
+        qs = qs.filter(account__city__icontains=filters['city'])
+
+    return qs
+
+
+# ---------------------------------------------------------------------------
 # Event List
 # ---------------------------------------------------------------------------
 
@@ -288,41 +338,7 @@ def event_list(request):
         qs = qs.exclude(status=Event.Status.DRAFT)
 
     # ---- Apply filters ----
-    if filters.get('status'):
-        qs = qs.filter(status__in=filters['status'])
-
-    if filters.get('year'):
-        try:
-            qs = qs.filter(date__year=int(filters['year']))
-        except (ValueError, TypeError):
-            pass
-
-    if filters.get('month'):
-        try:
-            qs = qs.filter(date__month=int(filters['month']))
-        except (ValueError, TypeError):
-            pass
-
-    if filters.get('event_type'):
-        qs = qs.filter(event_type=filters['event_type'])
-
-    if filters.get('creator'):
-        try:
-            qs = qs.filter(created_by_id=int(filters['creator']))
-        except (ValueError, TypeError):
-            pass
-
-    if filters.get('distributor'):
-        try:
-            qs = qs.filter(account__distributor_id=int(filters['distributor']))
-        except (ValueError, TypeError):
-            pass
-
-    if filters.get('account_name'):
-        qs = qs.filter(account__name__icontains=filters['account_name'])
-
-    if filters.get('city'):
-        qs = qs.filter(account__city__icontains=filters['city'])
+    qs = _apply_event_filters(qs, filters)
 
     # ---- Build filter sidebar data ----
     # Years from event dates (from full visible set, not filtered)
@@ -371,6 +387,126 @@ def event_list(request):
             (9,'September'),(10,'October'),(11,'November'),(12,'December'),
         ],
     })
+
+
+# ---------------------------------------------------------------------------
+# Event CSV Export
+# ---------------------------------------------------------------------------
+
+@login_required
+def event_export_csv(request):
+    """
+    GET: Export the current filtered event list as a CSV download.
+
+    Accepts the same filter parameters as the event list view.  The filter
+    form on the event list page passes its current values via query parameters
+    when the user clicks "Export CSV", so the export always matches what is
+    visible on screen.
+
+    CSV columns:
+      Event Type, Event Status, Event Date, Event Duration, Account Name,
+      City, Samples Poured, [one column per distinct item sorted by brand
+      name then item sort_order within each brand — bottles sold]
+    """
+    import csv
+    from datetime import date as _date
+    from django.http import HttpResponse
+
+    if request.user.role == User.Role.DISTRIBUTOR_CONTACT:
+        return render(request, '403.html', status=403)
+    if request.user.role not in _VIEWER_ROLES:
+        return render(request, '403.html', status=403)
+
+    # Build filter dict from GET parameters (same keys as event_list session)
+    filters = {
+        'status':       request.GET.getlist('status'),
+        'year':         request.GET.get('year', ''),
+        'month':        request.GET.get('month', ''),
+        'event_type':   request.GET.get('event_type', ''),
+        'creator':      request.GET.get('creator', ''),
+        'distributor':  request.GET.get('distributor', ''),
+        'account_name': request.GET.get('account_name', ''),
+        'city':         request.GET.get('city', ''),
+    }
+
+    qs = _get_visible_events(request.user)
+    if not _can_view_drafts(request.user):
+        qs = qs.exclude(status=Event.Status.DRAFT)
+    qs = _apply_event_filters(qs, filters)
+
+    # Fetch all events with related data in a single pass
+    events = list(
+        qs.select_related('account')
+        .prefetch_related('items__brand', 'item_recaps')
+        .order_by('date', 'pk')
+    )
+
+    # Collect all distinct items across all events in this export,
+    # sorted by brand name then item sort_order then name.
+    seen_item_pks = set()
+    all_items = []
+    for event in events:
+        for item in event.items.all():
+            if item.pk not in seen_item_pks:
+                seen_item_pks.add(item.pk)
+                all_items.append(item)
+    all_items.sort(key=lambda x: (x.brand.name, x.sort_order, x.name))
+
+    # Build recap lookup: {event_pk: {item_pk: EventItemRecap}}
+    recap_lookup = {}
+    for event in events:
+        recap_lookup[event.pk] = {r.item_id: r for r in event.item_recaps.all()}
+
+    today_str = _date.today().strftime('%Y-%m-%d')
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = (
+        f'attachment; filename="events_export_{today_str}.csv"'
+    )
+    writer = csv.writer(response)
+
+    # Header
+    writer.writerow(
+        ['Event Type', 'Event Status', 'Event Date', 'Event Duration',
+         'Account Name', 'City', 'Samples Poured']
+        + [item.name for item in all_items]
+    )
+
+    # Data rows
+    for event in events:
+        if event.account:
+            acct_name = event.account.name
+            city      = event.account.city or ''
+        else:
+            acct_name = 'Admin Hours'
+            city      = ''
+
+        date_val = event.date.strftime('%m/%d/%y') if event.date else ''
+
+        row = [
+            event.get_event_type_display(),
+            event.get_status_display(),
+            date_val,
+            event.duration_display,
+            acct_name,
+            city,
+            event.recap_samples_poured if event.recap_samples_poured is not None else '',
+        ]
+
+        event_recaps    = recap_lookup.get(event.pk, {})
+        event_item_pks  = {item.pk for item in event.items.all()}
+        for item in all_items:
+            if item.pk not in event_item_pks:
+                row.append('')
+            else:
+                recap = event_recaps.get(item.pk)
+                if recap is None or recap.bottles_sold is None:
+                    row.append('')
+                else:
+                    row.append(recap.bottles_sold)
+
+        writer.writerow(row)
+
+    return response
 
 
 # ---------------------------------------------------------------------------

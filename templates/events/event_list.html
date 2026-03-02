@@ -156,13 +156,17 @@
         </div>
 
         <!-- Buttons -->
-        <div class="col-12 d-flex gap-2 mt-1">
+        <div class="col-12 d-flex gap-2 mt-1 flex-wrap">
           <button type="submit" class="btn btn-sm btn-primary">
             <i class="bi bi-search me-1"></i>Apply Filters
           </button>
           <a href="?clear_filters=1" class="btn btn-sm btn-outline-secondary">
             <i class="bi bi-x-circle me-1"></i>Clear Filters
           </a>
+          <button type="submit" formaction="{% url 'event_export_csv' %}"
+                  class="btn btn-sm btn-outline-success ms-auto">
+            <i class="bi bi-download me-1"></i>Export CSV
+          </button>
         </div>
 
       </div>
