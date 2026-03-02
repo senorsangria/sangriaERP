@@ -115,61 +115,122 @@ def account_list(request):
     if denied:
         return denied
 
-    # Apply universal coverage area scoping
-    accounts = get_accounts_for_user(request.user).select_related('distributor')
+    company = request.user.company
 
-    # Determine if we should show the "no coverage areas" message:
-    # Only Supplier Admin and SaaS Admin are not coverage-area scoped.
-    # All other roles (including Sales Manager) use coverage area filtering.
-    is_privileged = request.user.role in (
-        User.Role.SUPPLIER_ADMIN, User.Role.SAAS_ADMIN
-    )
+    # ---- Session-based filter persistence ----
+    SESSION_KEY = 'account_list_filters'
+
+    if request.GET.get('clear_filters'):
+        request.session.pop(SESSION_KEY, None)
+        return redirect('account_list')
+
+    _known_filter_keys = ('q', 'distributor', 'on_off', 'source', 'active_status')
+    if any(k in request.GET for k in _known_filter_keys):
+        filters = {
+            'q':             request.GET.get('q', '').strip(),
+            'distributor':   request.GET.get('distributor', '').strip(),
+            'on_off':        request.GET.get('on_off', '').strip(),
+            'source':        request.GET.get('source', '').strip(),
+            'active_status': request.GET.get('active_status', '').strip(),
+        }
+        request.session[SESSION_KEY] = filters
+    else:
+        filters = request.session.get(SESSION_KEY, {
+            'q': '', 'distributor': '', 'on_off': '', 'source': '', 'active_status': '',
+        })
+
+    search        = filters.get('q', '')
+    distributor_id = filters.get('distributor', '')
+    on_off        = filters.get('on_off', '')
+    source        = filters.get('source', '')
+    active_status = filters.get('active_status', '')
+
+    # ---- Base queryset ----
+    # For the inactive filter we cannot use the active_accounts manager (it
+    # filters is_active=True).  Build the appropriate base queryset, applying
+    # the same coverage-area scoping that get_accounts_for_user() provides.
+    if active_status == 'inactive':
+        is_privileged = request.user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SAAS_ADMIN)
+        if is_privileged:
+            accounts = Account.objects.filter(
+                company=company, is_active=False, merged_into__isnull=True
+            )
+        else:
+            coverage_areas = list(
+                UserCoverageArea.objects.filter(user=request.user, company=company)
+                .select_related('distributor', 'account')
+            )
+            if not coverage_areas:
+                accounts = Account.objects.none()
+            else:
+                cq = Q(pk__in=[])
+                for ca in coverage_areas:
+                    ct = ca.coverage_type
+                    if ct == UserCoverageArea.CoverageType.DISTRIBUTOR and ca.distributor_id:
+                        cq |= Q(distributor_id=ca.distributor_id)
+                    elif ct == UserCoverageArea.CoverageType.STATE and ca.state:
+                        cq |= Q(state_normalized=ca.state)
+                    elif ct == UserCoverageArea.CoverageType.COUNTY and ca.county and ca.state:
+                        cq |= Q(county=ca.county, state_normalized=ca.state)
+                    elif ct == UserCoverageArea.CoverageType.CITY and ca.city and ca.state:
+                        cq |= Q(city=ca.city, state_normalized=ca.state)
+                    elif ct == UserCoverageArea.CoverageType.ACCOUNT and ca.account_id:
+                        cq |= Q(pk=ca.account_id)
+                accounts = Account.objects.filter(
+                    company=company, is_active=False, merged_into__isnull=True
+                ).filter(cq)
+    else:
+        # Default (All) and Active: use active_accounts manager via helper
+        accounts = get_accounts_for_user(request.user)
+
+    accounts = accounts.select_related('distributor')
+
+    # Determine if we should show the "no coverage areas" message
+    is_privileged = request.user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SAAS_ADMIN)
     show_no_coverage_message = False
     if not is_privileged:
         has_coverage = UserCoverageArea.objects.filter(
-            user=request.user, company=request.user.company
+            user=request.user, company=company
         ).exists()
         if not has_coverage:
             show_no_coverage_message = True
 
+    # ---- Apply remaining filters ----
+
     # Search by name or city
-    search = request.GET.get('q', '').strip()
     if search:
         accounts = accounts.filter(
             Q(name__icontains=search) | Q(city__icontains=search)
         )
 
     # Filter: distributor
-    distributor_id = request.GET.get('distributor', '').strip()
     if distributor_id == 'none':
         accounts = accounts.filter(distributor__isnull=True)
     elif distributor_id:
         accounts = accounts.filter(distributor_id=distributor_id)
 
     # Filter: on/off premise
-    on_off = request.GET.get('on_off', '').strip()
     if on_off:
         accounts = accounts.filter(on_off_premise=on_off)
 
     # Filter: source (manual vs imported)
-    source = request.GET.get('source', '').strip()
     if source == 'manual':
         accounts = accounts.filter(auto_created=False)
     elif source == 'imported':
         accounts = accounts.filter(auto_created=True)
 
     distributors = (
-        Distributor.objects.filter(company=request.user.company, is_active=True)
+        Distributor.objects.filter(company=company, is_active=True)
         .order_by('name')
     )
 
+    filters_active = bool(search or distributor_id or on_off or source or active_status)
+
     return render(request, 'accounts/account_list.html', {
-        'accounts': accounts,
-        'distributors': distributors,
-        'search': search,
-        'selected_distributor': distributor_id,
-        'selected_on_off': on_off,
-        'selected_source': source,
+        'accounts':            accounts,
+        'distributors':        distributors,
+        'filters':             filters,
+        'filters_active':      filters_active,
         'show_no_coverage_message': show_no_coverage_message,
     })
 

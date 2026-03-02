@@ -17,6 +17,12 @@
 <!-- Filters -->
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-body py-3">
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <span class="fw-semibold small text-muted">Filters</span>
+      {% if filters_active %}
+      <span class="badge bg-warning text-dark">Filters Active</span>
+      {% endif %}
+    </div>
     <form method="get" class="row g-2 align-items-end">
 
       <!-- Search -->
@@ -27,7 +33,7 @@
           <input
             type="text" name="q" class="form-control"
             placeholder="Name or city…"
-            value="{{ search }}"
+            value="{{ filters.q }}"
           >
         </div>
       </div>
@@ -37,9 +43,9 @@
         <label class="form-label small text-muted mb-1">Distributor</label>
         <select name="distributor" class="form-select form-select-sm">
           <option value="">All Distributors</option>
-          <option value="none" {% if selected_distributor == 'none' %}selected{% endif %}>None assigned</option>
+          <option value="none" {% if filters.distributor == 'none' %}selected{% endif %}>None assigned</option>
           {% for dist in distributors %}
-          <option value="{{ dist.pk }}" {% if selected_distributor == dist.pk|stringformat:"s" %}selected{% endif %}>
+          <option value="{{ dist.pk }}" {% if filters.distributor == dist.pk|stringformat:"s" %}selected{% endif %}>
             {{ dist.name }}
           </option>
           {% endfor %}
@@ -51,9 +57,9 @@
         <label class="form-label small text-muted mb-1">On / Off Premise</label>
         <select name="on_off" class="form-select form-select-sm">
           <option value="">All</option>
-          <option value="ON" {% if selected_on_off == 'ON' %}selected{% endif %}>ON</option>
-          <option value="OFF" {% if selected_on_off == 'OFF' %}selected{% endif %}>OFF</option>
-          <option value="Unknown" {% if selected_on_off == 'Unknown' %}selected{% endif %}>Unknown</option>
+          <option value="ON" {% if filters.on_off == 'ON' %}selected{% endif %}>ON</option>
+          <option value="OFF" {% if filters.on_off == 'OFF' %}selected{% endif %}>OFF</option>
+          <option value="Unknown" {% if filters.on_off == 'Unknown' %}selected{% endif %}>Unknown</option>
         </select>
       </div>
 
@@ -62,16 +68,26 @@
         <label class="form-label small text-muted mb-1">Source</label>
         <select name="source" class="form-select form-select-sm">
           <option value="">All</option>
-          <option value="manual" {% if selected_source == 'manual' %}selected{% endif %}>Manual</option>
-          <option value="imported" {% if selected_source == 'imported' %}selected{% endif %}>Imported</option>
+          <option value="manual" {% if filters.source == 'manual' %}selected{% endif %}>Manual</option>
+          <option value="imported" {% if filters.source == 'imported' %}selected{% endif %}>Imported</option>
+        </select>
+      </div>
+
+      <!-- Status filter -->
+      <div class="col-12 col-sm-6 col-lg-2">
+        <label class="form-label small text-muted mb-1">Status</label>
+        <select name="active_status" class="form-select form-select-sm">
+          <option value="">All</option>
+          <option value="active"   {% if filters.active_status == 'active' %}selected{% endif %}>Active</option>
+          <option value="inactive" {% if filters.active_status == 'inactive' %}selected{% endif %}>Inactive</option>
         </select>
       </div>
 
       <!-- Buttons -->
       <div class="col-12 col-lg-auto">
         <button type="submit" class="btn btn-outline-primary btn-sm me-1">Filter</button>
-        {% if search or selected_distributor or selected_on_off or selected_source %}
-        <a href="{% url 'account_list' %}" class="btn btn-outline-secondary btn-sm">Clear</a>
+        {% if filters_active %}
+        <a href="{% url 'account_list' %}?clear_filters=1" class="btn btn-outline-secondary btn-sm">Clear</a>
         {% endif %}
       </div>
 
@@ -178,7 +194,7 @@
       No accounts are currently assigned to your coverage area.
       Please contact your Supplier Admin to set up your coverage areas.
     </p>
-    {% elif search or selected_distributor or selected_on_off or selected_source %}
+    {% elif filters_active %}
     <h5 class="fw-semibold">No accounts match those filters</h5>
     <p class="text-muted mb-3">Try adjusting your filters.</p>
     {% else %}
