@@ -8,7 +8,7 @@ from apps.core.models import TimeStampedModel
 
 class Event(TimeStampedModel):
     """
-    A field activity: in-store tasting, festival, or admin hours.
+    A field activity: in-store tasting, special event, or admin hours.
 
     Status workflow:
       Draft → Scheduled → Recap In Progress → Recap Submitted → Revision Requested → Complete
@@ -18,9 +18,9 @@ class Event(TimeStampedModel):
     """
 
     class EventType(models.TextChoices):
-        TASTING  = 'tasting',  'Tasting'
-        FESTIVAL = 'festival', 'Festival'
-        ADMIN    = 'admin',    'Admin'
+        TASTING       = 'tasting',       'Tasting'
+        SPECIAL_EVENT = 'special_event', 'Special Event'
+        ADMIN         = 'admin',         'Admin'
 
     class Status(models.TextChoices):
         DRAFT              = 'draft',              'Draft'

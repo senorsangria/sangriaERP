@@ -110,10 +110,10 @@ class AdminEventReleaseTransitionTest(TestCase):
         event.refresh_from_db()
         self.assertEqual(event.status, Event.Status.SCHEDULED)
 
-    def test_festival_event_release_goes_to_scheduled(self):
-        account = make_account(self.company, name="Festival Venue")
+    def test_special_event_release_goes_to_scheduled(self):
+        account = make_account(self.company, name="Special Event Venue")
         event = make_event(
-            self.company, self.manager, Event.EventType.FESTIVAL,
+            self.company, self.manager, Event.EventType.SPECIAL_EVENT,
             date=date.today(), ambassador=self.ambassador, account=account,
         )
         self.client.post(reverse("event_release", args=[event.pk]))
@@ -474,10 +474,10 @@ class TastingReleaseItemsRequiredTest(TestCase):
         event.refresh_from_db()
         self.assertEqual(event.status, Event.Status.SCHEDULED)
 
-    def test_festival_release_not_blocked_without_items(self):
-        """Festival events do not require items to release."""
+    def test_special_event_release_not_blocked_without_items(self):
+        """Special Event events do not require items to release."""
         event = make_event(
-            self.company, self.manager, Event.EventType.FESTIVAL,
+            self.company, self.manager, Event.EventType.SPECIAL_EVENT,
             date=date.today(), ambassador=self.ambassador, account=self.account,
         )
         self.client.post(reverse("event_release", args=[event.pk]))
@@ -622,13 +622,13 @@ class RecapSubmitTest(TestCase):
         self.event.refresh_from_db()
         self.assertEqual(self.event.status, Event.Status.RECAP_SUBMITTED)
 
-    def test_submit_blocked_without_notes_or_photos(self):
-        """Submit without notes or photos leaves status unchanged."""
+    def test_submit_with_empty_fields_succeeds(self):
+        """Submit is allowed with any combination of filled or empty fields."""
         self.client.post(reverse("event_submit_recap", args=[self.event.pk]), {
             "recap_notes": "",
         })
         self.event.refresh_from_db()
-        self.assertNotEqual(self.event.status, Event.Status.RECAP_SUBMITTED)
+        self.assertEqual(self.event.status, Event.Status.RECAP_SUBMITTED)
 
     def test_submit_updates_account_item_price(self):
         # Pre-create AccountItem with no price
@@ -734,8 +734,8 @@ class RecapUnlockTest(TestCase):
         self.assertEqual(self.event.status, Event.Status.RECAP_IN_PROGRESS)
 
 
-class FestivalRecapTest(TestCase):
-    """Festival event recap: comment + photos only (no per-item)."""
+class SpecialEventRecapTest(TestCase):
+    """Special Event recap: comment + photos only (no per-item)."""
 
     def setUp(self):
         self.company = make_company()
@@ -743,7 +743,7 @@ class FestivalRecapTest(TestCase):
         self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
         self.account = make_account(self.company)
         self.event = make_event(
-            self.company, self.manager, Event.EventType.FESTIVAL,
+            self.company, self.manager, Event.EventType.SPECIAL_EVENT,
             status=Event.Status.SCHEDULED,
             date=date.today(),
             ambassador=self.ambassador,
@@ -752,24 +752,25 @@ class FestivalRecapTest(TestCase):
         self.client = Client()
         self.client.login(username="mgr", password="testpass123")
 
-    def test_festival_save_saves_comment(self):
+    def test_special_event_save_saves_comment(self):
         self.client.post(reverse("event_save_recap", args=[self.event.pk]), {
-            "recap_comment": "Great festival!",
+            "recap_comment": "Great special event!",
         })
         self.event.refresh_from_db()
-        self.assertEqual(self.event.recap_comment, "Great festival!")
+        self.assertEqual(self.event.recap_comment, "Great special event!")
         self.assertEqual(self.event.status, Event.Status.RECAP_IN_PROGRESS)
 
-    def test_festival_submit_requires_comment_or_photo(self):
+    def test_special_event_submit_with_empty_fields_succeeds(self):
+        """Submit is now allowed with empty fields (no minimum requirement)."""
         self.event.status = Event.Status.RECAP_IN_PROGRESS
         self.event.save()
         self.client.post(reverse("event_submit_recap", args=[self.event.pk]), {
             "recap_comment": "",
         })
         self.event.refresh_from_db()
-        self.assertNotEqual(self.event.status, Event.Status.RECAP_SUBMITTED)
+        self.assertEqual(self.event.status, Event.Status.RECAP_SUBMITTED)
 
-    def test_festival_submit_with_comment_succeeds(self):
+    def test_special_event_submit_with_comment_succeeds(self):
         self.event.status = Event.Status.RECAP_IN_PROGRESS
         self.event.save()
         self.client.post(reverse("event_submit_recap", args=[self.event.pk]), {

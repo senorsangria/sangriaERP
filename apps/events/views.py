@@ -448,7 +448,7 @@ def _account_search_disabled(user):
     ).exists()
 
 
-_VALID_EVENT_TYPES = {'tasting', 'festival', 'admin'}
+_VALID_EVENT_TYPES = {'tasting', 'special_event', 'admin'}
 
 
 @login_required
@@ -576,8 +576,8 @@ def event_release(request, pk):
     """
     POST: Release a Draft event.
 
-    - Tasting / Festival: Draft → Scheduled
-    - Admin:              Draft → Recap Submitted
+    - Tasting / Special Event: Draft → Scheduled
+    - Admin:                   Draft → Recap Submitted
       (Admin events have no recap step, so they go straight to awaiting approval.)
     """
     if request.user.role not in _ACTION_ROLES:
@@ -600,7 +600,7 @@ def event_release(request, pk):
     if not event.ambassador:
         errors.append('Event must have an assigned ambassador before it can be released.')
     if event.event_type != Event.EventType.ADMIN and not event.account:
-        errors.append('Tasting and Festival events must have an account assigned.')
+        errors.append('Tasting and Special Event events must have an account assigned.')
     if event.event_type == Event.EventType.TASTING and not event.items.exists():
         errors.append('A Tasting event must have at least one item selected before it can be released.')
 
@@ -623,7 +623,7 @@ def event_release(request, pk):
 
 @login_required
 def event_request_revision(request, pk):
-    """POST: Recap Submitted → Revision Requested (Tasting / Festival only)."""
+    """POST: Recap Submitted → Revision Requested (Tasting / Special Event only)."""
     if request.user.role not in _ACTION_ROLES:
         return render(request, '403.html', status=403)
     if request.method != 'POST':
@@ -774,7 +774,7 @@ def _save_recap_data(request, event):
             recap.bottles_used_for_samples = bottles_used_for_samples
             recap.save(update_fields=['shelf_price', 'bottles_sold', 'bottles_used_for_samples'])
 
-    elif event.event_type == Event.EventType.FESTIVAL:
+    elif event.event_type == Event.EventType.SPECIAL_EVENT:
         comment = request.POST.get('recap_comment', '').strip()
         event.recap_comment = comment
         update_fields.append('recap_comment')
@@ -873,16 +873,8 @@ def event_submit_recap(request, pk):
     event.refresh_from_db()
 
     # Validate minimum required fields
-    if event.event_type == Event.EventType.TASTING:
-        has_content = bool(event.recap_notes) or event.photos.exists()
-    elif event.event_type == Event.EventType.FESTIVAL:
-        has_content = bool(event.recap_comment) or event.photos.exists()
-    else:
-        has_content = True
-
-    if not has_content:
-        messages.error(request, 'Please add at least one note or photo before submitting.')
-        return redirect('event_detail', pk=pk)
+    # No minimum submission requirement — any combination of filled or empty fields allowed
+    has_content = True
 
     _apply_price_updates(event, request.user)
 
