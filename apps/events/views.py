@@ -429,6 +429,7 @@ def event_detail(request, pk):
         'can_edit':               can_edit,
         'can_action':             can_action,
         'can_recap':              can_recap,
+        'can_revert':             can_revert,
         'recap_active':           recap_active,
         'show_recap':             show_recap,
         'tasting_items_by_brand': tasting_items_by_brand,
