@@ -285,3 +285,79 @@ class ImportIgnoredItemsTest(ImportTestBase):
 
         self.assertEqual(AccountItem.objects.count(), 0)
         self.assertEqual(batch.account_items_created, 0)
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.3.3 — Import reactivates inactive accounts
+# ---------------------------------------------------------------------------
+
+class ImportReactivatesInactiveAccountsTest(ImportTestBase):
+    """
+    If an inactive (deactivated) account appears in an import, it is
+    automatically reactivated and counted in accounts_reactivated.
+    """
+
+    def _make_inactive_account(self, address="1 Main St", city="Hoboken", state="NJ"):
+        """Create an inactive, auto-created account at the given address."""
+        from utils.normalize import normalize_address
+        return Account.objects.create(
+            company=self.company,
+            distributor=self.distributor,
+            name="Old Store",
+            street=address,
+            city=city,
+            state=state,
+            address_normalized=normalize_address(address),
+            city_normalized=normalize_address(city),
+            state_normalized=normalize_address(state),
+            auto_created=True,
+            is_active=False,
+        )
+
+    def test_inactive_account_is_reactivated(self):
+        self._make_inactive_account()
+        rows = [{'date_str': '01/15/2024', 'item_id': 'Red0750'}]
+        self._run_import(rows)
+
+        account = Account.objects.get(street="1 Main St", city="Hoboken")
+        self.assertTrue(account.is_active)
+
+    def test_accounts_reactivated_count_tracked(self):
+        self._make_inactive_account()
+        rows = [{'date_str': '01/15/2024', 'item_id': 'Red0750'}]
+        batch = self._run_import(rows)
+        self.assertEqual(batch.accounts_reactivated, 1)
+
+    def test_active_accounts_not_counted_as_reactivated(self):
+        from utils.normalize import normalize_address
+        Account.objects.create(
+            company=self.company,
+            distributor=self.distributor,
+            name="Active Store",
+            street="1 Main St",
+            city="Hoboken",
+            state="NJ",
+            address_normalized=normalize_address("1 Main St"),
+            city_normalized=normalize_address("Hoboken"),
+            state_normalized=normalize_address("NJ"),
+            auto_created=True,
+            is_active=True,
+        )
+        rows = [{'date_str': '01/15/2024', 'item_id': 'Red0750'}]
+        batch = self._run_import(rows)
+        self.assertEqual(batch.accounts_reactivated, 0)
+
+    def test_new_account_not_counted_as_reactivated(self):
+        """A brand-new account (no prior record) is created, not reactivated."""
+        rows = [{'date_str': '01/15/2024', 'item_id': 'Red0750'}]
+        batch = self._run_import(rows)
+        self.assertEqual(batch.accounts_reactivated, 0)
+        self.assertEqual(batch.accounts_created, 1)
+
+    def test_reactivated_not_counted_as_created(self):
+        """A reactivated account should NOT inflate accounts_created."""
+        self._make_inactive_account()
+        rows = [{'date_str': '01/15/2024', 'item_id': 'Red0750'}]
+        batch = self._run_import(rows)
+        self.assertEqual(batch.accounts_created, 0)
+        self.assertEqual(batch.accounts_reactivated, 1)

@@ -202,3 +202,187 @@ class AccountItemPriceHistoryTest(TestCase):
             account_item=self.account_item, price="11.00",
         )
         self.assertEqual(self.account_item.price_history.count(), 2)
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.3.3 — Account delete view
+# ---------------------------------------------------------------------------
+
+from django.test import Client
+from django.urls import reverse
+
+
+def make_user(company, role, username="testuser"):
+    return User.objects.create_user(
+        username=username,
+        password="testpass123",
+        company=company,
+        role=role,
+    )
+
+
+class AccountDeleteTest(TestCase):
+    """account_delete: only manual accounts with no associated data can be deleted."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.client = Client()
+        self.client.login(username="admin", password="testpass123")
+
+    def test_delete_manual_account_with_no_data_succeeds(self):
+        account = Account.objects.create(
+            company=self.company, name="Delete Me",
+            street="1 Main", city="Newark", state="NJ",
+            auto_created=False,
+        )
+        pk = account.pk
+        self.client.post(reverse("account_delete", args=[pk]))
+        self.assertFalse(Account.objects.filter(pk=pk).exists())
+
+    def test_delete_redirects_to_account_list_on_success(self):
+        account = Account.objects.create(
+            company=self.company, name="Delete Me",
+            street="1 Main", city="Newark", state="NJ",
+            auto_created=False,
+        )
+        resp = self.client.post(reverse("account_delete", args=[account.pk]), follow=True)
+        self.assertRedirects(resp, reverse("account_list"))
+
+    def test_delete_blocked_for_imported_account(self):
+        account = Account.objects.create(
+            company=self.company, name="Imported",
+            street="2 Oak", city="Newark", state="NJ",
+            auto_created=True,
+        )
+        pk = account.pk
+        self.client.post(reverse("account_delete", args=[pk]))
+        self.assertTrue(Account.objects.filter(pk=pk).exists())
+
+    def test_delete_blocked_with_account_items(self):
+        account = Account.objects.create(
+            company=self.company, name="Has Items",
+            street="3 Elm", city="Newark", state="NJ",
+            auto_created=False,
+        )
+        item = make_item(self.company)
+        AccountItem.objects.create(
+            account=account, item=item,
+            date_first_associated=datetime.date.today(),
+        )
+        pk = account.pk
+        self.client.post(reverse("account_delete", args=[pk]))
+        self.assertTrue(Account.objects.filter(pk=pk).exists())
+
+    def test_delete_error_message_lists_blocking_data(self):
+        account = Account.objects.create(
+            company=self.company, name="Has Items",
+            street="3 Elm", city="Newark", state="NJ",
+            auto_created=False,
+        )
+        item = make_item(self.company)
+        AccountItem.objects.create(
+            account=account, item=item,
+            date_first_associated=datetime.date.today(),
+        )
+        resp = self.client.post(reverse("account_delete", args=[account.pk]), follow=True)
+        self.assertContains(resp, "item record")
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.3.3 — Account deactivate/reactivate for all accounts
+# ---------------------------------------------------------------------------
+
+class AccountToggleAllAccountsTest(TestCase):
+    """account_toggle works for both manual and imported accounts."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.client = Client()
+        self.client.login(username="admin", password="testpass123")
+
+    def test_deactivate_manual_account(self):
+        account = Account.objects.create(
+            company=self.company, name="Manual",
+            street="1 Main", city="Newark", state="NJ",
+            auto_created=False, is_active=True,
+        )
+        self.client.post(reverse("account_toggle", args=[account.pk]))
+        account.refresh_from_db()
+        self.assertFalse(account.is_active)
+
+    def test_reactivate_manual_account(self):
+        account = Account.objects.create(
+            company=self.company, name="Manual",
+            street="1 Main", city="Newark", state="NJ",
+            auto_created=False, is_active=False,
+        )
+        self.client.post(reverse("account_toggle", args=[account.pk]))
+        account.refresh_from_db()
+        self.assertTrue(account.is_active)
+
+    def test_deactivate_imported_account(self):
+        """Imported accounts can now be deactivated."""
+        account = Account.objects.create(
+            company=self.company, name="Imported",
+            street="2 Oak", city="Newark", state="NJ",
+            auto_created=True, is_active=True,
+        )
+        self.client.post(reverse("account_toggle", args=[account.pk]))
+        account.refresh_from_db()
+        self.assertFalse(account.is_active)
+
+    def test_reactivate_imported_account(self):
+        """Imported accounts can be reactivated."""
+        account = Account.objects.create(
+            company=self.company, name="Imported",
+            street="2 Oak", city="Newark", state="NJ",
+            auto_created=True, is_active=False,
+        )
+        self.client.post(reverse("account_toggle", args=[account.pk]))
+        account.refresh_from_db()
+        self.assertTrue(account.is_active)
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.3.3 — Account detail items display
+# ---------------------------------------------------------------------------
+
+class AccountDetailItemsDisplayTest(TestCase):
+    """account_detail passes items_by_brand to the template."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.account = make_account(self.company)
+        self.client = Client()
+        self.client.login(username="admin", password="testpass123")
+
+    def test_items_by_brand_in_context(self):
+        item = make_item(self.company)
+        AccountItem.objects.create(
+            account=self.account, item=item,
+            date_first_associated=datetime.date.today(),
+        )
+        resp = self.client.get(reverse("account_detail", args=[self.account.pk]))
+        self.assertIn("items_by_brand", resp.context)
+        self.assertEqual(len(resp.context["items_by_brand"]), 1)
+
+    def test_items_by_brand_empty_when_no_items(self):
+        resp = self.client.get(reverse("account_detail", args=[self.account.pk]))
+        self.assertIn("items_by_brand", resp.context)
+        self.assertEqual(len(resp.context["items_by_brand"]), 0)
+
+    def test_item_name_in_response(self):
+        item = make_item(self.company)
+        AccountItem.objects.create(
+            account=self.account, item=item,
+            date_first_associated=datetime.date.today(),
+        )
+        resp = self.client.get(reverse("account_detail", args=[self.account.pk]))
+        self.assertContains(resp, item.name)
+
+    def test_empty_state_shown_when_no_items(self):
+        resp = self.client.get(reverse("account_detail", args=[self.account.pk]))
+        self.assertContains(resp, "No items have been associated")

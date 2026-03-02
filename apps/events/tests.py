@@ -865,3 +865,140 @@ class ApproveRaceConditionTest(TestCase):
         self.client.post(reverse("event_approve", args=[self.event.pk]))
         self.event.refresh_from_db()
         self.assertNotEqual(self.event.status, Event.Status.COMPLETE)
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.3.3 — Duration display format ('hr' not 'h')
+# ---------------------------------------------------------------------------
+
+class EventDurationDisplayTest(TestCase):
+    """Event.duration_display uses 'hr' suffix, not 'h'."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
+        self.event = make_event(
+            self.company, self.manager, Event.EventType.ADMIN,
+            date=date.today(),
+        )
+
+    def test_hours_only(self):
+        self.event.duration_hours = 2
+        self.event.duration_minutes = None
+        self.assertEqual(self.event.duration_display, "2hr")
+
+    def test_hours_and_minutes(self):
+        self.event.duration_hours = 2
+        self.event.duration_minutes = 30
+        self.assertEqual(self.event.duration_display, "2hr 30m")
+
+    def test_minutes_only(self):
+        self.event.duration_hours = None
+        self.event.duration_minutes = 45
+        self.assertEqual(self.event.duration_display, "45m")
+
+    def test_no_duration(self):
+        self.event.duration_hours = None
+        self.event.duration_minutes = None
+        self.assertEqual(self.event.duration_display, "—")
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.3.3 — Items hidden in Recap In Progress
+# ---------------------------------------------------------------------------
+
+class ItemsSectionRecapInProgressTest(TestCase):
+    """Items section must be hidden when status is Recap In Progress."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
+        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.account = make_account(self.company)
+        self.client = Client()
+        self.client.login(username="mgr", password="testpass123")
+
+    def test_items_hidden_in_recap_in_progress(self):
+        event = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.RECAP_IN_PROGRESS,
+            date=date.today(), ambassador=self.ambassador, account=self.account,
+        )
+        resp = self.client.get(reverse("event_detail", args=[event.pk]))
+        self.assertNotContains(resp, "Items to be Sampled")
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.3.3 — Revert Complete → Recap Submitted
+# ---------------------------------------------------------------------------
+
+class EventRevertCompleteTest(TestCase):
+    """event_revert_complete: Complete → Recap Submitted for authorised users."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.sales_mgr = make_user(self.company, User.Role.SALES_MANAGER, "salesmgr")
+        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.account = make_account(self.company)
+
+    def _complete_event(self, event_manager=None):
+        event = make_event(
+            self.company, self.admin, Event.EventType.TASTING,
+            status=Event.Status.COMPLETE,
+            date=date.today(), ambassador=self.ambassador, account=self.account,
+        )
+        if event_manager:
+            event.event_manager = event_manager
+            event.save(update_fields=['event_manager'])
+        return event
+
+    def _revert_as(self, username, event):
+        c = Client()
+        c.login(username=username, password="testpass123")
+        c.post(reverse("event_revert_complete", args=[event.pk]))
+        event.refresh_from_db()
+
+    def test_supplier_admin_can_revert(self):
+        event = self._complete_event()
+        self._revert_as("admin", event)
+        self.assertEqual(event.status, Event.Status.RECAP_SUBMITTED)
+
+    def test_sales_manager_can_revert(self):
+        event = self._complete_event()
+        self._revert_as("salesmgr", event)
+        self.assertEqual(event.status, Event.Status.RECAP_SUBMITTED)
+
+    def test_assigned_event_manager_can_revert(self):
+        """An Ambassador Manager who is the assigned event manager can revert."""
+        event_mgr = make_user(self.company, User.Role.AMBASSADOR_MANAGER, "evtmgr")
+        event = self._complete_event(event_manager=event_mgr)
+        self._revert_as("evtmgr", event)
+        self.assertEqual(event.status, Event.Status.RECAP_SUBMITTED)
+
+    def test_unassigned_ambassador_manager_cannot_revert(self):
+        """An Ambassador Manager not assigned as event manager cannot revert."""
+        other = make_user(self.company, User.Role.AMBASSADOR_MANAGER, "other")
+        event = self._complete_event()
+        self._revert_as("other", event)
+        self.assertEqual(event.status, Event.Status.COMPLETE)
+
+    def test_revert_blocked_for_non_complete_event(self):
+        """Can only revert Complete events — Scheduled stays Scheduled."""
+        event = make_event(
+            self.company, self.admin, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            date=date.today(), ambassador=self.ambassador, account=self.account,
+        )
+        c = Client()
+        c.login(username="admin", password="testpass123")
+        c.post(reverse("event_revert_complete", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.SCHEDULED)
+
+    def test_revert_button_visible_for_admin_on_complete_event(self):
+        event = self._complete_event()
+        c = Client()
+        c.login(username="admin", password="testpass123")
+        resp = c.get(reverse("event_detail", args=[event.pk]))
+        self.assertContains(resp, "Revert to Recap Submitted")
