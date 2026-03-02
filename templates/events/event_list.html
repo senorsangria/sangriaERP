@@ -17,6 +17,8 @@
   /* Revision Requested highlight */
   .event-row-revision td {
     background: #fff5f5 !important;
+  }
+  .event-row-revision td:first-child {
     border-left: 3px solid #dc3545;
   }
   /* Collapsible filter card */
@@ -197,7 +199,7 @@
             </div>
             {% if event.account and event.account.street or event.account.city %}
             <div class="small text-muted">
-              {% if event.account.street %}{{ event.account.street }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city }}{% endif %}
+              {% if event.account.street %}{{ event.account.street|title }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city|title }}{% endif %}
             </div>
             {% endif %}
             <div class="small text-muted">
@@ -271,7 +273,7 @@
             <td>
               {% if event.account %}
                 <a href="{% url 'account_detail' event.account.pk %}" class="text-decoration-none">{{ event.account.name }}</a>
-                <div class="small text-muted">{% if event.account.street %}{{ event.account.street }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city }}{% endif %}</div>
+                <div class="small text-muted">{% if event.account.street %}{{ event.account.street|title }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city|title }}{% endif %}</div>
               {% else %}
                 <span class="text-muted fst-italic">Admin Event</span>
               {% endif %}

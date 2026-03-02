@@ -63,13 +63,16 @@
           <div>{{ event.duration_display }}</div>
         </div>
 
-        <!-- Account name with inline address and city -->
+        <!-- Account name with address and city on separate line -->
         {% if event.account %}
         <div class="fw-semibold mb-1">
-          {{ event.account.name }}{% if event.account.street or event.account.city %}<span class="fw-normal text-muted">,
-            {% if event.account.street %}{{ event.account.street }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city }}{% endif %}
-          </span>{% endif %}
+          {{ event.account.name }}
         </div>
+        {% if event.account.street or event.account.city %}
+        <div class="text-muted small mb-1">
+          {% if event.account.street %}{{ event.account.street|title }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city|title }}{% endif %}
+        </div>
+        {% endif %}
         {% if event.account.distributor %}
         <div class="small mt-1">Distributor: <span class="fw-medium">{{ event.account.distributor.name }}</span></div>
         {% endif %}

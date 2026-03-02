@@ -187,7 +187,8 @@
       "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python3 -c \"import django; print\\(django.__version__\\)\" 2>&1)",
       "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py test apps.events.tests --verbosity=2 2>&1 | tail -50)",
       "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py test apps.events.tests --verbosity=2 --keepdb 2>&1 | tail -50)",
-      "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py test --keepdb --verbosity=1 2>&1 | tail -30)"
+      "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py test --keepdb --verbosity=1 2>&1 | tail -30)",
+      "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py test --keepdb --verbosity=1 2>&1 | tail -15)"
     ]
   }
 }

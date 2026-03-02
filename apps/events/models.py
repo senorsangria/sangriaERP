@@ -121,13 +121,13 @@ class Event(TimeStampedModel):
 
     @property
     def duration_display(self):
-        """Human-readable duration: '2h 30m', '1h', '45m', etc."""
+        """Human-readable duration: '2hr 30m', '1hr', '45m', etc."""
         h = self.duration_hours or 0
         m = self.duration_minutes or 0
         if h and m:
-            return f'{h}h {m}m'
+            return f'{h}hr {m}m'
         elif h:
-            return f'{h}h'
+            return f'{h}hr'
         elif m:
             return f'{m}m'
         return '—'
