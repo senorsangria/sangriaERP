@@ -13,4 +13,8 @@ urlpatterns = [
     path('brands/<int:brand_pk>/items/create/', views.item_create, name='item_create'),
     path('brands/<int:brand_pk>/items/<int:pk>/edit/', views.item_edit, name='item_edit'),
     path('brands/<int:brand_pk>/items/<int:pk>/toggle/', views.item_toggle, name='item_toggle'),
+
+    # Item sort order AJAX
+    path('brands/<int:brand_pk>/items/<int:pk>/move-up/', views.item_move_up, name='item_move_up'),
+    path('brands/<int:brand_pk>/items/<int:pk>/move-down/', views.item_move_down, name='item_move_down'),
 ]

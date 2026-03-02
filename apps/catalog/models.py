@@ -55,11 +55,15 @@ class Item(TimeStampedModel):
     )
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(
+        default=0,
+        help_text='Display order within this brand. Lower values appear first.',
+    )
 
     class Meta:
         verbose_name = 'Item'
         verbose_name_plural = 'Items'
-        ordering = ['brand', 'item_code']
+        ordering = ['brand', 'sort_order', 'name']
         unique_together = [['brand', 'item_code']]
 
     def __str__(self):

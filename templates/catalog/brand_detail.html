@@ -2,6 +2,12 @@
 
 {% block title %}{{ brand.name }}{% endblock %}
 
+{% block extra_css %}
+<style>
+  .sort-btn { padding: .15rem .4rem; font-size: .75rem; line-height: 1; }
+</style>
+{% endblock %}
+
 {% block content %}
 
 <!-- Page header -->
@@ -77,9 +83,10 @@
 {% if items %}
 <div class="card border-0 shadow-sm">
   <div class="table-responsive">
-    <table class="table table-hover mb-0 align-middle">
+    <table class="table table-hover mb-0 align-middle" id="items-table">
       <thead class="table-light">
         <tr>
+          <th class="text-center" style="width:80px;">Sort Order</th>
           <th>Item Name</th>
           <th class="d-none d-sm-table-cell">Item Code</th>
           <th class="d-none d-md-table-cell">SKU Number</th>
@@ -87,9 +94,31 @@
           <th class="text-end">Actions</th>
         </tr>
       </thead>
-      <tbody>
+      <tbody id="items-tbody">
         {% for item in items %}
-        <tr>
+        <tr data-item-id="{{ item.pk }}" data-item-index="{{ forloop.counter0 }}" data-items-count="{{ items|length }}">
+          <td class="text-center">
+            <div class="d-flex flex-column align-items-center gap-1">
+              {% if not forloop.first %}
+              <button type="button" class="btn btn-outline-secondary sort-btn item-move-up"
+                      data-brand-pk="{{ brand.pk }}" data-item-pk="{{ item.pk }}"
+                      title="Move up">
+                <i class="bi bi-chevron-up"></i>
+              </button>
+              {% else %}
+              <span style="height:24px;"></span>
+              {% endif %}
+              {% if not forloop.last %}
+              <button type="button" class="btn btn-outline-secondary sort-btn item-move-down"
+                      data-brand-pk="{{ brand.pk }}" data-item-pk="{{ item.pk }}"
+                      title="Move down">
+                <i class="bi bi-chevron-down"></i>
+              </button>
+              {% else %}
+              <span style="height:24px;"></span>
+              {% endif %}
+            </div>
+          </td>
           <td>
             <div class="fw-medium">{{ item.name }}</div>
             <!-- Mobile: show code + status under name -->
@@ -162,4 +191,100 @@
 </div>
 {% endif %}
 
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+
+  function getCsrfToken() {
+    var m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+  }
+
+  // Re-render the table rows after a successful sort move
+  function renderItems(items) {
+    var tbody = document.getElementById('items-tbody');
+    if (!tbody) return;
+
+    var total = items.length;
+    var rows = items.map(function (item, idx) {
+      var upBtn = idx > 0
+        ? '<button type="button" class="btn btn-outline-secondary sort-btn item-move-up" ' +
+          'data-brand-pk="{{ brand.pk }}" data-item-pk="' + item.id + '" title="Move up">' +
+          '<i class="bi bi-chevron-up"></i></button>'
+        : '<span style="height:24px;"></span>';
+
+      var downBtn = idx < total - 1
+        ? '<button type="button" class="btn btn-outline-secondary sort-btn item-move-down" ' +
+          'data-brand-pk="{{ brand.pk }}" data-item-pk="' + item.id + '" title="Move down">' +
+          '<i class="bi bi-chevron-down"></i></button>'
+        : '<span style="height:24px;"></span>';
+
+      var activeLabel = item.is_active
+        ? '<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>'
+        : '<span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>';
+
+      return '<tr data-item-id="' + item.id + '">' +
+        '<td class="text-center">' +
+          '<div class="d-flex flex-column align-items-center gap-1">' + upBtn + downBtn + '</div>' +
+        '</td>' +
+        '<td><div class="fw-medium">' + escapeHtml(item.name) + '</div></td>' +
+        '<td class="d-none d-sm-table-cell"><span class="font-monospace small">' + escapeHtml(item.item_code) + '</span></td>' +
+        '<td class="d-none d-md-table-cell text-muted small">' + (item.sku_number || '—') + '</td>' +
+        '<td class="d-none d-sm-table-cell text-center">' + activeLabel + '</td>' +
+        '<td class="text-end">' +
+          '<div class="d-flex gap-1 justify-content-end flex-wrap">' +
+            '<a href="/brands/{{ brand.pk }}/items/' + item.id + '/edit/" class="btn btn-outline-secondary btn-sm">' +
+              '<i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit' +
+            '</a>' +
+          '</div>' +
+        '</td>' +
+      '</tr>';
+    });
+
+    tbody.innerHTML = rows.join('');
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // Event delegation for move up/down buttons
+  document.addEventListener('click', function (e) {
+    var upBtn = e.target.closest('.item-move-up');
+    var downBtn = e.target.closest('.item-move-down');
+    var btn = upBtn || downBtn;
+    if (!btn) return;
+
+    var brandPk = btn.dataset.brandPk;
+    var itemPk  = btn.dataset.itemPk;
+    var dir = upBtn ? 'move-up' : 'move-down';
+    var url = '/brands/' + brandPk + '/items/' + itemPk + '/' + dir + '/';
+
+    btn.disabled = true;
+
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': getCsrfToken(),
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.items) {
+        renderItems(data.items);
+      }
+    })
+    .catch(function () {
+      btn.disabled = false;
+    });
+  });
+
+})();
+</script>
 {% endblock %}

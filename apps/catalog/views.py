@@ -2,6 +2,7 @@
 Catalog views: Brand and Item CRUD.
 Supplier Admin only.
 """
+from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
@@ -95,7 +96,7 @@ def brand_detail(request, pk):
         return denied
 
     brand = get_object_or_404(Brand, pk=pk, company=request.user.company)
-    items = brand.items.order_by('item_code')
+    items = list(brand.items.order_by('sort_order', 'name'))
 
     return render(request, 'catalog/brand_detail.html', {
         'brand': brand,
@@ -194,4 +195,102 @@ def item_toggle(request, brand_pk, pk):
     return render(request, 'catalog/item_toggle_confirm.html', {
         'item': item,
         'brand': brand,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Item sort order AJAX endpoints
+# ---------------------------------------------------------------------------
+
+@login_required
+def item_move_up(request, brand_pk, pk):
+    """
+    POST: Move an item one position up in its brand's sort order.
+
+    Finds the item immediately before this one (lower sort_order or same
+    sort_order but earlier by ID) and swaps sort_order values.
+    Returns JSON with updated items list for the brand.
+    """
+    denied = _require_supplier_admin(request)
+    if denied:
+        return JsonResponse({'error': 'Permission denied.'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required.'}, status=405)
+
+    brand = get_object_or_404(Brand, pk=brand_pk, company=request.user.company)
+    item = get_object_or_404(Item, pk=pk, brand=brand)
+
+    items = list(brand.items.order_by('sort_order', 'name', 'pk'))
+    idx = next((i for i, x in enumerate(items) if x.pk == item.pk), None)
+
+    if idx is None or idx == 0:
+        return JsonResponse({'error': 'Item is already first.'}, status=400)
+
+    prev_item = items[idx - 1]
+
+    # Swap sort_order values; if equal, assign distinct values
+    a_order, b_order = prev_item.sort_order, item.sort_order
+    if a_order == b_order:
+        # Assign sequential values to maintain distinct ordering
+        prev_item.sort_order = idx - 1
+        item.sort_order = idx
+    else:
+        prev_item.sort_order, item.sort_order = b_order, a_order
+
+    prev_item.save(update_fields=['sort_order'])
+    item.save(update_fields=['sort_order'])
+
+    return _items_json_response(brand)
+
+
+@login_required
+def item_move_down(request, brand_pk, pk):
+    """
+    POST: Move an item one position down in its brand's sort order.
+    """
+    denied = _require_supplier_admin(request)
+    if denied:
+        return JsonResponse({'error': 'Permission denied.'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required.'}, status=405)
+
+    brand = get_object_or_404(Brand, pk=brand_pk, company=request.user.company)
+    item = get_object_or_404(Item, pk=pk, brand=brand)
+
+    items = list(brand.items.order_by('sort_order', 'name', 'pk'))
+    idx = next((i for i, x in enumerate(items) if x.pk == item.pk), None)
+
+    if idx is None or idx >= len(items) - 1:
+        return JsonResponse({'error': 'Item is already last.'}, status=400)
+
+    next_item = items[idx + 1]
+
+    a_order, b_order = item.sort_order, next_item.sort_order
+    if a_order == b_order:
+        item.sort_order = idx
+        next_item.sort_order = idx + 1
+    else:
+        item.sort_order, next_item.sort_order = b_order, a_order
+
+    item.save(update_fields=['sort_order'])
+    next_item.save(update_fields=['sort_order'])
+
+    return _items_json_response(brand)
+
+
+def _items_json_response(brand):
+    """Return JSON list of items in the brand, ordered by sort_order."""
+    items = list(brand.items.order_by('sort_order', 'name', 'pk'))
+    return JsonResponse({
+        'items': [
+            {
+                'id': item.pk,
+                'name': item.name,
+                'item_code': item.item_code,
+                'sku_number': item.sku_number or '',
+                'is_active': item.is_active,
+                'sort_order': item.sort_order,
+            }
+            for item in items
+        ]
     })

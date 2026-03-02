@@ -107,7 +107,7 @@ def _get_items_by_brand(company):
     items_qs = (
         Item.objects.filter(brand__in=brand_pks, is_active=True)
         .select_related('brand')
-        .order_by('brand__name', 'name')
+        .order_by('brand__name', 'sort_order', 'name')
     )
     result = []
     for brand_name, brand_items in groupby(items_qs, key=lambda x: x.brand.name):
@@ -392,7 +392,7 @@ def event_detail(request, pk):
 
     tasting_items_by_brand = None
     if event.event_type == Event.EventType.TASTING:
-        items_qs = event.items.select_related('brand').order_by('brand__name', 'name')
+        items_qs = event.items.select_related('brand').order_by('brand__name', 'sort_order', 'name')
         tasting_items_by_brand = [
             (brand_name, list(brand_items))
             for brand_name, brand_items in groupby(items_qs, key=lambda x: x.brand.name)
@@ -412,7 +412,7 @@ def event_detail(request, pk):
             r.item_id: r
             for r in EventItemRecap.objects.filter(event=event)
         }
-        for item in event.items.select_related('brand').order_by('brand__name', 'name'):
+        for item in event.items.select_related('brand').order_by('brand__name', 'sort_order', 'name'):
             items_with_recaps.append((item, existing_recaps.get(item.pk)))
 
     photos = event.photos.all() if show_recap else []
@@ -743,7 +743,7 @@ def _save_recap_data(request, event):
         event.save(update_fields=update_fields)
 
         # Part 2 — Per item recap
-        for item in event.items.all():
+        for item in event.items.select_related('brand').order_by('brand__name', 'sort_order', 'name'):
             price_str = request.POST.get(f'shelf_price_{item.pk}', '').strip()
             sold_str = request.POST.get(f'bottles_sold_{item.pk}', '').strip()
             samples_str = request.POST.get(f'bottles_samples_{item.pk}', '').strip()
