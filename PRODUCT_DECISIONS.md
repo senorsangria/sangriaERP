@@ -281,6 +281,7 @@ Searchable list for one-off or exception assignments
 | Phase 10.3.1 | Event Detail UI Reorganization & Admin Event Flow Fix | ✅ Complete |
 | Phase 10.3.2 | Account-Item Association (models + import) | ✅ Complete |
 | Phase 10.3.3 | Event Recap Form (Tasting + Festival) | ✅ Complete |
+| Phase 10.3.3 Tweaks | Festival→Special Event, Sort Order, Revert Complete, Account Mgmt | 🔄 In Progress |
 | Phase 10.4 | Expense Management | ⬜ Pending |
 | Phase 10.5 | Event Export | ⬜ Pending |
 
@@ -411,6 +412,19 @@ Searchable list for one-off or exception assignments
 - Item Code must be unique within a Brand
 - Existing seed data (Señor Sangria, Backyard Barrel Co)
   is editable through these interfaces
+
+### Item Sort Order
+- Item has a sort_order field (PositiveIntegerField, default=0)
+- Sort order is per-brand — each brand maintains its own sequence
+- Items are sorted by brand name first, then by sort_order within
+  each brand, in all display contexts:
+  * Event Detail items list
+  * Recap form per-item section
+  * Event Create items multi-select optgroups
+  * Account Detail items display
+- Brand management UI shows a Sort Order column with up/down arrow
+  buttons for AJAX reordering without page reload
+- First item in a brand's list has no up arrow; last has no down arrow
 
 ### Distributor Management
 - Full CRUD for Distributors
@@ -552,8 +566,10 @@ Three event types, each drives different behavior:
 
 1. Tasting — full recap required, account required,
    items selection required
-2. Festival — simplified recap (comment box + expenses),
-   account required
+2. Special Event — simplified recap (comment box + expenses),
+   account required. Internal model choice value is 'special_event'.
+   Previously called 'Festival' (internal value 'festival'); renamed
+   to Special Event and all existing 'festival' values migrated.
 3. Admin — no recap, no account required, captures hours
    for compensation purposes
 
@@ -624,6 +640,14 @@ Six statuses in order:
    the recap; revision_note field captures what needs to be fixed
 6. Complete — event creator has reviewed recap and marked event
    as complete
+
+### Revert Completed Events
+- Completed events can be reverted to Recap Submitted by Supplier Admin,
+  Sales Manager, and the assigned Event Manager on that specific event
+- For all event types (Tasting, Special Event, Admin): Complete → Recap Submitted
+- Uses a confirmation modal before executing the revert
+- Endpoint: POST /events/<id>/revert-complete/
+- After revert, redirects to the event detail page with a success message
 
 Admin events follow a simpler flow:
 Draft → Recap Submitted → Complete (no recap step, no Scheduled)
@@ -731,6 +755,28 @@ Admin:
 - Edit button hidden in list and detail views
 - Server-side guard prevents direct URL access to edit page for imported accounts
 - Explanatory note shown on detail page
+
+### Account Deletion
+- Only manually created accounts (auto_created=False) can be deleted
+- Before deleting, check for associated data: events, AccountItem records,
+  EventPhoto records
+- If any associated data exists, deletion is blocked with a clear error message
+  listing what data is blocking it
+- If no associated data exists, deletion requires confirmation modal
+- Imported accounts (auto_created=True) do not get a delete option
+
+### Account Deactivation
+- Any account (manual or imported) can be deactivated regardless of associated data
+- Deactivation sets the account to inactive (is_active=False)
+- A deactivated account can be reactivated from the same detail page
+- Button label toggles between "Deactivate" and "Reactivate" based on current status
+- Confirmation modal required before deactivating
+
+### Sales Import — Inactive Account Reactivation
+- If an inactive imported account appears in a sales import, it is automatically
+  reactivated (is_active set to True)
+- The ImportBatch summary logs a count of accounts_reactivated
+- The batch detail page surfaces reactivated accounts alongside auto-created accounts
 
 ### Admin Event Rules
 - Start time not captured for admin events
@@ -1123,6 +1169,13 @@ Account Detail will eventually display photos associated with that account, sour
 from event recaps. Photos are associated to both the event and the account at the
 time of recap submission. No timeline or phase assigned.
 
+### Account Detail — Associated Items Display
+Account Detail displays associated items grouped by brand, showing item name,
+current price (as currency, or "No price recorded" if null), and date first
+associated. Items sorted by brand name then item sort_order within each brand.
+If no AccountItem records exist, shows empty state message. Section is read-only.
+(Built in the Phase 10.3.3 tweaks session.)
+
 ---
 
 ## Phase 10.3.1 — Event Detail UI Reorganization & Admin Event Flow Fix
@@ -1154,7 +1207,8 @@ time of recap submission. No timeline or phase assigned.
 
 **Items section**
 - Items to be Sampled visible during Draft and Scheduled status
-- Hidden once recap workflow is active (Recap Submitted, Revision Requested, Complete)
+- Hidden once recap workflow is active (Recap In Progress, Recap Submitted,
+  Revision Requested, Complete)
 
 ### Admin Event Flow Fix
 - Releasing an Admin event sends it directly to Recap Submitted (skips Scheduled)
@@ -1317,8 +1371,8 @@ tasting event recap (shelf price capture per item per account).
 ### Save / Submit / Unlock Workflow
 - **Save**: recap data written; if Scheduled → Recap In Progress; else status unchanged;
   photos uploaded; returns to recap form with success message
-- **Submit**: same as Save but status → Recap Submitted; validates minimum fields
-  (at least one overall note or photo for Tasting and Festival); redirects to event detail
+- **Submit**: same as Save but status → Recap Submitted; no minimum field requirement —
+  submission is allowed with any combination of filled or empty fields; redirects to event detail
 - **Unlock**: Recap Submitted → Recap In Progress; available to Ambassador, Event Manager,
   and coverage-area users
 
@@ -1335,5 +1389,5 @@ Light red background (#fff5f5) applies to any event requiring user action:
 
 ---
 
-*Last updated: March 1, 2026*
+*Last updated: March 2, 2026*
 *Maintained by: Drink Up Life, Inc / productERP project team*
