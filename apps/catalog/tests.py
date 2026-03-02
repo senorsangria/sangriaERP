@@ -164,3 +164,85 @@ class ItemMoveDownTest(TestCase):
             reverse("item_move_down", args=[self.brand.pk, self.item_a.pk])
         )
         self.assertEqual(resp.status_code, 405)
+
+
+# ---------------------------------------------------------------------------
+# Sort order normalization — duplicate detection and fix
+# ---------------------------------------------------------------------------
+
+class SortOrderNormalizationTest(TestCase):
+    """
+    Verify that duplicate sort_order values are handled correctly:
+    - Page load normalizes duplicates
+    - A single up/down click with all-zero sort_orders moves exactly one position
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.brand = make_brand(self.company)
+        self.client = Client()
+        self.client.login(username="admin", password="testpass123")
+
+    def test_move_up_with_all_zero_sort_orders_moves_exactly_one_position(self):
+        """With all items at sort_order=0, one click moves exactly one step."""
+        a = make_item(self.brand, "Alpha", "AA", sort_order=0)
+        b = make_item(self.brand, "Beta",  "BB", sort_order=0)
+        c = make_item(self.brand, "Gamma", "GG", sort_order=0)
+
+        # Items displayed order by (sort_order, name): Alpha, Beta, Gamma
+        # Move Gamma up once — it should land at position 1 (before Beta), not position 0
+        resp = self.client.post(
+            reverse("item_move_up", args=[self.brand.pk, c.pk])
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        ids = [item["id"] for item in data["items"]]
+        # Expected order after one move: Alpha, Gamma, Beta
+        self.assertEqual(ids, [a.pk, c.pk, b.pk])
+
+    def test_move_down_with_all_zero_sort_orders_moves_exactly_one_position(self):
+        """With all items at sort_order=0, one down-click moves exactly one step."""
+        a = make_item(self.brand, "Alpha", "AA", sort_order=0)
+        b = make_item(self.brand, "Beta",  "BB", sort_order=0)
+        c = make_item(self.brand, "Gamma", "GG", sort_order=0)
+
+        # Items displayed order by (sort_order, name): Alpha, Beta, Gamma
+        # Move Alpha down once — it should be at position 1 (after Beta stays first)
+        resp = self.client.post(
+            reverse("item_move_down", args=[self.brand.pk, a.pk])
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        ids = [item["id"] for item in data["items"]]
+        # Expected order: Beta, Alpha, Gamma
+        self.assertEqual(ids, [b.pk, a.pk, c.pk])
+
+    def test_normalize_assigns_unique_sequential_sort_orders(self):
+        """After any move, every item in the brand has a unique sort_order."""
+        a = make_item(self.brand, "Alpha", "AA", sort_order=0)
+        b = make_item(self.brand, "Beta",  "BB", sort_order=0)
+        c = make_item(self.brand, "Gamma", "GG", sort_order=0)
+
+        self.client.post(
+            reverse("item_move_up", args=[self.brand.pk, c.pk])
+        )
+        a.refresh_from_db()
+        b.refresh_from_db()
+        c.refresh_from_db()
+        orders = [a.sort_order, b.sort_order, c.sort_order]
+        self.assertEqual(len(orders), len(set(orders)), "sort_order values must be unique after move")
+
+    def test_brand_detail_page_normalizes_duplicate_sort_orders(self):
+        """Brand detail page load fixes duplicate sort_order values."""
+        a = make_item(self.brand, "Alpha", "AA", sort_order=0)
+        b = make_item(self.brand, "Beta",  "BB", sort_order=0)
+        c = make_item(self.brand, "Gamma", "GG", sort_order=0)
+
+        self.client.get(reverse("brand_detail", args=[self.brand.pk]))
+
+        a.refresh_from_db()
+        b.refresh_from_db()
+        c.refresh_from_db()
+        orders = [a.sort_order, b.sort_order, c.sort_order]
+        self.assertEqual(len(orders), len(set(orders)), "page load must normalize duplicate sort_orders")

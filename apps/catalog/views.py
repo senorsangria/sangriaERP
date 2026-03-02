@@ -98,6 +98,11 @@ def brand_detail(request, pk):
     brand = get_object_or_404(Brand, pk=pk, company=request.user.company)
     items = list(brand.items.order_by('sort_order', 'name'))
 
+    # Normalize sort_order values if any duplicates exist (e.g. all items at 0)
+    sort_orders = [item.sort_order for item in items]
+    if len(sort_orders) != len(set(sort_orders)):
+        items = _normalize_sort_order(brand)
+
     return render(request, 'catalog/brand_detail.html', {
         'brand': brand,
         'items': items,
@@ -202,15 +207,23 @@ def item_toggle(request, brand_pk, pk):
 # Item sort order AJAX endpoints
 # ---------------------------------------------------------------------------
 
+def _normalize_sort_order(brand):
+    """
+    Assign clean sequential sort_order values (1, 2, 3...) to all items in
+    the brand based on their current (sort_order, name) ordering.  Saves each
+    item that changed and returns the refreshed ordered list.
+    """
+    items = list(brand.items.order_by('sort_order', 'name'))
+    for new_order, item in enumerate(items, start=1):
+        if item.sort_order != new_order:
+            item.sort_order = new_order
+            item.save(update_fields=['sort_order'])
+    return items
+
+
 @login_required
 def item_move_up(request, brand_pk, pk):
-    """
-    POST: Move an item one position up in its brand's sort order.
-
-    Finds the item immediately before this one (lower sort_order or same
-    sort_order but earlier by ID) and swaps sort_order values.
-    Returns JSON with updated items list for the brand.
-    """
+    """POST: Move an item one position up in its brand's sort order."""
     denied = _require_supplier_admin(request)
     if denied:
         return JsonResponse({'error': 'Permission denied.'}, status=403)
@@ -220,34 +233,24 @@ def item_move_up(request, brand_pk, pk):
     brand = get_object_or_404(Brand, pk=brand_pk, company=request.user.company)
     item = get_object_or_404(Item, pk=pk, brand=brand)
 
-    items = list(brand.items.order_by('sort_order', 'name', 'pk'))
+    items = list(brand.items.order_by('sort_order', 'name'))
     idx = next((i for i, x in enumerate(items) if x.pk == item.pk), None)
 
     if idx is None or idx == 0:
         return JsonResponse({'error': 'Item is already first.'}, status=400)
 
-    prev_item = items[idx - 1]
-
-    # Swap sort_order values; if equal, assign distinct values
-    a_order, b_order = prev_item.sort_order, item.sort_order
-    if a_order == b_order:
-        # Assign sequential values to maintain distinct ordering
-        prev_item.sort_order = idx - 1
-        item.sort_order = idx
-    else:
-        prev_item.sort_order, item.sort_order = b_order, a_order
-
-    prev_item.save(update_fields=['sort_order'])
-    item.save(update_fields=['sort_order'])
+    # Swap positions then re-normalise so every item has a unique sort_order
+    items[idx - 1], items[idx] = items[idx], items[idx - 1]
+    for new_order, it in enumerate(items, start=1):
+        it.sort_order = new_order
+        it.save(update_fields=['sort_order'])
 
     return _items_json_response(brand)
 
 
 @login_required
 def item_move_down(request, brand_pk, pk):
-    """
-    POST: Move an item one position down in its brand's sort order.
-    """
+    """POST: Move an item one position down in its brand's sort order."""
     denied = _require_supplier_admin(request)
     if denied:
         return JsonResponse({'error': 'Permission denied.'}, status=403)
@@ -257,30 +260,24 @@ def item_move_down(request, brand_pk, pk):
     brand = get_object_or_404(Brand, pk=brand_pk, company=request.user.company)
     item = get_object_or_404(Item, pk=pk, brand=brand)
 
-    items = list(brand.items.order_by('sort_order', 'name', 'pk'))
+    items = list(brand.items.order_by('sort_order', 'name'))
     idx = next((i for i, x in enumerate(items) if x.pk == item.pk), None)
 
     if idx is None or idx >= len(items) - 1:
         return JsonResponse({'error': 'Item is already last.'}, status=400)
 
-    next_item = items[idx + 1]
-
-    a_order, b_order = item.sort_order, next_item.sort_order
-    if a_order == b_order:
-        item.sort_order = idx
-        next_item.sort_order = idx + 1
-    else:
-        item.sort_order, next_item.sort_order = b_order, a_order
-
-    item.save(update_fields=['sort_order'])
-    next_item.save(update_fields=['sort_order'])
+    # Swap positions then re-normalise so every item has a unique sort_order
+    items[idx], items[idx + 1] = items[idx + 1], items[idx]
+    for new_order, it in enumerate(items, start=1):
+        it.sort_order = new_order
+        it.save(update_fields=['sort_order'])
 
     return _items_json_response(brand)
 
 
 def _items_json_response(brand):
     """Return JSON list of items in the brand, ordered by sort_order."""
-    items = list(brand.items.order_by('sort_order', 'name', 'pk'))
+    items = list(brand.items.order_by('sort_order', 'name'))
     return JsonResponse({
         'items': [
             {
