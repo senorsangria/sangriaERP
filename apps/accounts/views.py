@@ -183,8 +183,24 @@ def account_detail(request, pk):
     # Use default manager so inactive accounts remain viewable
     account = get_object_or_404(Account, pk=pk, company=request.user.company)
 
+    # Gather AccountItem records grouped by brand (brand name → sort_order → name)
+    account_items_qs = (
+        account.account_items
+        .select_related('item__brand')
+        .order_by('item__brand__name', 'item__sort_order', 'item__name')
+    )
+    items_by_brand = []
+    current_brand = None
+    for ai in account_items_qs:
+        brand = ai.item.brand
+        if brand != current_brand:
+            current_brand = brand
+            items_by_brand.append({'brand': brand, 'items': []})
+        items_by_brand[-1]['items'].append(ai)
+
     return render(request, 'accounts/account_detail.html', {
         'account': account,
+        'items_by_brand': items_by_brand,
     })
 
 

@@ -142,6 +142,68 @@
   </div>
 </div>
 
+<!-- Associated Items -->
+<div class="mb-4">
+  <h2 class="h5 fw-bold mb-3">Associated Items</h2>
+  {% if items_by_brand %}
+  <div class="card border-0 shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Item</th>
+            <th class="d-none d-sm-table-cell">Current Price</th>
+            <th class="d-none d-md-table-cell">First Associated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for group in items_by_brand %}
+          <tr class="table-secondary">
+            <td colspan="3" class="fw-semibold small text-muted py-1 px-3">
+              {{ group.brand.name }}
+            </td>
+          </tr>
+          {% for ai in group.items %}
+          <tr>
+            <td>
+              <div class="fw-medium">{{ ai.item.name }}</div>
+              <!-- Mobile: price + date under item name -->
+              <div class="d-sm-none mt-1 text-muted small">
+                {% if ai.current_price %}
+                ${{ ai.current_price }}
+                {% else %}
+                No price recorded
+                {% endif %}
+                &middot; {{ ai.date_first_associated|date:"m/d/y" }}
+              </div>
+            </td>
+            <td class="d-none d-sm-table-cell small">
+              {% if ai.current_price %}
+              ${{ ai.current_price }}
+              {% else %}
+              <span class="text-muted">No price recorded</span>
+              {% endif %}
+            </td>
+            <td class="d-none d-md-table-cell small text-muted">
+              {{ ai.date_first_associated|date:"m/d/y" }}
+            </td>
+          </tr>
+          {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card border-0 shadow-sm">
+    <div class="card-body text-center py-4 text-muted">
+      <i class="bi bi-upc fs-2 d-block mb-2"></i>
+      No items have been associated with this account yet.
+    </div>
+  </div>
+  {% endif %}
+</div>
+
 <!-- Events placeholder -->
 <div class="mb-4">
   <h2 class="h5 fw-bold mb-3">Events</h2>

@@ -195,7 +195,9 @@
       "Bash(git add -A && git diff --staged --stat)",
       "Bash(git commit -m \"$\\(cat <<'EOF'\nPhase 10.3.3 Step 6: Revert completed events\n\nAdd ability for Supplier Admin, Sales Manager, and the assigned Event\nManager to revert a Complete event back to Recap Submitted. Includes\nPOST endpoint, confirmation modal, and permission guard.\n\nCo-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py makemigrations imports --name=add_accounts_reactivated 2>&1)",
-      "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py migrate --run-syncdb 2>&1 | tail -5)"
+      "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py migrate --run-syncdb 2>&1 | tail -5)",
+      "Bash(git commit -m \"$\\(cat <<'EOF'\nPhase 10.3.3 Step 7: Account management — delete, deactivate, import reactivation\n\n- Account delete: POST endpoint for manual accounts; blocks if events,\n  account items, event photos, or sales records exist; confirmation modal\n- Account deactivate: remove auto_created restriction; now available for\n  all accounts \\(manual and imported\\); Bootstrap confirmation modal\n- Sales import: reactivate inactive accounts found in import data;\n  track accounts_reactivated count on ImportBatch; surface in\n  batch detail and success pages\n\nCo-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(PYTHONPATH=/home/runner/.local/lib/python3.13/site-packages python manage.py test --keepdb --verbosity=1 2>&1 | tail -10)"
     ]
   }
 }
