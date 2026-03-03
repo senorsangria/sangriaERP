@@ -405,8 +405,9 @@ def event_export_csv(request):
 
     CSV columns:
       Event Type, Event Status, Event Date, Event Duration, Account Name,
-      City, Samples Poured, [one column per distinct item sorted by brand
-      name then item sort_order within each brand — bottles sold]
+      City, Ambassador, Event Manager, Samples Poured, QR Codes Scanned,
+      [one column per distinct item sorted by brand name then item sort_order
+      within each brand — bottles sold], Recap Note
     """
     import csv
     from datetime import date as _date
@@ -436,7 +437,7 @@ def event_export_csv(request):
 
     # Fetch all events with related data in a single pass
     events = list(
-        qs.select_related('account')
+        qs.select_related('account', 'ambassador', 'event_manager')
         .prefetch_related('items__brand', 'item_recaps')
         .order_by('date', 'pk')
     )
@@ -467,8 +468,10 @@ def event_export_csv(request):
     # Header
     writer.writerow(
         ['Event Type', 'Event Status', 'Event Date', 'Event Duration',
-         'Account Name', 'City', 'Samples Poured']
+         'Account Name', 'City', 'Ambassador', 'Event Manager',
+         'Samples Poured', 'QR Codes Scanned']
         + [item.name for item in all_items]
+        + ['Recap Note']
     )
 
     # Data rows
@@ -482,6 +485,17 @@ def event_export_csv(request):
 
         date_val = event.date.strftime('%m/%d/%y') if event.date else ''
 
+        ambassador_name = event.ambassador.get_full_name() if event.ambassador else ''
+        event_mgr_name  = event.event_manager.get_full_name() if event.event_manager else ''
+
+        # Recap Note: use recap_notes for Tasting, recap_comment for Special Event
+        if event.event_type == Event.EventType.TASTING:
+            recap_note = event.recap_notes or ''
+        elif event.event_type == Event.EventType.SPECIAL_EVENT:
+            recap_note = event.recap_comment or ''
+        else:
+            recap_note = ''
+
         row = [
             event.get_event_type_display(),
             event.get_status_display(),
@@ -489,7 +503,10 @@ def event_export_csv(request):
             event.duration_display,
             acct_name,
             city,
+            ambassador_name,
+            event_mgr_name,
             event.recap_samples_poured if event.recap_samples_poured is not None else '',
+            event.recap_qr_codes_scanned if event.recap_qr_codes_scanned is not None else '',
         ]
 
         event_recaps    = recap_lookup.get(event.pk, {})
@@ -504,6 +521,7 @@ def event_export_csv(request):
                 else:
                     row.append(recap.bottles_sold)
 
+        row.append(recap_note)
         writer.writerow(row)
 
     return response

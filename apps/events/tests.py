@@ -1178,3 +1178,114 @@ class UnreleasePermissionTest(TestCase):
         self.assertRedirects(resp, reverse("event_detail", args=[event.pk]))
         event.refresh_from_db()
         self.assertEqual(event.status, Event.Status.DRAFT)  # unchanged
+
+# ---------------------------------------------------------------------------
+# CSV Export column tests
+# ---------------------------------------------------------------------------
+
+class CsvExportColumnsTest(TestCase):
+    """
+    Verify the CSV export includes Ambassador, Event Manager, QR Codes Scanned,
+    and Recap Note columns in the correct positions.
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.amb = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.amb.first_name = "Jane"
+        self.amb.last_name = "Smith"
+        self.amb.save()
+        self.mgr = make_user(self.company, User.Role.SALES_MANAGER, "mgr")
+        self.mgr.first_name = "Bob"
+        self.mgr.last_name = "Jones"
+        self.mgr.save()
+        self.account = make_account(self.company)
+        self.client = Client()
+        self.client.login(username="admin", password="testpass123")
+
+    def _get_csv(self):
+        resp = self.client.get(reverse("event_export_csv"))
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        import csv, io
+        reader = csv.reader(io.StringIO(content))
+        return list(reader)
+
+    def test_header_includes_new_columns(self):
+        rows = self._get_csv()
+        header = rows[0]
+        self.assertIn('Ambassador', header)
+        self.assertIn('Event Manager', header)
+        self.assertIn('QR Codes Scanned', header)
+        self.assertIn('Recap Note', header)
+
+    def test_column_order(self):
+        rows = self._get_csv()
+        header = rows[0]
+        city_idx       = header.index('City')
+        amb_idx        = header.index('Ambassador')
+        mgr_idx        = header.index('Event Manager')
+        samples_idx    = header.index('Samples Poured')
+        qr_idx         = header.index('QR Codes Scanned')
+        recap_idx      = header.index('Recap Note')
+        self.assertEqual(amb_idx, city_idx + 1)
+        self.assertEqual(mgr_idx, amb_idx + 1)
+        self.assertEqual(samples_idx, mgr_idx + 1)
+        self.assertEqual(qr_idx, samples_idx + 1)
+        self.assertEqual(recap_idx, len(header) - 1)  # last column
+
+    def test_ambassador_and_manager_names_in_row(self):
+        Event.objects.create(
+            company=self.company,
+            created_by=self.admin,
+            event_type=Event.EventType.TASTING,
+            status=Event.Status.COMPLETE,
+            ambassador=self.amb,
+            event_manager=self.mgr,
+            account=self.account,
+            date=date(2026, 5, 1),
+            recap_samples_poured=10,
+            recap_qr_codes_scanned=5,
+            recap_notes="Great event",
+        )
+        rows = self._get_csv()
+        header = rows[0]
+        data = rows[1]
+        self.assertEqual(data[header.index('Ambassador')], 'Jane Smith')
+        self.assertEqual(data[header.index('Event Manager')], 'Bob Jones')
+        self.assertEqual(data[header.index('QR Codes Scanned')], '5')
+        self.assertEqual(data[header.index('Recap Note')], 'Great event')
+
+    def test_blank_ambassador_and_manager_when_unassigned(self):
+        Event.objects.create(
+            company=self.company,
+            created_by=self.admin,
+            event_type=Event.EventType.ADMIN,
+            status=Event.Status.COMPLETE,
+            ambassador=None,
+            event_manager=None,
+            date=date(2026, 5, 2),
+        )
+        rows = self._get_csv()
+        header = rows[0]
+        data = rows[1]
+        self.assertEqual(data[header.index('Ambassador')], '')
+        self.assertEqual(data[header.index('Event Manager')], '')
+        self.assertEqual(data[header.index('QR Codes Scanned')], '')
+        self.assertEqual(data[header.index('Recap Note')], '')
+
+    def test_special_event_recap_note_uses_recap_comment(self):
+        Event.objects.create(
+            company=self.company,
+            created_by=self.admin,
+            event_type=Event.EventType.SPECIAL_EVENT,
+            status=Event.Status.COMPLETE,
+            account=self.account,
+            date=date(2026, 5, 3),
+            recap_comment="Festival was great",
+        )
+        rows = self._get_csv()
+        header = rows[0]
+        data = rows[1]
+        self.assertEqual(data[header.index('Recap Note')], 'Festival was great')
