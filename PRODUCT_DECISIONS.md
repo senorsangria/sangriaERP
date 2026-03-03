@@ -569,6 +569,14 @@ is platform-agnostic)
 - Production: Cloudflare R2 (S3-compatible, zero egress fees)
 - Swap is a single settings change, no code rewrite needed
 
+### Media File Serving in Development
+- Django does not serve `/media/` files by default
+- `producterp/urls.py` adds `static(MEDIA_URL, document_root=MEDIA_ROOT)` when
+  `USE_OBJECT_STORAGE` is not set to true
+- This requires `DEBUG=True` in the environment (set in `.env` for local dev)
+- In production, `USE_OBJECT_STORAGE=true` and files are served from R2 directly;
+  the `static()` route is not added
+
 ### Event Types
 Three event types, each drives different behavior:
 
@@ -656,6 +664,17 @@ Six statuses in order:
 - Uses a confirmation modal before executing the revert
 - Endpoint: POST /events/<id>/revert-complete/
 - After revert, redirects to the event detail page with a success message
+
+### Revert Scheduled Events to Draft
+- Scheduled events can be moved back to Draft by Supplier Admin,
+  Sales Manager, or the assigned Event Manager on that specific event
+- Status transition: Scheduled → Draft
+- Uses a Bootstrap confirmation modal before executing (not a browser confirm())
+- Endpoint: POST /events/<id>/unrelease/
+- Permission enforced both in view (per-event check) and template (`can_unrelease`
+  context variable); Ambassador Manager / Territory Manager who is not the
+  assigned event_manager are blocked
+- After transition, redirects to the event detail page with a success message
 
 Admin events follow a simpler flow:
 Draft → Recap Submitted → Complete (no recap step, no Scheduled)
@@ -1444,11 +1463,23 @@ Light red background (#fff5f5) applies to any event requiring user action:
 - Access gated to viewer roles (same as event list); Distributor Contact
   is excluded
 - File download: `events_export_YYYY-MM-DD.csv`
-- Static columns: Event Type, Event Status, Event Date (MM/DD/YY),
-  Event Duration, Account Name ("Admin Hours" for admin events), City,
-  Samples Poured
-- Dynamic columns: one column per distinct item that appears across the
-  filtered events, sorted by brand name then item sort_order then item name
+
+**Final column order:**
+1. Event Type
+2. Event Status
+3. Event Date (MM/DD/YY)
+4. Event Duration
+5. Account Name ("Admin Hours" for Admin events)
+6. City
+7. Ambassador (full name of assigned ambassador, blank if none)
+8. Event Manager (full name of assigned event manager, blank if none)
+9. Samples Poured
+10. QR Codes Scanned
+11. [one column per distinct item — bottles sold; sorted by brand name
+    then item sort_order then item name]
+12. Recap Note (recap_notes for Tasting; recap_comment for Special Event;
+    blank for Admin or if empty)
+
 - Cell values for item columns: bottles sold (integer) or blank if the item
   was not included in that event or bottles sold was not recorded
 - Filter logic shared via `_apply_event_filters(qs, filters)` helper used
@@ -1456,5 +1487,5 @@ Light red background (#fff5f5) applies to any event requiring user action:
 
 ---
 
-*Last updated: March 2, 2026 (Phase 10.3.3 Tweaks session 2: sort order normalization, photo delete, account active/inactive filter, event list CSV export)*
+*Last updated: March 3, 2026 (Phase 10.3.3 Tweaks session 3: media file serving config, Scheduled→Draft revert permissions + Bootstrap modal, CSV export column updates — Ambassador, Event Manager, QR Codes Scanned, Recap Note)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
