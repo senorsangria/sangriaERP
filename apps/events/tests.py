@@ -1289,3 +1289,125 @@ class CsvExportColumnsTest(TestCase):
         header = rows[0]
         data = rows[1]
         self.assertEqual(data[header.index('Recap Note')], 'Festival was great')
+
+# ---------------------------------------------------------------------------
+# Revert Recap Submitted → Scheduled (destructive)
+# ---------------------------------------------------------------------------
+
+class RevertRecapSubmittedTest(TestCase):
+    """
+    POST /events/<pk>/revert-recap-submitted/ should:
+    - Allow: Supplier Admin, Sales Manager, assigned Event Manager
+    - Block: all other users
+    - Delete EventItemRecap and EventPhoto records
+    - Clear recap fields on the Event
+    - Revert status to Scheduled
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.sales = make_user(self.company, User.Role.SALES_MANAGER, "sales")
+        self.amb_mgr = make_user(self.company, User.Role.AMBASSADOR_MANAGER, "ambmgr")
+        self.amb = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.account = make_account(self.company)
+        self.item = make_item(self.company)
+
+    def _make_recap_submitted(self, event_manager=None):
+        em = event_manager or self.admin
+        event = Event.objects.create(
+            company=self.company,
+            created_by=self.admin,
+            event_manager=em,
+            event_type=Event.EventType.TASTING,
+            status=Event.Status.RECAP_SUBMITTED,
+            ambassador=self.amb,
+            account=self.account,
+            date=date(2026, 6, 1),
+            recap_samples_poured=25,
+            recap_qr_codes_scanned=10,
+            recap_notes="Great event",
+            recap_comment="Some comment",
+        )
+        return event
+
+    def _post(self, username, event):
+        c = Client()
+        c.login(username=username, password="testpass123")
+        return c.post(reverse("event_revert_recap_submitted", args=[event.pk]))
+
+    def test_supplier_admin_can_revert(self):
+        event = self._make_recap_submitted()
+        resp = self._post("admin", event)
+        self.assertRedirects(resp, reverse("event_detail", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.SCHEDULED)
+
+    def test_sales_manager_can_revert(self):
+        event = self._make_recap_submitted()
+        resp = self._post("sales", event)
+        self.assertRedirects(resp, reverse("event_detail", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.SCHEDULED)
+
+    def test_assigned_event_manager_can_revert(self):
+        """An Ambassador Manager who is the assigned event_manager can revert."""
+        event = self._make_recap_submitted(event_manager=self.amb_mgr)
+        resp = self._post("ambmgr", event)
+        self.assertRedirects(resp, reverse("event_detail", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.SCHEDULED)
+
+    def test_ambassador_cannot_revert(self):
+        event = self._make_recap_submitted()
+        resp = self._post("amb", event)
+        self.assertEqual(resp.status_code, 403)
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.RECAP_SUBMITTED)
+
+    def test_wrong_status_rejected(self):
+        """Cannot revert a non-Recap-Submitted event."""
+        event = Event.objects.create(
+            company=self.company,
+            created_by=self.admin,
+            event_manager=self.admin,
+            event_type=Event.EventType.TASTING,
+            status=Event.Status.COMPLETE,
+            ambassador=self.amb,
+            account=self.account,
+            date=date(2026, 6, 1),
+        )
+        resp = self._post("admin", event)
+        self.assertRedirects(resp, reverse("event_detail", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.COMPLETE)  # unchanged
+
+    def test_recap_fields_cleared(self):
+        event = self._make_recap_submitted()
+        self._post("admin", event)
+        event.refresh_from_db()
+        self.assertIsNone(event.recap_samples_poured)
+        self.assertIsNone(event.recap_qr_codes_scanned)
+        self.assertEqual(event.recap_notes, '')
+        self.assertEqual(event.recap_comment, '')
+
+    def test_event_item_recaps_deleted(self):
+        from apps.events.models import EventItemRecap
+        event = self._make_recap_submitted()
+        EventItemRecap.objects.create(
+            event=event, item=self.item, bottles_sold=5, shelf_price='12.99'
+        )
+        self.assertEqual(event.item_recaps.count(), 1)
+        self._post("admin", event)
+        self.assertEqual(EventItemRecap.objects.filter(event=event).count(), 0)
+
+    def test_event_photos_db_records_deleted(self):
+        from apps.events.models import EventPhoto
+        event = self._make_recap_submitted()
+        EventPhoto.objects.create(
+            event=event, account=self.account,
+            file_url='/media/events/1/test.jpg',
+        )
+        self.assertEqual(event.photos.count(), 1)
+        self._post("admin", event)
+        self.assertEqual(EventPhoto.objects.filter(event=event).count(), 0)
