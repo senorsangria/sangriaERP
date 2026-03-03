@@ -1089,3 +1089,92 @@ class EventPhotoDeleteTest(TestCase):
         # Sales Manager without coverage area cannot recap, so 403
         self.assertEqual(resp.status_code, 403)
         self.assertTrue(self.EventPhoto.objects.filter(pk=self.photo.pk).exists())
+
+# ---------------------------------------------------------------------------
+# Unrelease (Scheduled → Draft) permission tests
+# ---------------------------------------------------------------------------
+
+class UnreleasePermissionTest(TestCase):
+    """
+    POST /events/<pk>/unrelease/ should be allowed for Supplier Admin,
+    Sales Manager, and the assigned Event Manager; blocked for all others.
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.sales = make_user(self.company, User.Role.SALES_MANAGER, "sales")
+        self.amb_mgr = make_user(self.company, User.Role.AMBASSADOR_MANAGER, "ambmgr")
+        self.amb = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.account = make_account(self.company)
+
+    def _make_scheduled(self, event_manager=None):
+        em = event_manager or self.admin
+        return Event.objects.create(
+            company=self.company,
+            created_by=self.admin,
+            event_manager=em,
+            event_type=Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            ambassador=self.amb,
+            account=self.account,
+            date=date(2026, 6, 1),
+        )
+
+    def _post(self, username, event):
+        c = Client()
+        c.login(username=username, password="testpass123")
+        return c.post(reverse("event_unrelease", args=[event.pk]))
+
+    def test_supplier_admin_can_unrelease(self):
+        event = self._make_scheduled()
+        resp = self._post("admin", event)
+        self.assertRedirects(resp, reverse("event_detail", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.DRAFT)
+
+    def test_sales_manager_can_unrelease(self):
+        event = self._make_scheduled()
+        resp = self._post("sales", event)
+        self.assertRedirects(resp, reverse("event_detail", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.DRAFT)
+
+    def test_assigned_event_manager_can_unrelease(self):
+        """An Ambassador Manager who is the assigned event_manager can unrelease."""
+        event = self._make_scheduled(event_manager=self.amb_mgr)
+        resp = self._post("ambmgr", event)
+        self.assertRedirects(resp, reverse("event_detail", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.DRAFT)
+
+    def test_non_assigned_amb_manager_cannot_unrelease(self):
+        """An Ambassador Manager who is NOT the event_manager cannot see the event (404)."""
+        other_mgr = make_user(self.company, User.Role.AMBASSADOR_MANAGER, "othermgr")
+        event = self._make_scheduled(event_manager=self.admin)
+        resp = self._post("othermgr", event)
+        # Event is not visible to this user → 404 (also prevents the action)
+        self.assertEqual(resp.status_code, 404)
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.SCHEDULED)
+
+    def test_ambassador_cannot_unrelease(self):
+        event = self._make_scheduled()
+        resp = self._post("amb", event)
+        self.assertEqual(resp.status_code, 403)
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.SCHEDULED)
+
+    def test_wrong_status_rejected(self):
+        """Trying to unrelease a Draft event returns an error."""
+        event = make_event(
+            self.company, self.admin, Event.EventType.TASTING,
+            status=Event.Status.DRAFT,
+            ambassador=self.amb,
+            account=self.account,
+            date=date(2026, 6, 1),
+        )
+        resp = self._post("admin", event)
+        self.assertRedirects(resp, reverse("event_detail", args=[event.pk]))
+        event.refresh_from_db()
+        self.assertEqual(event.status, Event.Status.DRAFT)  # unchanged

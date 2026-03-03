@@ -532,6 +532,11 @@ def event_detail(request, pk):
         user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
         or (event.event_manager_id and event.event_manager_id == user.pk)
     )
+    # Move Scheduled → Draft: same permission set as revert
+    can_unrelease = (
+        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
+        or (event.event_manager_id and event.event_manager_id == user.pk)
+    )
 
     tasting_items_by_brand = None
     if event.event_type == Event.EventType.TASTING:
@@ -566,6 +571,7 @@ def event_detail(request, pk):
         'can_action':             can_action,
         'can_recap':              can_recap,
         'can_revert':             can_revert,
+        'can_unrelease':          can_unrelease,
         'recap_active':           recap_active,
         'show_recap':             show_recap,
         'tasting_items_by_brand': tasting_items_by_brand,
@@ -800,15 +806,26 @@ def event_request_revision(request, pk):
 
 @login_required
 def event_unrelease(request, pk):
-    """POST: Scheduled → Draft"""
-    if request.user.role not in _ACTION_ROLES:
-        return render(request, '403.html', status=403)
+    """
+    POST: Scheduled → Draft.
+
+    Access: Supplier Admin, Sales Manager, or the assigned Event Manager
+    on this specific event.
+    """
     if request.method != 'POST':
         return redirect('event_detail', pk=pk)
 
     company = request.user.company
     visible = _get_visible_events(request.user)
     event = get_object_or_404(visible, pk=pk, company=company)
+
+    user = request.user
+    can_unrelease = (
+        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
+        or (event.event_manager_id and event.event_manager_id == user.pk)
+    )
+    if not can_unrelease:
+        return render(request, '403.html', status=403)
 
     if event.status != Event.Status.SCHEDULED:
         messages.error(request, 'Only Scheduled events can be moved back to Draft.')

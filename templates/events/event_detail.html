@@ -421,17 +421,6 @@
       </button>
       {% endif %}
 
-      <!-- Scheduled: Move Back to Draft (Tasting/Festival only — Admin skips Scheduled) -->
-      {% if event.status == 'scheduled' %}
-      <form method="post" action="{% url 'event_unrelease' event.pk %}">
-        {% csrf_token %}
-        <button type="submit" class="btn btn-outline-secondary"
-                onclick="return confirm('Move this event back to Draft status?')">
-          <i class="bi bi-arrow-counterclockwise me-1"></i>Move Back to Draft
-        </button>
-      </form>
-      {% endif %}
-
       <!-- Recap Submitted: Approve + optional revision (not for Admin) -->
       {% if event.status == 'recap_submitted' %}
       <form method="post" action="{% url 'event_approve' event.pk %}">
@@ -449,6 +438,18 @@
       {% endif %}
       {% endif %}
 
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Scheduled: Move Back to Draft -->
+  {% if can_unrelease and event.status == 'scheduled' %}
+  <div class="col-12">
+    <div class="d-flex gap-2 flex-wrap">
+      <button type="button" class="btn btn-outline-secondary"
+              data-bs-toggle="modal" data-bs-target="#unreleaseModal">
+        <i class="bi bi-arrow-counterclockwise me-1"></i>Move Back to Draft
+      </button>
     </div>
   </div>
   {% endif %}
@@ -531,6 +532,40 @@
           </button>
         </div>
       </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ================================================================
+     Unrelease confirmation modal (Scheduled → Draft)
+     ================================================================ -->
+{% if can_unrelease and event.status == 'scheduled' %}
+<div class="modal fade" id="unreleaseModal" tabindex="-1" aria-labelledby="unreleaseModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="unreleaseModalLabel">
+          <i class="bi bi-arrow-counterclockwise me-2"></i>Move Back to Draft
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to move this event back to <strong>Draft</strong> status?</p>
+        <p class="text-muted small mb-0">
+          {% if event.account %}{{ event.account.name }}{% else %}Admin Event{% endif %}
+          {% if event.date %} &mdash; {{ event.date|date:"m/d/y" }}{% endif %}
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <form method="post" action="{% url 'event_unrelease' event.pk %}" class="d-inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-secondary">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>Move Back to Draft
+          </button>
+        </form>
+      </div>
     </div>
   </div>
 </div>
