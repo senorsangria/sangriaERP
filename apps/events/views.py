@@ -485,6 +485,12 @@ def event_export_csv(request):
 
         date_val = event.date.strftime('%m/%d/%y') if event.date else ''
 
+        # Duration as decimal hours for Excel summing (e.g. 2h30m → 2.5)
+        h = event.duration_hours or 0
+        m = event.duration_minutes or 0
+        total_minutes = h * 60 + m
+        duration_decimal = total_minutes / 60 if total_minutes else ''
+
         ambassador_name = event.ambassador.get_full_name() if event.ambassador else ''
         event_mgr_name  = event.event_manager.get_full_name() if event.event_manager else ''
 
@@ -500,7 +506,7 @@ def event_export_csv(request):
             event.get_event_type_display(),
             event.get_status_display(),
             date_val,
-            event.duration_display,
+            duration_decimal,
             acct_name,
             city,
             ambassador_name,

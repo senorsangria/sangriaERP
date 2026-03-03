@@ -1411,3 +1411,49 @@ class RevertRecapSubmittedTest(TestCase):
         self.assertEqual(event.photos.count(), 1)
         self._post("admin", event)
         self.assertEqual(EventPhoto.objects.filter(event=event).count(), 0)
+
+# ---------------------------------------------------------------------------
+# CSV Duration decimal format
+# ---------------------------------------------------------------------------
+
+class CsvDurationDecimalTest(TestCase):
+    """
+    CSV export duration column should be decimal hours (2.5, 1.0, 0.75),
+    not the UI string format (2hr 30m). Empty when duration is zero.
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.client = Client()
+        self.client.login(username="admin", password="testpass123")
+
+    def _get_duration_col(self, hours, minutes):
+        Event.objects.all().delete()
+        Event.objects.create(
+            company=self.company,
+            created_by=self.admin,
+            event_type=Event.EventType.ADMIN,
+            status=Event.Status.COMPLETE,
+            date=date(2026, 5, 1),
+            duration_hours=hours,
+            duration_minutes=minutes,
+        )
+        import csv, io
+        resp = self.client.get(reverse("event_export_csv"))
+        reader = csv.reader(io.StringIO(resp.content.decode()))
+        rows = list(reader)
+        header = rows[0]
+        return rows[1][header.index('Event Duration')]
+
+    def test_two_hours_thirty_minutes(self):
+        self.assertEqual(self._get_duration_col(2, 30), '2.5')
+
+    def test_one_hour(self):
+        self.assertEqual(self._get_duration_col(1, 0), '1.0')
+
+    def test_forty_five_minutes(self):
+        self.assertEqual(self._get_duration_col(0, 45), '0.75')
+
+    def test_zero_duration_is_blank(self):
+        self.assertEqual(self._get_duration_col(0, 0), '')
