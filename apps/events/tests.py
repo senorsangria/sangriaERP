@@ -17,7 +17,7 @@ from django.urls import reverse
 from apps.accounts.models import Account
 from apps.catalog.models import Brand, Item
 from apps.core.models import Company, User
-from apps.events.models import Event
+from apps.events.models import Event, Expense, EventPhoto
 
 
 # ---------------------------------------------------------------------------
@@ -1291,6 +1291,77 @@ class CsvExportColumnsTest(TestCase):
         self.assertEqual(data[header.index('Recap Note')], 'Festival was great')
 
 # ---------------------------------------------------------------------------
+# CSV expense columns
+# ---------------------------------------------------------------------------
+
+class CsvExpenseColumnsTest(TestCase):
+    """
+    Total Expenses and Expense Notes CSV columns appear between QR Codes Scanned
+    and the per-item columns. Blank when no expenses recorded.
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin   = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.account = make_account(self.company)
+        self.client  = Client()
+        self.client.login(username="admin", password="testpass123")
+
+    def _get_csv(self):
+        import csv, io
+        resp = self.client.get(reverse("event_export_csv"))
+        reader = csv.reader(io.StringIO(resp.content.decode()))
+        return list(reader)
+
+    def _make_event(self):
+        return Event.objects.create(
+            company=self.company, created_by=self.admin,
+            event_type=Event.EventType.TASTING,
+            status=Event.Status.COMPLETE,
+            account=self.account, date=date(2026, 6, 1),
+        )
+
+    def test_expense_columns_in_header(self):
+        rows = self._get_csv()
+        header = rows[0]
+        self.assertIn('Total Expenses', header)
+        self.assertIn('Expense Notes', header)
+
+    def test_expense_columns_position(self):
+        rows = self._get_csv()
+        header = rows[0]
+        qr_idx    = header.index('QR Codes Scanned')
+        total_idx = header.index('Total Expenses')
+        notes_idx = header.index('Expense Notes')
+        self.assertEqual(total_idx, qr_idx + 1)
+        self.assertEqual(notes_idx, qr_idx + 2)
+
+    def test_blank_expenses_when_none(self):
+        self._make_event()
+        rows = self._get_csv()
+        header = rows[0]
+        data = rows[1]
+        self.assertEqual(data[header.index('Total Expenses')], '')
+        self.assertEqual(data[header.index('Expense Notes')], '')
+
+    def test_expense_totals_and_notes(self):
+        event = self._make_event()
+        Expense.objects.create(
+            event=event, amount='10.00', description='Parking',
+            receipt_photo_url='/media/events/test/r1.jpg', created_by=self.admin,
+        )
+        Expense.objects.create(
+            event=event, amount='5.50', description='Supplies',
+            receipt_photo_url='/media/events/test/r2.jpg', created_by=self.admin,
+        )
+        rows = self._get_csv()
+        header = rows[0]
+        data = rows[1]
+        self.assertEqual(data[header.index('Total Expenses')], '15.50')
+        self.assertEqual(data[header.index('Expense Notes')], 'Parking | Supplies')
+
+
+# ---------------------------------------------------------------------------
 # Revert Recap Submitted → Scheduled (destructive)
 # ---------------------------------------------------------------------------
 
@@ -1457,3 +1528,152 @@ class CsvDurationDecimalTest(TestCase):
 
     def test_zero_duration_is_blank(self):
         self.assertEqual(self._get_duration_col(0, 0), '')
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.4 — Expense add / delete AJAX
+# ---------------------------------------------------------------------------
+
+class ExpenseTest(TestCase):
+    """
+    expense_add and expense_delete AJAX endpoints.
+
+    Uses SimpleUploadedFile as a minimal 1-pixel GIF receipt photo substitute.
+    Storage.delete() is patched to a no-op so no real files are touched.
+    """
+
+    # Minimal valid GIF bytes — accepted by Django's image validation
+    _GIF = (
+        b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00'
+        b'!\xf9\x04\x00\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01'
+        b'\x00\x00\x02\x02D\x01\x00;'
+    )
+
+    def setUp(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from apps.accounts.models import UserCoverageArea
+
+        self.company   = make_company()
+        self.admin     = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.account   = make_account(self.company)
+        self.SimpleUploadedFile = SimpleUploadedFile
+
+        # Ambassador needs coverage area so _can_recap returns True
+        UserCoverageArea.objects.create(
+            user=self.ambassador, company=self.company,
+            coverage_type='account', account=self.account,
+        )
+
+        self.event = make_event(
+            self.company, self.admin, Event.EventType.TASTING,
+            status=Event.Status.RECAP_IN_PROGRESS,
+            date=date.today(), ambassador=self.ambassador, account=self.account,
+        )
+
+    def _receipt(self):
+        return self.SimpleUploadedFile('receipt.gif', self._GIF, content_type='image/gif')
+
+    def _add(self, username, data=None):
+        c = Client()
+        c.login(username=username, password="testpass123")
+        payload = {'amount': '10.00', 'description': 'Parking', 'receipt_photo': self._receipt()}
+        if data:
+            payload.update(data)
+        return c.post(
+            reverse('expense_add', args=[self.event.pk]),
+            data=payload,
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+
+    def _delete(self, username, expense):
+        c = Client()
+        c.login(username=username, password="testpass123")
+        return c.post(
+            reverse('expense_delete', args=[self.event.pk, expense.pk]),
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+
+    def test_add_expense_success(self):
+        resp = self._add('amb')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['success'])
+        self.assertEqual(Expense.objects.filter(event=self.event).count(), 1)
+        expense = Expense.objects.get(event=self.event)
+        self.assertEqual(str(expense.amount), '10.00')
+        self.assertEqual(expense.description, 'Parking')
+        self.assertTrue(expense.receipt_photo_url)
+
+    def test_add_expense_missing_receipt_rejected(self):
+        c = Client()
+        c.login(username='amb', password='testpass123')
+        resp = c.post(
+            reverse('expense_add', args=[self.event.pk]),
+            data={'amount': '10.00', 'description': 'Parking'},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('Receipt photo', resp.json()['error'])
+        self.assertEqual(Expense.objects.filter(event=self.event).count(), 0)
+
+    def test_add_expense_missing_amount_rejected(self):
+        c = Client()
+        c.login(username='amb', password='testpass123')
+        resp = c.post(
+            reverse('expense_add', args=[self.event.pk]),
+            data={'description': 'Parking', 'receipt_photo': self._receipt()},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('Amount', resp.json()['error'])
+
+    def test_add_expense_blocked_when_recap_submitted(self):
+        self.event.status = Event.Status.RECAP_SUBMITTED
+        self.event.save(update_fields=['status'])
+        resp = self._add('amb')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(Expense.objects.filter(event=self.event).count(), 0)
+
+    def test_add_expense_non_recap_user_denied(self):
+        stranger = make_user(self.company, User.Role.SALES_MANAGER, "stranger")
+        # Sales Manager without coverage area cannot recap
+        resp = self._add('stranger')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_delete_expense_success(self):
+        expense = Expense.objects.create(
+            event=self.event, amount='5.00', description='Tip',
+            receipt_photo_url='/media/events/test/receipt.gif',
+            created_by=self.ambassador,
+        )
+        resp = self._delete('amb', expense)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['success'])
+        self.assertFalse(Expense.objects.filter(pk=expense.pk).exists())
+
+    def test_delete_expense_blocked_when_recap_submitted(self):
+        expense = Expense.objects.create(
+            event=self.event, amount='5.00', description='Tip',
+            receipt_photo_url='/media/events/test/receipt.gif',
+            created_by=self.ambassador,
+        )
+        self.event.status = Event.Status.RECAP_SUBMITTED
+        self.event.save(update_fields=['status'])
+        resp = self._delete('amb', expense)
+        self.assertEqual(resp.status_code, 400)
+        self.assertTrue(Expense.objects.filter(pk=expense.pk).exists())
+
+    def test_revert_to_scheduled_also_deletes_expenses(self):
+        """event_revert_recap_submitted clears Expense records too."""
+        self.event.status = Event.Status.RECAP_SUBMITTED
+        self.event.save(update_fields=['status'])
+        Expense.objects.create(
+            event=self.event, amount='5.00', description='Tip',
+            receipt_photo_url='/media/events/test/receipt.gif',
+            created_by=self.ambassador,
+        )
+        c = Client()
+        c.login(username='admin', password='testpass123')
+        c.post(reverse('event_revert_recap_submitted', args=[self.event.pk]))
+        self.assertEqual(Expense.objects.filter(event=self.event).count(), 0)

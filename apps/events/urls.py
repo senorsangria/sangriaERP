@@ -26,6 +26,10 @@ urlpatterns = [
     path('events/<int:pk>/unlock-recap/', views.event_unlock_recap, name='event_unlock_recap'),
     path('events/<int:pk>/photos/<int:photo_pk>/delete/', views.event_photo_delete, name='event_photo_delete'),
 
+    # Expenses (AJAX)
+    path('events/<int:pk>/expenses/add/', views.expense_add, name='expense_add'),
+    path('events/<int:pk>/expenses/<int:expense_pk>/delete/', views.expense_delete, name='expense_delete'),
+
     # AJAX
     path('events/ajax/ambassadors/', views.ajax_ambassadors, name='ajax_event_ambassadors'),
     path('events/ajax/event_managers/', views.ajax_event_managers, name='ajax_event_managers'),

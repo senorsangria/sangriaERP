@@ -24,7 +24,7 @@ from apps.core.models import User
 from apps.distribution.models import Distributor
 
 from .forms import EventForm
-from .models import Event, EventItemRecap, EventPhoto
+from .models import Event, EventItemRecap, EventPhoto, Expense
 from .storage import delete_event_photo, save_event_photo
 
 
@@ -438,7 +438,7 @@ def event_export_csv(request):
     # Fetch all events with related data in a single pass
     events = list(
         qs.select_related('account', 'ambassador', 'event_manager')
-        .prefetch_related('items__brand', 'item_recaps')
+        .prefetch_related('items__brand', 'item_recaps', 'expenses')
         .order_by('date', 'pk')
     )
 
@@ -469,7 +469,8 @@ def event_export_csv(request):
     writer.writerow(
         ['Event Type', 'Event Status', 'Event Date', 'Event Duration',
          'Account Name', 'City', 'Ambassador', 'Event Manager',
-         'Samples Poured', 'QR Codes Scanned']
+         'Samples Poured', 'QR Codes Scanned',
+         'Total Expenses', 'Expense Notes']
         + [item.name for item in all_items]
         + ['Recap Note']
     )
@@ -502,6 +503,16 @@ def event_export_csv(request):
         else:
             recap_note = ''
 
+        # Expense columns
+        event_expenses = list(event.expenses.all())
+        if event_expenses:
+            from decimal import Decimal
+            total_expenses = sum(e.amount for e in event_expenses)
+            expense_notes  = ' | '.join(e.description for e in event_expenses)
+        else:
+            total_expenses = ''
+            expense_notes  = ''
+
         row = [
             event.get_event_type_display(),
             event.get_status_display(),
@@ -513,6 +524,8 @@ def event_export_csv(request):
             event_mgr_name,
             event.recap_samples_poured if event.recap_samples_poured is not None else '',
             event.recap_qr_codes_scanned if event.recap_qr_codes_scanned is not None else '',
+            total_expenses,
+            expense_notes,
         ]
 
         event_recaps    = recap_lookup.get(event.pk, {})
@@ -593,6 +606,7 @@ def event_detail(request, pk):
             items_with_recaps.append((item, existing_recaps.get(item.pk)))
 
     photos = event.photos.all() if show_recap else []
+    expenses = list(event.expenses.all()) if show_recap else []
 
     return render(request, 'events/event_detail.html', {
         'event':                  event,
@@ -607,6 +621,7 @@ def event_detail(request, pk):
         'tasting_items_by_brand': tasting_items_by_brand,
         'items_with_recaps':      items_with_recaps,
         'photos':                 photos,
+        'expenses':               expenses,
     })
 
 
@@ -1196,6 +1211,11 @@ def event_revert_recap_submitted(request, pk):
         delete_event_photo(photo.file_url)
     event.photos.all().delete()
 
+    # Delete all Expense records and their receipt photos
+    for expense in event.expenses.all():
+        delete_event_photo(expense.receipt_photo_url)
+    event.expenses.all().delete()
+
     # Delete all EventItemRecap records
     event.item_recaps.all().delete()
 
@@ -1369,3 +1389,98 @@ def ajax_event_accounts(request):
     ]
 
     return JsonResponse({'accounts': result})
+
+
+# ---------------------------------------------------------------------------
+# Expense AJAX endpoints
+# ---------------------------------------------------------------------------
+
+@login_required
+def expense_add(request, pk):
+    """
+    POST: Add an Expense to an event recap.
+
+    Required fields: amount (decimal), description (str), receipt_photo (file).
+    Access: same users who can fill out the recap.
+    Only allowed when recap is in an editable status.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required.'}, status=405)
+
+    company = request.user.company
+    visible = _get_visible_events(request.user)
+    event = get_object_or_404(visible, pk=pk, company=company)
+
+    if not _can_recap(request.user, event):
+        return JsonResponse({'error': 'Permission denied.'}, status=403)
+
+    if event.status not in _RECAP_ACTIVE_STATUSES:
+        return JsonResponse({'error': 'Recap is not in an editable status.'}, status=400)
+
+    amount_str = request.POST.get('amount', '').strip()
+    description = request.POST.get('description', '').strip()
+    receipt_file = request.FILES.get('receipt_photo')
+
+    if not amount_str:
+        return JsonResponse({'error': 'Amount is required.'}, status=400)
+    try:
+        from decimal import Decimal, InvalidOperation
+        amount = Decimal(amount_str)
+        if amount <= 0:
+            raise InvalidOperation
+    except Exception:
+        return JsonResponse({'error': 'Invalid amount.'}, status=400)
+
+    if not description:
+        return JsonResponse({'error': 'Description is required.'}, status=400)
+
+    if not receipt_file:
+        return JsonResponse({'error': 'Receipt photo is required.'}, status=400)
+
+    receipt_url = save_event_photo(receipt_file, event.pk)
+    expense = Expense.objects.create(
+        event=event,
+        amount=amount,
+        description=description,
+        receipt_photo_url=receipt_url,
+        created_by=request.user,
+    )
+
+    return JsonResponse({
+        'success': True,
+        'expense': {
+            'id': expense.pk,
+            'amount': str(expense.amount),
+            'description': expense.description,
+            'receipt_photo_url': expense.receipt_photo_url,
+        },
+    })
+
+
+@login_required
+def expense_delete(request, pk, expense_pk):
+    """
+    POST: Delete an Expense record and its receipt photo from storage.
+
+    Access: same users who can fill out the recap.
+    Only allowed when recap is in an editable status.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required.'}, status=405)
+
+    company = request.user.company
+    visible = _get_visible_events(request.user)
+    event = get_object_or_404(visible, pk=pk, company=company)
+
+    if not _can_recap(request.user, event):
+        return JsonResponse({'error': 'Permission denied.'}, status=403)
+
+    if event.status not in _RECAP_ACTIVE_STATUSES:
+        return JsonResponse({'error': 'Recap is not in an editable status.'}, status=400)
+
+    expense = get_object_or_404(Expense, pk=expense_pk, event=event)
+    file_url = expense.receipt_photo_url
+    expense.delete()
+    delete_event_photo(file_url)
+
+    return JsonResponse({'success': True})

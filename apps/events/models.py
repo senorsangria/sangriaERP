@@ -218,3 +218,36 @@ class EventItemRecap(models.Model):
 
     def __str__(self):
         return f'{self.item} recap for {self.event}'
+
+
+class Expense(models.Model):
+    """
+    A single expense associated with an event recap.
+
+    Captured during the recap (Tasting or Special Event, not Admin).
+    A receipt photo is required to save an expense.
+    """
+
+    event = models.ForeignKey(
+        'events.Event',
+        on_delete=models.CASCADE,
+        related_name='expenses',
+    )
+    amount = models.DecimalField(max_digits=8, decimal_places=2)
+    description = models.CharField(max_length=200)
+    receipt_photo_url = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_expenses',
+    )
+
+    class Meta:
+        app_label = 'events'
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'{self.description} — ${self.amount} on {self.event}'

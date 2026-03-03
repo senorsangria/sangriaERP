@@ -282,7 +282,7 @@ Searchable list for one-off or exception assignments
 | Phase 10.3.2 | Account-Item Association (models + import) | ✅ Complete |
 | Phase 10.3.3 | Event Recap Form (Tasting + Festival) | ✅ Complete |
 | Phase 10.3.3 Tweaks | Festival→Special Event, Sort Order, Revert Complete, Account Mgmt | ✅ Complete |
-| Phase 10.4 | Expense Management | ⬜ Pending |
+| Phase 10.4 | Expense Management | ✅ Complete |
 | Phase 10.5 | Event Export | ⬜ Pending |
 
 ---
@@ -571,11 +571,14 @@ is platform-agnostic)
 
 ### Media File Serving in Development
 - Django does not serve `/media/` files by default
-- `producterp/urls.py` adds `static(MEDIA_URL, document_root=MEDIA_ROOT)` when
-  `USE_OBJECT_STORAGE` is not set to true
-- This requires `DEBUG=True` in the environment (set in `.env` for local dev)
-- In production, `USE_OBJECT_STORAGE=true` and files are served from R2 directly;
-  the `static()` route is not added
+- `producterp/urls.py` registers a `re_path` + `django.views.static.serve` route
+  when `USE_OBJECT_STORAGE` is not set to true
+- Gated only on `USE_OBJECT_STORAGE`, not `DEBUG` — so files are served correctly
+  in all local/development environments regardless of the DEBUG setting
+- In production `USE_OBJECT_STORAGE=true` and files are served from R2 directly;
+  the serve route is not added
+- Note: `django.conf.urls.static.static()` was previously used but was replaced
+  because it silently returns `[]` when `DEBUG=False`, breaking photo serving
 
 ### Event Types
 Three event types, each drives different behavior:
@@ -1475,9 +1478,11 @@ Light red background (#fff5f5) applies to any event requiring user action:
 8. Event Manager (full name of assigned event manager, blank if none)
 9. Samples Poured
 10. QR Codes Scanned
-11. [one column per distinct item — bottles sold; sorted by brand name
+11. Total Expenses (sum of all expense amounts; blank if no expenses)
+12. Expense Notes (expense descriptions joined by " | "; blank if no expenses)
+13. [one column per distinct item — bottles sold; sorted by brand name
     then item sort_order then item name]
-12. Recap Note (recap_notes for Tasting; recap_comment for Special Event;
+14. Recap Note (recap_notes for Tasting; recap_comment for Special Event;
     blank for Admin or if empty)
 
 - Cell values for item columns: bottles sold (integer) or blank if the item
@@ -1487,5 +1492,40 @@ Light red background (#fff5f5) applies to any event requiring user action:
 
 ---
 
-*Last updated: March 3, 2026 (Phase 10.3.3 Tweaks session 3: media file serving config, Scheduled→Draft revert permissions + Bootstrap modal, CSV export column updates — Ambassador, Event Manager, QR Codes Scanned, Recap Note)*
+## Phase 10.4 — Expense Management
+
+### Expense Model
+- `Expense` model in `apps/events/models.py`
+- Fields: `event` (FK CASCADE), `amount` (DecimalField 8,2), `description`
+  (CharField 200), `receipt_photo_url` (CharField 500), `created_at`
+  (auto_now_add), `created_by` (FK to User, SET_NULL)
+- Receipt photo stored via same `save_event_photo()` helper used for
+  EventPhoto; file URL stored in `receipt_photo_url`
+
+### Expense UI
+- Expenses section appears in the active recap form for Tasting and Special Event
+  (not Admin — Admin events never have a recap form)
+- AJAX add: POST `/events/<pk>/expenses/add/` with `amount`, `description`,
+  `receipt_photo` (file); returns JSON `{success, expense: {id, amount, description, receipt_photo_url}}`
+- AJAX delete: POST `/events/<pk>/expenses/<expense_pk>/delete/`; returns JSON `{success}`
+- Receipt photo is required (enforced on both client and server)
+- Add/delete only allowed in editable recap statuses:
+  SCHEDULED, RECAP_IN_PROGRESS, REVISION_REQUESTED
+- Read-only display shows receipt thumbnail + description + amount for
+  Recap Submitted and Complete events
+
+### Revert Behavior
+- `event_revert_recap_submitted` (Recap Submitted → Scheduled) now also
+  deletes all Expense records and their receipt photo files
+- Expense records are deleted in addition to EventPhoto records and
+  EventItemRecap records during the destructive revert
+
+### CSV Expense Columns
+- `Total Expenses`: sum of all expense amounts (Decimal), blank if none
+- `Expense Notes`: descriptions joined by " | ", blank if none
+- Position: columns 11 and 12, between QR Codes Scanned and per-item columns
+
+---
+
+*Last updated: March 3, 2026 (Phase 10.4: Expense model + AJAX UI + CSV columns; also: Revert Recap Submitted→Scheduled, media serving fix, CSV decimal duration)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
