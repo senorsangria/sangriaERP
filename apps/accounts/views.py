@@ -624,14 +624,20 @@ def ajax_accounts_search(request):
     if len(q) < 2:
         return JsonResponse({'accounts': []})
 
+    # Build an AND-of-ORs Q: every whitespace-separated term must appear in
+    # at least one of the four searchable fields (cross-field multi-word support).
+    term_q = Q()
+    for term in q.split():
+        term_q &= (
+            Q(name__icontains=term)
+            | Q(street__icontains=term)
+            | Q(city__icontains=term)
+            | Q(state__icontains=term)
+        )
+
     accounts = (
         get_accounts_for_user(request.user)
-        .filter(
-            Q(name__icontains=q)
-            | Q(street__icontains=q)
-            | Q(city__icontains=q)
-            | Q(state__icontains=q)
-        )
+        .filter(term_q)
         .select_related('distributor')
         .order_by('name')
         [:20]

@@ -1363,14 +1363,20 @@ def ajax_event_accounts(request):
     if not company:
         return JsonResponse({'accounts': []})
 
+    # Build an AND-of-ORs Q: every whitespace-separated term must appear in
+    # at least one of the four searchable fields (cross-field multi-word support).
+    term_q = DjangoQ()
+    for term in q.split():
+        term_q &= (
+            DjangoQ(name__icontains=term)
+            | DjangoQ(street__icontains=term)
+            | DjangoQ(city__icontains=term)
+            | DjangoQ(state__icontains=term)
+        )
+
     accounts = (
         get_accounts_for_user(request.user)
-        .filter(
-            DjangoQ(name__icontains=q)
-            | DjangoQ(street__icontains=q)
-            | DjangoQ(city__icontains=q)
-            | DjangoQ(state__icontains=q)
-        )
+        .filter(term_q)
         .select_related('distributor')
         .order_by('name')
         [:20]

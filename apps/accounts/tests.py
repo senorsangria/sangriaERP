@@ -6,7 +6,8 @@ Phase 10.3.2
 import datetime
 
 from django.db import IntegrityError
-from django.test import TestCase
+from django.test import Client, TestCase
+from django.urls import reverse
 
 from apps.accounts.models import Account, AccountItem, AccountItemPriceHistory
 from apps.catalog.models import Brand, Item
@@ -386,3 +387,89 @@ class AccountDetailItemsDisplayTest(TestCase):
     def test_empty_state_shown_when_no_items(self):
         resp = self.client.get(reverse("account_detail", args=[self.account.pk]))
         self.assertContains(resp, "No items have been associated")
+
+
+# ---------------------------------------------------------------------------
+# ajax_accounts_search — multi-word search
+# ---------------------------------------------------------------------------
+
+class AjaxAccountsSearchTest(TestCase):
+    """
+    ajax_accounts_search: multi-word query splits on whitespace and requires
+    ALL terms to match at least one of name/street/city/state (AND across
+    terms, OR within each term).
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        # Supplier Admin sees all company accounts — no coverage area setup needed
+        self.user = User.objects.create_user(
+            username='sadmin', password='testpass123',
+            company=self.company, role=User.Role.SUPPLIER_ADMIN,
+        )
+        self.client = Client()
+        self.client.login(username='sadmin', password='testpass123')
+        self.url = reverse('ajax_accounts_search')
+
+        Account.objects.create(
+            company=self.company, name='BuyRite Wine & Spirits',
+            street='10 Bergen Ave', city='Kearny', state='NJ',
+            state_normalized='NJ',
+        )
+        Account.objects.create(
+            company=self.company, name='BuyRite Liquors',
+            street='50 Market St', city='Newark', state='NJ',
+            state_normalized='NJ',
+        )
+        Account.objects.create(
+            company=self.company, name='Crown Wine & Spirits',
+            street='200 Broad St', city='Newark', state='NJ',
+            state_normalized='NJ',
+        )
+
+    def _get(self, q):
+        return self.client.get(
+            self.url, {'q': q},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+
+    def _names(self, resp):
+        return {a['name'] for a in resp.json()['accounts']}
+
+    def test_short_query_returns_empty(self):
+        resp = self._get('B')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['accounts'], [])
+
+    def test_single_word_name_match(self):
+        names = self._names(self._get('BuyRite'))
+        self.assertIn('BuyRite Wine & Spirits', names)
+        self.assertIn('BuyRite Liquors', names)
+        self.assertNotIn('Crown Wine & Spirits', names)
+
+    def test_single_word_city_match(self):
+        names = self._names(self._get('Kearny'))
+        self.assertIn('BuyRite Wine & Spirits', names)
+        self.assertNotIn('BuyRite Liquors', names)
+        self.assertNotIn('Crown Wine & Spirits', names)
+
+    def test_multiword_name_and_city(self):
+        """'BuyRite Kearny' must match only the account whose name contains
+        'BuyRite' AND whose city contains 'Kearny'."""
+        names = self._names(self._get('BuyRite Kearny'))
+        self.assertEqual(names, {'BuyRite Wine & Spirits'})
+
+    def test_multiword_both_in_name(self):
+        """'BuyRite Liquors' matches the account where both words appear in name."""
+        names = self._names(self._get('BuyRite Liquors'))
+        self.assertEqual(names, {'BuyRite Liquors'})
+
+    def test_multiword_no_match(self):
+        """A term that matches nothing yields no results."""
+        names = self._names(self._get('BuyRite Springfield'))
+        self.assertEqual(names, set())
+
+    def test_multiword_city_shared_across_two_accounts(self):
+        """'Crown Newark' should return only Crown (name=Crown, city=Newark)."""
+        names = self._names(self._get('Crown Newark'))
+        self.assertEqual(names, {'Crown Wine & Spirits'})
