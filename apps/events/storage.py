@@ -54,13 +54,14 @@ def delete_event_photo(file_url):
     For object storage (future): the stub raises NotImplementedError, so this
     function will need updating when R2 integration is added.
     """
-    storage = _get_storage()
-    name = file_url
-    if name.startswith(settings.MEDIA_URL):
-        name = name[len(settings.MEDIA_URL):]
     try:
+        storage = _get_storage()
+        name = file_url
+        if name and name.startswith(settings.MEDIA_URL):
+            name = name[len(settings.MEDIA_URL):]
         storage.delete(name)
     except Exception:
-        # File may already be absent; proceed silently so the DB record
-        # is still cleaned up by the caller.
+        # File may already be absent, storage may not be configured, or
+        # file_url may be empty.  Proceed silently so the DB record is
+        # still cleaned up by the caller.
         pass
