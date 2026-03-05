@@ -69,12 +69,19 @@ class EventForm(forms.ModelForm):
         self.fields['account'].required = False
         self.fields['account'].empty_label = '— Select account —'
 
-        # Ambassador: all ambassadors and AMs in the company (refined via AJAX)
+        # Ambassador: all roles eligible per ajax_ambassadors() (refined via AJAX)
+        _ambassador_roles = [
+            User.Role.AMBASSADOR,
+            User.Role.AMBASSADOR_MANAGER,
+            User.Role.TERRITORY_MANAGER,
+            User.Role.SALES_MANAGER,
+            User.Role.SUPPLIER_ADMIN,
+        ]
         self.fields['ambassador'].queryset = (
             User.objects.filter(
                 company=company,
                 is_active=True,
-                role__in=[User.Role.AMBASSADOR, User.Role.AMBASSADOR_MANAGER],
+                role__in=_ambassador_roles,
             ).order_by('last_name', 'first_name')
             if company else User.objects.none()
         )
