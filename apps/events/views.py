@@ -579,6 +579,11 @@ def event_detail(request, pk):
         user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
         or (event.event_manager_id and event.event_manager_id == user.pk)
     )
+    # Revert Revision Requested → Scheduled (destructive): same permission set
+    can_revert_revision_requested = (
+        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
+        or (event.event_manager_id and event.event_manager_id == user.pk)
+    )
 
     tasting_items_by_brand = None
     if event.event_type == Event.EventType.TASTING:
@@ -616,6 +621,7 @@ def event_detail(request, pk):
         'can_revert':             can_revert,
         'can_unrelease':          can_unrelease,
         'can_revert_to_scheduled': can_revert_to_scheduled,
+        'can_revert_revision_requested': can_revert_revision_requested,
         'recap_active':           recap_active,
         'show_recap':             show_recap,
         'tasting_items_by_brand': tasting_items_by_brand,
@@ -1176,13 +1182,47 @@ def event_revert_complete(request, pk):
     return redirect('event_detail', pk=pk)
 
 
+def _delete_recap_data(event):
+    """
+    Delete all recap data for an event: photos, expenses, item recaps,
+    and clear all recap fields. Sets status to SCHEDULED.
+
+    Called by both event_revert_recap_submitted and
+    event_revert_revision_requested.
+    """
+    # Delete all EventPhoto records and their files from storage
+    for photo in event.photos.all():
+        delete_event_photo(photo.file_url)
+    event.photos.all().delete()
+
+    # Delete all Expense records and their receipt photos
+    for expense in event.expenses.all():
+        delete_event_photo(expense.receipt_photo_url)
+    event.expenses.all().delete()
+
+    # Delete all EventItemRecap records
+    event.item_recaps.all().delete()
+
+    # Clear recap fields and revert status
+    event.recap_notes = ''
+    event.recap_samples_poured = None
+    event.recap_qr_codes_scanned = None
+    event.recap_comment = ''
+    event.revision_note = ''
+    event.status = Event.Status.SCHEDULED
+    event.save(update_fields=[
+        'status', 'recap_notes', 'recap_samples_poured',
+        'recap_qr_codes_scanned', 'recap_comment', 'revision_note', 'updated_at',
+    ])
+
+
 @login_required
 def event_revert_recap_submitted(request, pk):
     """
     POST: Revert a Recap Submitted event back to Scheduled.
 
     Destructive: clears all recap fields, deletes all EventItemRecap records,
-    and deletes all EventPhoto records (including their files from storage).
+    EventPhoto records (and files), and Expense records (and receipt files).
 
     Access: Supplier Admin, Sales Manager, or the assigned Event Manager
     on this specific event.
@@ -1206,30 +1246,42 @@ def event_revert_recap_submitted(request, pk):
         messages.error(request, 'Only Recap Submitted events can be reverted to Scheduled.')
         return redirect('event_detail', pk=pk)
 
-    # Delete all EventPhoto records and their files from storage
-    for photo in event.photos.all():
-        delete_event_photo(photo.file_url)
-    event.photos.all().delete()
+    _delete_recap_data(event)
+    messages.success(request, 'Event reverted to Scheduled. All recap data has been deleted.')
+    return redirect('event_detail', pk=pk)
 
-    # Delete all Expense records and their receipt photos
-    for expense in event.expenses.all():
-        delete_event_photo(expense.receipt_photo_url)
-    event.expenses.all().delete()
 
-    # Delete all EventItemRecap records
-    event.item_recaps.all().delete()
+@login_required
+def event_revert_revision_requested(request, pk):
+    """
+    POST: Revert a Revision Requested event back to Scheduled.
 
-    # Clear recap fields and revert status
-    event.recap_notes = ''
-    event.recap_samples_poured = None
-    event.recap_qr_codes_scanned = None
-    event.recap_comment = ''
-    event.status = Event.Status.SCHEDULED
-    event.save(update_fields=[
-        'status', 'recap_notes', 'recap_samples_poured',
-        'recap_qr_codes_scanned', 'recap_comment', 'updated_at',
-    ])
+    Destructive: clears all recap fields, deletes all EventItemRecap records,
+    EventPhoto records (and files), and Expense records (and receipt files).
 
+    Access: Supplier Admin, Sales Manager, or the assigned Event Manager
+    on this specific event.
+    """
+    if request.method != 'POST':
+        return redirect('event_detail', pk=pk)
+
+    company = request.user.company
+    visible = _get_visible_events(request.user)
+    event = get_object_or_404(visible, pk=pk, company=company)
+
+    user = request.user
+    can_revert = (
+        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
+        or (event.event_manager_id and event.event_manager_id == user.pk)
+    )
+    if not can_revert:
+        return render(request, '403.html', status=403)
+
+    if event.status != Event.Status.REVISION_REQUESTED:
+        messages.error(request, 'Only Revision Requested events can be reverted to Scheduled.')
+        return redirect('event_detail', pk=pk)
+
+    _delete_recap_data(event)
     messages.success(request, 'Event reverted to Scheduled. All recap data has been deleted.')
     return redirect('event_detail', pk=pk)
 

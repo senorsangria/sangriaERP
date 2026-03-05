@@ -18,6 +18,7 @@ urlpatterns = [
     path('events/<int:pk>/approve/', views.event_approve, name='event_approve'),
     path('events/<int:pk>/revert-complete/', views.event_revert_complete, name='event_revert_complete'),
     path('events/<int:pk>/revert-recap-submitted/', views.event_revert_recap_submitted, name='event_revert_recap_submitted'),
+    path('events/<int:pk>/revert-revision-requested/', views.event_revert_revision_requested, name='event_revert_revision_requested'),
     path('events/<int:pk>/delete/', views.event_delete, name='event_delete'),
 
     # Recap
