@@ -107,6 +107,24 @@ def _parse_csv_headers(headers):
     }
 
 
+def _strip_excel_zip(value):
+    """
+    Strip Excel's leading-zero preservation format from a zip code string.
+
+    Excel saves leading-zero zip codes as ="07030" in CSV exports.  This
+    function handles all three common forms:
+        ="07030"  →  07030
+        "07030"   →  07030
+        07030     →  07030  (unchanged)
+    """
+    v = value.strip()
+    if v.startswith('='):
+        v = v[1:]
+    if len(v) >= 2 and v[0] == '"' and v[-1] == '"':
+        v = v[1:-1]
+    return v
+
+
 def _parse_date(date_str):
     """
     Parse a date string in common formats; raise ValueError if unrecognised.
@@ -181,7 +199,7 @@ def _read_csv_rows(filepath, cols):
                     'address':       row[cols['address']].strip(),
                     'city':          row[cols['city']].strip(),
                     'state':         row[cols['state']].strip(),
-                    'zip_code':      row[cols['zip']].strip(),
+                    'zip_code':      _strip_excel_zip(row[cols['zip']].strip()),
                     'vip_outlet_id': row[cols['vip']].strip(),
                     'county':        county,
                     'on_off_premise': on_off,
