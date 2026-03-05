@@ -859,7 +859,9 @@
   /* Add */
   var addBtn = document.getElementById('expense-add-btn');
   if (addBtn) {
-    addBtn.addEventListener('click', function () {
+    addBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (addBtn.disabled) return;
       var eventId = addBtn.dataset.eventId;
       var amount  = document.getElementById('expense-amount').value.trim();
       var desc    = document.getElementById('expense-desc').value.trim();
