@@ -13,6 +13,7 @@ from apps.accounts.models import Account, AccountItem, AccountItemPriceHistory
 from apps.catalog.models import Brand, Item
 from apps.core.models import Company, User
 from apps.distribution.models import Distributor
+from apps.events.models import Event
 
 
 # ---------------------------------------------------------------------------
@@ -260,16 +261,16 @@ class AccountDeleteTest(TestCase):
         self.client.post(reverse("account_delete", args=[pk]))
         self.assertTrue(Account.objects.filter(pk=pk).exists())
 
-    def test_delete_blocked_with_account_items(self):
+    def test_delete_blocked_with_event(self):
         account = Account.objects.create(
-            company=self.company, name="Has Items",
+            company=self.company, name="Has Event",
             street="3 Elm", city="Newark", state="NJ",
             auto_created=False,
         )
-        item = make_item(self.company)
-        AccountItem.objects.create(
-            account=account, item=item,
-            date_first_associated=datetime.date.today(),
+        Event.objects.create(
+            company=self.company, account=account,
+            event_type=Event.EventType.TASTING,
+            created_by=self.admin,
         )
         pk = account.pk
         self.client.post(reverse("account_delete", args=[pk]))
@@ -277,17 +278,18 @@ class AccountDeleteTest(TestCase):
 
     def test_delete_error_message_lists_blocking_data(self):
         account = Account.objects.create(
-            company=self.company, name="Has Items",
+            company=self.company, name="Has Event",
             street="3 Elm", city="Newark", state="NJ",
             auto_created=False,
         )
-        item = make_item(self.company)
-        AccountItem.objects.create(
-            account=account, item=item,
-            date_first_associated=datetime.date.today(),
+        Event.objects.create(
+            company=self.company, account=account,
+            event_type=Event.EventType.TASTING,
+            created_by=self.admin,
         )
         resp = self.client.post(reverse("account_delete", args=[account.pk]), follow=True)
-        self.assertContains(resp, "item record")
+        self.assertContains(resp, "cannot be deleted")
+        self.assertContains(resp, "deactivate")
 
 
 # ---------------------------------------------------------------------------

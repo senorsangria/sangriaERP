@@ -18,6 +18,7 @@ from utils.normalize import normalize_address
 from .models import Account, UserCoverageArea
 from .forms import AccountForm
 from .constants import US_STATES, US_STATES_DICT
+from .utils import get_account_associations
 from .utils import get_accounts_for_user
 
 
@@ -361,26 +362,22 @@ def account_delete(request, pk):
         return redirect('account_detail', pk=pk)
 
     if request.method == 'POST':
-        events_count = account.events.count()
-        items_count = account.account_items.count()
-        photos_count = account.event_photos.count()
-        sales_count = account.sales_records.count()
+        associations = get_account_associations(account)
 
         blocking = []
-        if events_count:
-            blocking.append(f'{events_count} event{"s" if events_count != 1 else ""}')
-        if items_count:
-            blocking.append(f'{items_count} item record{"s" if items_count != 1 else ""}')
-        if photos_count:
-            blocking.append(f'{photos_count} event photo{"s" if photos_count != 1 else ""}')
-        if sales_count:
-            blocking.append(f'{sales_count} sales record{"s" if sales_count != 1 else ""}')
+        if associations.get('events', 0):
+            n = associations['events']
+            blocking.append(f'{n} event{"s" if n != 1 else ""}')
+        if associations.get('photos', 0):
+            n = associations['photos']
+            blocking.append(f'{n} photo{"s" if n != 1 else ""}')
 
         if blocking:
             messages.error(
                 request,
-                f'Cannot delete "{account.name}". Associated data must be removed first: '
-                + ', '.join(blocking) + '.',
+                f'This account cannot be deleted because it has '
+                + ' and '.join(blocking)
+                + ' associated to it. You can deactivate the account instead.',
             )
             return redirect('account_detail', pk=pk)
 

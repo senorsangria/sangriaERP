@@ -8,6 +8,29 @@ from django.db.models import Q
 from .models import Account, UserCoverageArea
 
 
+def get_account_associations(account):
+    """
+    Return a dictionary of all data associated to the given account with counts.
+
+    This is the single centralized place where account association checks live.
+    The deletion check, blocking messages, and any future account-related features
+    should all call this function rather than querying associations ad hoc.
+
+    When new association types are added in the future (e.g. CRM notes, contacts),
+    add only one new entry here and all callers automatically pick it up.
+
+    Returns:
+        dict mapping association name → count, e.g.:
+        {'events': 3, 'photos': 0}
+    """
+    from apps.events.models import Event, EventPhoto
+
+    return {
+        'events': Event.objects.filter(account=account).count(),
+        'photos': EventPhoto.objects.filter(account=account).count(),
+    }
+
+
 def get_accounts_for_user(user):
     """
     Return a queryset of active accounts visible to user based on their
