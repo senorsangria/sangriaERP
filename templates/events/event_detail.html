@@ -332,13 +332,14 @@
 
           <!-- Save / Submit buttons -->
           <div class="d-flex gap-2 flex-wrap mt-2">
-            <button type="submit" class="btn btn-outline-secondary">
+            <button type="submit" class="btn btn-outline-secondary"
+                    onclick="return checkUnsavedExpense()">
               <i class="bi bi-floppy me-1"></i>Save
             </button>
             <button type="submit"
                     formaction="{% url 'event_submit_recap' event.pk %}"
                     class="btn btn-primary"
-                    onclick="return confirm('Submit this recap? Your Event Manager will be notified.')">
+                    onclick="return checkUnsavedExpense() && confirm('Submit this recap? Your Event Manager will be notified.')">
               <i class="bi bi-send me-1"></i>Submit Recap
             </button>
           </div>
@@ -823,6 +824,20 @@
     });
   });
 })();
+
+/* Unsaved expense guard — called by Save and Submit Recap buttons */
+function checkUnsavedExpense() {
+  var amountEl = document.getElementById('expense-amount');
+  var descEl   = document.getElementById('expense-desc');
+  if (!amountEl || !descEl) return true;
+  var hasAmount = amountEl.value.trim() !== '';
+  var hasDesc   = descEl.value.trim() !== '';
+  if (hasAmount || hasDesc) {
+    alert('You have unsaved expense information. Please click Add Expense to save it before saving or submitting your recap.');
+    return false;
+  }
+  return true;
+}
 
 /* Expense add + delete — AJAX */
 (function () {
