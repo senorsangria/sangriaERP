@@ -328,10 +328,10 @@ class ItemsSectionVisibilityTest(TestCase):
         resp = self.client.get(reverse("event_detail", args=[event.pk]))
         self.assertContains(resp, "Items to be Sampled")
 
-    def test_items_shown_in_scheduled(self):
+    def test_items_hidden_in_scheduled(self):
         event = self._tasting_event(Event.Status.SCHEDULED)
         resp = self.client.get(reverse("event_detail", args=[event.pk]))
-        self.assertContains(resp, "Items to be Sampled")
+        self.assertNotContains(resp, "Items to be Sampled")
 
     def test_items_hidden_in_recap_submitted(self):
         event = self._tasting_event(Event.Status.RECAP_SUBMITTED)

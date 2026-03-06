@@ -104,9 +104,9 @@
     </div>
   </div>
 
-  <!-- Item sampling section: tasting only, draft/scheduled only -->
+  <!-- Item sampling section: tasting only, draft status only -->
   {% if event.event_type == 'tasting' %}
-  {% if event.status == 'draft' or event.status == 'scheduled' %}
+  {% if event.status == 'draft' %}
   <div class="col-12">
     <div class="card">
       <div class="card-header fw-semibold small text-muted">Items to be Sampled</div>
