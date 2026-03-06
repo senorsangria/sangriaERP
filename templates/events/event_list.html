@@ -199,6 +199,11 @@
         <div class="d-flex justify-content-between align-items-start">
           <div>
             <div class="fw-semibold">
+              {% if event.date %}{{ event.date|date:"D" }} {{ event.date|date:"m/d/y" }}{% else %}<span class="fst-italic">No date</span>{% endif %}
+              {% if event.start_time %} &middot; {{ event.start_time|time:"g:i A" }}{% endif %}
+              {% if event.duration_display != '—' %} &middot; {{ event.duration_display }}{% endif %}
+            </div>
+            <div>
               {% if event.account %}{{ event.account.name }}{% else %}<span class="text-muted fst-italic">Admin Event</span>{% endif %}
             </div>
             {% if event.account and event.account.street or event.account.city %}
@@ -206,11 +211,6 @@
               {% if event.account.street %}{{ event.account.street|title }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city|title }}{% endif %}
             </div>
             {% endif %}
-            <div class="small text-muted">
-              {% if event.date %}{{ event.date|date:"m/d/y" }}{% else %}<span class="fst-italic">No date</span>{% endif %}
-              {% if event.start_time %} &middot; {{ event.start_time|time:"g:i A" }}{% endif %}
-              {% if event.duration_display != '—' %} &middot; {{ event.duration_display }}{% endif %}
-            </div>
             <div class="small mt-1">
               <i class="bi bi-person me-1 text-muted"></i>
               {% if event.ambassador %}{{ event.ambassador.get_full_name|default:event.ambassador.username }}{% else %}<span class="text-muted fst-italic">Unassigned</span>{% endif %}
