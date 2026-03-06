@@ -788,12 +788,22 @@ Admin:
 
 ### Account Deletion
 - Only manually created accounts (auto_created=False) can be deleted
-- Before deleting, check for associated data: events, AccountItem records,
-  EventPhoto records
-- If any associated data exists, deletion is blocked with a clear error message
-  listing what data is blocking it
-- If no associated data exists, deletion requires confirmation modal
+- Before deleting, `get_account_associations(account)` in `apps/accounts/utils.py`
+  is called to get all association counts (events, photos)
+- If any association count is greater than zero, deletion is blocked with a clear
+  error message listing what is blocking it with actual counts and a note that
+  deactivation is always available as an alternative
+- If all counts are zero, deletion proceeds with an existing confirmation modal
 - Imported accounts (auto_created=True) do not get a delete option
+- Deactivation is always available for any account regardless of associated data
+
+### get_account_associations() Utility
+- Located in `apps/accounts/utils.py`
+- Single centralized place where account association checks live
+- Returns a dict mapping association name → count, e.g. `{'events': 3, 'photos': 0}`
+- Current associations checked: events (Event records), photos (EventPhoto records)
+- When new association types are added in the future, only this function needs updating
+- All callers (deletion check, blocking messages, future features) use this function
 
 ### Account Deactivation
 - Any account (manual or imported) can be deactivated regardless of associated data
@@ -1236,9 +1246,9 @@ If no AccountItem records exist, shows empty state message. Section is read-only
 - Created By is not shown anywhere on the detail page
 
 **Items section**
-- Items to be Sampled visible during Draft and Scheduled status
-- Hidden once recap workflow is active (Recap In Progress, Recap Submitted,
-  Revision Requested, Complete)
+- Items to be Sampled visible during Draft status only
+- Hidden for all other statuses: Scheduled, Recap In Progress, Recap Submitted,
+  Revision Requested, and Complete
 
 ### Admin Event Flow Fix
 - Releasing an Admin event sends it directly to Recap Submitted (skips Scheduled)
@@ -1527,5 +1537,5 @@ Light red background (#fff5f5) applies to any event requiring user action:
 
 ---
 
-*Last updated: March 3, 2026 (Phase 10.4: Expense model + AJAX UI + CSV columns; also: Revert Recap Submitted→Scheduled, media serving fix, CSV decimal duration)*
+*Last updated: March 6, 2026 (UI Tweaks session: mobile event list date layout; items-to-sampled Draft-only; expense unsaved guard; get_account_associations utility; account deletion updated)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
