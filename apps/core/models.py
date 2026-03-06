@@ -5,6 +5,8 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils.text import slugify
 
+from apps.core.rbac import Permission, Role  # noqa: F401 — register models with this app
+
 
 # ---------------------------------------------------------------------------
 # Abstract base — timestamps on every model
