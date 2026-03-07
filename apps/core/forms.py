@@ -4,43 +4,57 @@ Forms for Phase 1: login, user management, profile, and password changes.
 from django import forms
 from django.contrib.auth import get_user_model
 
+from apps.core.rbac import Role
+
 User = get_user_model()
 
 # ---------------------------------------------------------------------------
-# Role creation map — defines which roles a given creator can assign
+# Role choices list — ordered by hierarchy
+# ---------------------------------------------------------------------------
+
+ROLE_CHOICES = [
+    ('saas_admin',          'SaaS Admin'),
+    ('supplier_admin',      'Supplier Admin'),
+    ('sales_manager',       'Sales Manager'),
+    ('territory_manager',   'Territory Manager'),
+    ('ambassador_manager',  'Ambassador Manager'),
+    ('ambassador',          'Ambassador'),
+    ('distributor_contact', 'Distributor Contact'),
+    ('payroll_reviewer',    'Payroll Reviewer'),
+]
+
+# ---------------------------------------------------------------------------
+# Role creation map — keys and values are codename strings.
+# Defines which roles a given creator is allowed to assign.
 # ---------------------------------------------------------------------------
 
 CREATABLE_ROLES = {
-    User.Role.SAAS_ADMIN: [
-        User.Role.SUPPLIER_ADMIN,
-        User.Role.SALES_MANAGER,
-        User.Role.TERRITORY_MANAGER,
-        User.Role.AMBASSADOR_MANAGER,
-        User.Role.AMBASSADOR,
-        User.Role.DISTRIBUTOR_CONTACT,
+    'saas_admin': [
+        'supplier_admin', 'sales_manager', 'territory_manager',
+        'ambassador_manager', 'ambassador', 'distributor_contact',
     ],
-    User.Role.SUPPLIER_ADMIN: [
-        User.Role.SUPPLIER_ADMIN,
-        User.Role.SALES_MANAGER,
-        User.Role.TERRITORY_MANAGER,
-        User.Role.AMBASSADOR_MANAGER,
-        User.Role.AMBASSADOR,
-        User.Role.DISTRIBUTOR_CONTACT,
+    'supplier_admin': [
+        'supplier_admin', 'sales_manager', 'territory_manager',
+        'ambassador_manager', 'ambassador', 'distributor_contact',
     ],
-    User.Role.SALES_MANAGER: [
-        User.Role.TERRITORY_MANAGER,
-        User.Role.AMBASSADOR_MANAGER,
-        User.Role.AMBASSADOR,
-        User.Role.DISTRIBUTOR_CONTACT,
+    'sales_manager': [
+        'territory_manager', 'ambassador_manager', 'ambassador', 'distributor_contact',
     ],
-    User.Role.TERRITORY_MANAGER: [
-        User.Role.AMBASSADOR_MANAGER,
-        User.Role.AMBASSADOR,
+    'territory_manager': [
+        'ambassador_manager', 'ambassador',
     ],
-    User.Role.AMBASSADOR_MANAGER: [
-        User.Role.AMBASSADOR,
+    'ambassador_manager': [
+        'ambassador',
     ],
 }
+
+
+def _allowed_codenames_for(user):
+    """Return the set of role codenames a user is allowed to assign to others."""
+    allowed = set()
+    for rc in user.get_role_codenames():
+        allowed |= set(CREATABLE_ROLES.get(rc, []))
+    return allowed
 
 
 # ---------------------------------------------------------------------------
@@ -58,17 +72,21 @@ class UserCreateForm(forms.ModelForm):
         widget=forms.PasswordInput(attrs={'class': 'form-control', 'autocomplete': 'new-password'}),
         label='Confirm Password',
     )
+    role = forms.ChoiceField(
+        choices=[('', 'Select Role')],
+        widget=forms.Select(attrs={'class': 'form-select'}),
+        label='Role',
+    )
 
     class Meta:
         model = User
-        fields = ['first_name', 'last_name', 'email', 'phone', 'username', 'role', 'is_active']
+        fields = ['first_name', 'last_name', 'email', 'phone', 'username', 'is_active']
         widgets = {
             'first_name': forms.TextInput(attrs={'class': 'form-control'}),
             'last_name': forms.TextInput(attrs={'class': 'form-control'}),
             'email': forms.EmailInput(attrs={'class': 'form-control'}),
             'phone': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
             'username': forms.TextInput(attrs={'class': 'form-control'}),
-            'role': forms.Select(attrs={'class': 'form-select'}),
             'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
 
@@ -76,11 +94,10 @@ class UserCreateForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.creator = creator
 
-        # Limit role choices to what this creator is allowed to assign
         if creator:
-            allowed = CREATABLE_ROLES.get(creator.role, [])
+            allowed = _allowed_codenames_for(creator)
             self.fields['role'].choices = [('', 'Select Role')] + [
-                (r, label) for r, label in User.Role.choices if r in allowed
+                (codename, label) for codename, label in ROLE_CHOICES if codename in allowed
             ]
             self.fields['role'].initial = ''
 
@@ -130,6 +147,13 @@ class UserCreateForm(forms.ModelForm):
             user.created_by = self.creator
         if commit:
             user.save()
+            role_codename = self.cleaned_data.get('role')
+            if role_codename:
+                try:
+                    role_obj = Role.objects.get(codename=role_codename)
+                    user.roles.set([role_obj])
+                except Role.DoesNotExist:
+                    pass
         return user
 
 
@@ -138,29 +162,47 @@ class UserCreateForm(forms.ModelForm):
 # ---------------------------------------------------------------------------
 
 class UserEditForm(forms.ModelForm):
+    role = forms.ChoiceField(
+        choices=[],
+        widget=forms.Select(attrs={'class': 'form-select'}),
+        label='Role',
+    )
+
     class Meta:
         model = User
-        fields = ['first_name', 'last_name', 'email', 'phone', 'username', 'role', 'is_active']
+        fields = ['first_name', 'last_name', 'email', 'phone', 'username', 'is_active']
         widgets = {
             'first_name': forms.TextInput(attrs={'class': 'form-control'}),
             'last_name': forms.TextInput(attrs={'class': 'form-control'}),
             'email': forms.EmailInput(attrs={'class': 'form-control'}),
             'phone': forms.TextInput(attrs={'class': 'form-control'}),
             'username': forms.TextInput(attrs={'class': 'form-control'}),
-            'role': forms.Select(attrs={'class': 'form-select'}),
             'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
 
     def __init__(self, *args, editor=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.editor = editor
+
+        current_roles = (
+            set(self.instance.roles.values_list('codename', flat=True))
+            if self.instance and self.instance.pk
+            else set()
+        )
+        current_role = next(iter(current_roles), None)
+
         if editor:
-            allowed = CREATABLE_ROLES.get(editor.role, [])
-            current_role = self.instance.role if self.instance and self.instance.pk else None
+            allowed = _allowed_codenames_for(editor)
             self.fields['role'].choices = [
-                (r, label) for r, label in User.Role.choices
-                if r in allowed or r == current_role
+                (codename, label) for codename, label in ROLE_CHOICES
+                if codename in allowed or codename == current_role
             ]
+        else:
+            self.fields['role'].choices = ROLE_CHOICES
+
+        if current_role:
+            self.fields['role'].initial = current_role
+
         for f in ['first_name', 'last_name', 'email', 'username']:
             self.fields[f].required = True
         self.fields['phone'].required = False
@@ -173,6 +215,18 @@ class UserEditForm(forms.ModelForm):
         if qs.exists():
             raise forms.ValidationError('This username is already taken.')
         return username
+
+    def save(self, commit=True):
+        user = super().save(commit=commit)
+        if commit:
+            role_codename = self.cleaned_data.get('role')
+            if role_codename:
+                try:
+                    role_obj = Role.objects.get(codename=role_codename)
+                    user.roles.set([role_obj])
+                except Role.DoesNotExist:
+                    pass
+        return user
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +289,7 @@ class AdminPasswordResetForm(forms.Form):
         p1 = cleaned.get('new_password')
         p2 = cleaned.get('new_password_confirm')
         if p1 and p2 and p1 != p2:
-            self.add_error('new_password_confirm', 'Passwords do not match.')
+            self.add_error('new_password_confirm', 'New passwords do not match.')
         return cleaned
 
 

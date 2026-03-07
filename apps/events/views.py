@@ -33,32 +33,20 @@ from .storage import delete_event_photo, save_event_photo
 # ---------------------------------------------------------------------------
 
 _VIEWER_ROLES = {
-    User.Role.SUPPLIER_ADMIN,
-    User.Role.SALES_MANAGER,
-    User.Role.TERRITORY_MANAGER,
-    User.Role.AMBASSADOR_MANAGER,
-    User.Role.AMBASSADOR,
+    'supplier_admin', 'sales_manager', 'territory_manager',
+    'ambassador_manager', 'ambassador',
 }
 
 _CREATOR_ROLES = {
-    User.Role.SUPPLIER_ADMIN,
-    User.Role.SALES_MANAGER,
-    User.Role.TERRITORY_MANAGER,
-    User.Role.AMBASSADOR_MANAGER,
+    'supplier_admin', 'sales_manager', 'territory_manager', 'ambassador_manager',
 }
 
 _MANAGER_ROLES = {
-    User.Role.SUPPLIER_ADMIN,
-    User.Role.SALES_MANAGER,
-    User.Role.TERRITORY_MANAGER,
-    User.Role.AMBASSADOR_MANAGER,
+    'supplier_admin', 'sales_manager', 'territory_manager', 'ambassador_manager',
 }
 
 _ACTION_ROLES = {
-    User.Role.SUPPLIER_ADMIN,
-    User.Role.SALES_MANAGER,
-    User.Role.AMBASSADOR_MANAGER,
-    User.Role.TERRITORY_MANAGER,
+    'supplier_admin', 'sales_manager', 'ambassador_manager', 'territory_manager',
 }
 
 # Statuses where the recap form is editable
@@ -136,16 +124,15 @@ def _get_visible_events(user):
     if not company:
         return Event.objects.none()
 
-    role = user.role
     qs = Event.objects.filter(company=company).select_related(
         'account', 'ambassador', 'event_manager', 'created_by',
         'account__distributor',
     )
 
-    if role == User.Role.SUPPLIER_ADMIN:
+    if user.has_role('supplier_admin'):
         return qs
 
-    if role == User.Role.SALES_MANAGER:
+    if user.has_role('sales_manager'):
         # Sales Managers see all events with accounts, plus all admin events
         # (admin events have no account scoping per the product spec)
         return qs.filter(
@@ -153,19 +140,19 @@ def _get_visible_events(user):
             | Q(event_type=Event.EventType.ADMIN)
         )
 
-    if role == User.Role.TERRITORY_MANAGER:
+    if user.has_role('territory_manager'):
         visible_accounts = get_accounts_for_user(user)
         return qs.filter(
             Q(account__in=visible_accounts)
             | Q(event_type=Event.EventType.ADMIN, created_by=user)
         )
 
-    if role == User.Role.AMBASSADOR_MANAGER:
+    if user.has_role('ambassador_manager'):
         return qs.filter(
             Q(created_by=user) | Q(event_manager=user)
         )
 
-    if role == User.Role.AMBASSADOR:
+    if user.has_role('ambassador'):
         return qs.filter(
             ambassador=user
         ).exclude(status=Event.Status.DRAFT)
@@ -175,12 +162,7 @@ def _get_visible_events(user):
 
 def _can_view_drafts(user):
     """True if this user should see Draft events."""
-    return user.role in (
-        User.Role.SUPPLIER_ADMIN,
-        User.Role.SALES_MANAGER,
-        User.Role.TERRITORY_MANAGER,
-        User.Role.AMBASSADOR_MANAGER,
-    )
+    return user.has_permission('can_view_draft_events')
 
 
 def _sort_events(events_qs):
@@ -292,9 +274,7 @@ def _apply_event_filters(qs, filters):
 
 @login_required
 def event_list(request):
-    if request.user.role == User.Role.DISTRIBUTOR_CONTACT:
-        return render(request, '403.html', status=403)
-    if request.user.role not in _VIEWER_ROLES:
+    if not request.user.has_permission('can_view_events'):
         return render(request, '403.html', status=403)
 
     company = request.user.company
@@ -413,9 +393,7 @@ def event_export_csv(request):
     from datetime import date as _date
     from django.http import HttpResponse
 
-    if request.user.role == User.Role.DISTRIBUTOR_CONTACT:
-        return render(request, '403.html', status=403)
-    if request.user.role not in _VIEWER_ROLES:
+    if not request.user.has_permission('can_view_events'):
         return render(request, '403.html', status=403)
 
     # Build filter dict from GET parameters (same keys as event_list session)
@@ -552,38 +530,25 @@ def event_export_csv(request):
 
 @login_required
 def event_detail(request, pk):
-    if request.user.role == User.Role.DISTRIBUTOR_CONTACT:
+    if not request.user.has_permission('can_view_events'):
         return render(request, '403.html', status=403)
 
     company = request.user.company
     visible = _get_visible_events(request.user)
     event = get_object_or_404(visible, pk=pk, company=company)
 
-    can_edit = request.user.role in _CREATOR_ROLES
-    can_action = request.user.role in _ACTION_ROLES
+    can_edit = bool(request.user.get_role_codenames() & _CREATOR_ROLES)
+    can_action = bool(request.user.get_role_codenames() & _ACTION_ROLES)
     can_recap = _can_recap(request.user, event)
 
-    # Revert Complete → Recap Submitted: Supplier Admin, Sales Manager, or this event's manager
+    # Revert Complete → Recap Submitted: can_approve_event OR this event's manager
     user = request.user
-    can_revert = (
-        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
-        or (event.event_manager_id and event.event_manager_id == user.pk)
-    )
-    # Move Scheduled → Draft: same permission set as revert
-    can_unrelease = (
-        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
-        or (event.event_manager_id and event.event_manager_id == user.pk)
-    )
-    # Revert Recap Submitted → Scheduled (destructive): same permission set
-    can_revert_to_scheduled = (
-        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
-        or (event.event_manager_id and event.event_manager_id == user.pk)
-    )
-    # Revert Revision Requested → Scheduled (destructive): same permission set
-    can_revert_revision_requested = (
-        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
-        or (event.event_manager_id and event.event_manager_id == user.pk)
-    )
+    _has_revert_role = user.has_permission('can_approve_event')
+    _is_event_manager = event.event_manager_id and event.event_manager_id == user.pk
+    can_revert = _has_revert_role or _is_event_manager
+    can_unrelease = _has_revert_role or _is_event_manager
+    can_revert_to_scheduled = _has_revert_role or _is_event_manager
+    can_revert_revision_requested = _has_revert_role or _is_event_manager
 
     tasting_items_by_brand = None
     if event.event_type == Event.EventType.TASTING:
@@ -641,7 +606,7 @@ def _account_search_disabled(user):
     (they have no accounts available and no privileged access).
     """
     from apps.accounts.models import UserCoverageArea
-    if user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SAAS_ADMIN):
+    if user.has_permission('can_view_all_accounts'):
         return False
     # All other roles need coverage areas
     return not UserCoverageArea.objects.filter(
@@ -654,7 +619,7 @@ _VALID_EVENT_TYPES = {'tasting', 'special_event', 'admin'}
 
 @login_required
 def event_create(request):
-    if request.user.role not in _CREATOR_ROLES:
+    if not request.user.has_permission('can_create_events'):
         return render(request, '403.html', status=403)
 
     company = request.user.company
@@ -715,7 +680,7 @@ def event_create(request):
 
 @login_required
 def event_edit(request, pk):
-    if request.user.role not in _CREATOR_ROLES:
+    if not request.user.has_permission('can_edit_events'):
         return render(request, '403.html', status=403)
 
     company = request.user.company
@@ -781,7 +746,7 @@ def event_release(request, pk):
     - Admin:                   Draft → Recap Submitted
       (Admin events have no recap step, so they go straight to awaiting approval.)
     """
-    if request.user.role not in _ACTION_ROLES:
+    if not request.user.has_permission('can_release_event'):
         return render(request, '403.html', status=403)
     if request.method != 'POST':
         return redirect('event_detail', pk=pk)
@@ -825,7 +790,7 @@ def event_release(request, pk):
 @login_required
 def event_request_revision(request, pk):
     """POST: Recap Submitted → Revision Requested (Tasting / Special Event only)."""
-    if request.user.role not in _ACTION_ROLES:
+    if not request.user.has_permission('can_request_revision'):
         return render(request, '403.html', status=403)
     if request.method != 'POST':
         return redirect('event_detail', pk=pk)
@@ -872,7 +837,7 @@ def event_unrelease(request, pk):
 
     user = request.user
     can_unrelease = (
-        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
+        user.has_permission('can_approve_event')
         or (event.event_manager_id and event.event_manager_id == user.pk)
     )
     if not can_unrelease:
@@ -891,7 +856,7 @@ def event_unrelease(request, pk):
 @login_required
 def event_approve(request, pk):
     """POST: Recap Submitted → Complete (with race condition guard)."""
-    if request.user.role not in _ACTION_ROLES:
+    if not request.user.has_permission('can_approve_event'):
         return render(request, '403.html', status=403)
     if request.method != 'POST':
         return redirect('event_detail', pk=pk)
@@ -1162,10 +1127,10 @@ def event_revert_complete(request, pk):
     visible = _get_visible_events(request.user)
     event = get_object_or_404(visible, pk=pk, company=company)
 
-    # Permission check: Supplier Admin, Sales Manager, or this event's Event Manager
+    # Permission check: can_approve_event OR this event's Event Manager
     user = request.user
     can_revert = (
-        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
+        user.has_permission('can_approve_event')
         or (event.event_manager_id and event.event_manager_id == user.pk)
     )
     if not can_revert:
@@ -1236,7 +1201,7 @@ def event_revert_recap_submitted(request, pk):
 
     user = request.user
     can_revert = (
-        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
+        user.has_permission('can_approve_event')
         or (event.event_manager_id and event.event_manager_id == user.pk)
     )
     if not can_revert:
@@ -1271,7 +1236,7 @@ def event_revert_revision_requested(request, pk):
 
     user = request.user
     can_revert = (
-        user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SALES_MANAGER)
+        user.has_permission('can_approve_event')
         or (event.event_manager_id and event.event_manager_id == user.pk)
     )
     if not can_revert:
@@ -1289,7 +1254,7 @@ def event_revert_revision_requested(request, pk):
 @login_required
 def event_delete(request, pk):
     """POST: Permanently delete a Draft event."""
-    if request.user.role not in _ACTION_ROLES:
+    if not request.user.has_permission('can_delete_event'):
         return render(request, '403.html', status=403)
     if request.method != 'POST':
         return redirect('event_detail', pk=pk)
@@ -1331,15 +1296,8 @@ def ajax_ambassadors(request):
     company = request.user.company
     account_id = request.GET.get('account_id', '').strip()
 
-    # Ambassador dropdown roles (Change 7)
-    # SaaS Admin and Distributor Contact are excluded
-    roles = [
-        User.Role.AMBASSADOR,
-        User.Role.AMBASSADOR_MANAGER,
-        User.Role.TERRITORY_MANAGER,
-        User.Role.SALES_MANAGER,
-        User.Role.SUPPLIER_ADMIN,
-    ]
+    # Ambassador dropdown roles — SaaS Admin and Distributor Contact excluded
+    roles = ['ambassador', 'ambassador_manager', 'territory_manager', 'sales_manager', 'supplier_admin']
 
     if account_id:
         try:
@@ -1351,8 +1309,8 @@ def ajax_ambassadors(request):
     else:
         # Admin event: all company users in these roles (except Supplier Admin is included too)
         users = User.objects.filter(
-            company=company, role__in=roles, is_active=True
-        ).order_by('last_name', 'first_name')
+            company=company, roles__codename__in=roles, is_active=True
+        ).distinct().order_by('last_name', 'first_name')
 
     return JsonResponse({'ambassadors': _ambassador_list_response(users)})
 
@@ -1373,12 +1331,7 @@ def ajax_event_managers(request):
     company = request.user.company
     account_id = request.GET.get('account_id', '').strip()
 
-    roles = [
-        User.Role.AMBASSADOR_MANAGER,
-        User.Role.TERRITORY_MANAGER,
-        User.Role.SALES_MANAGER,
-        User.Role.SUPPLIER_ADMIN,
-    ]
+    roles = ['ambassador_manager', 'territory_manager', 'sales_manager', 'supplier_admin']
 
     if account_id:
         try:
@@ -1388,8 +1341,8 @@ def ajax_event_managers(request):
         users = get_users_covering_account(account, roles)
     else:
         users = User.objects.filter(
-            company=company, role__in=roles, is_active=True
-        ).order_by('last_name', 'first_name')
+            company=company, roles__codename__in=roles, is_active=True
+        ).distinct().order_by('last_name', 'first_name')
 
     return JsonResponse({
         'event_managers': _ambassador_list_response(users),

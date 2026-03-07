@@ -50,7 +50,7 @@ class Company(TimeStampedModel):
 
 
 # ---------------------------------------------------------------------------
-# User — extended with tenant assignment and role
+# User — extended with tenant assignment and RBAC roles
 # ---------------------------------------------------------------------------
 
 class User(AbstractUser, TimeStampedModel):
@@ -58,27 +58,12 @@ class User(AbstractUser, TimeStampedModel):
     Extended user model.  Inherits created_at / updated_at from
     TimeStampedModel; AbstractUser provides the standard auth fields.
 
-    Roles
-    -----
-    SAAS_ADMIN          Platform-level; not scoped to any company.
-    SUPPLIER_ADMIN      Superuser within their Company tenant.
-    SALES_MANAGER       Sees all distributors/accounts in their Company.
-    TERRITORY_MANAGER   Same as Sales Manager but scoped to assigned accounts.
-    AMBASSADOR_MANAGER  Manages specific accounts and ambassadors.
-    AMBASSADOR          Scoped to their own assigned events only.
-    DISTRIBUTOR_CONTACT Read-only access scoped to their distributor.
+    Roles are assigned via the M2M `roles` field (core.Role).
+    Each Role carries a set of Permissions (core.Permission).
+    Use has_role() and has_permission() for all access checks.
     """
 
-    class Role(models.TextChoices):
-        SAAS_ADMIN = 'saas_admin', 'SaaS Admin'
-        SUPPLIER_ADMIN = 'supplier_admin', 'Supplier Admin'
-        SALES_MANAGER = 'sales_manager', 'Sales Manager'
-        TERRITORY_MANAGER = 'territory_manager', 'Territory Manager'
-        AMBASSADOR_MANAGER = 'ambassador_manager', 'Ambassador Manager'
-        AMBASSADOR = 'ambassador', 'Ambassador'
-        DISTRIBUTOR_CONTACT = 'distributor_contact', 'Distributor Contact'
-
-    # Tenant link — null only for SAAS_ADMIN
+    # Tenant link — null only for saas_admin
     company = models.ForeignKey(
         'core.Company',
         on_delete=models.PROTECT,
@@ -87,10 +72,11 @@ class User(AbstractUser, TimeStampedModel):
         related_name='users',
     )
 
-    role = models.CharField(
-        max_length=30,
-        choices=Role.choices,
-        default=Role.AMBASSADOR,
+    # RBAC role assignments
+    roles = models.ManyToManyField(
+        'core.Role',
+        blank=True,
+        related_name='users',
     )
 
     # Contact phone number (optional for all roles)
@@ -115,33 +101,80 @@ class User(AbstractUser, TimeStampedModel):
         return full if full.strip() else self.username
 
     # ------------------------------------------------------------------
-    # Role convenience properties
+    # RBAC helpers
+    # ------------------------------------------------------------------
+
+    def get_role_codenames(self) -> set:
+        """
+        Returns a set of all role codenames assigned to this user.
+        Cached on the instance.
+        """
+        if not hasattr(self, '_role_cache'):
+            self._role_cache = set(
+                self.roles.values_list('codename', flat=True)
+            )
+        return self._role_cache
+
+    def get_permission_codenames(self) -> set:
+        """
+        Returns a set of all permission codenames available to this user
+        across all their roles. Cached on the instance.
+        """
+        if not hasattr(self, '_perm_cache'):
+            self._perm_cache = {
+                c
+                for c in self.roles.values_list('permissions__codename', flat=True)
+                if c is not None
+            }
+        return self._perm_cache
+
+    def has_role(self, codename: str) -> bool:
+        """
+        Returns True if the user has the role with the given codename.
+        Caches the role set on the instance on first call.
+        """
+        return codename in self.get_role_codenames()
+
+    def has_permission(self, codename: str) -> bool:
+        """
+        Returns True if any of the user's roles has the given permission.
+        Caches the full permission set on the instance on first call.
+        """
+        return codename in self.get_permission_codenames()
+
+    # ------------------------------------------------------------------
+    # Role convenience properties — implemented via has_role() so
+    # existing template and view checks continue to work unchanged.
     # ------------------------------------------------------------------
 
     @property
     def is_saas_admin(self):
-        return self.role == self.Role.SAAS_ADMIN
+        return self.has_role('saas_admin')
 
     @property
     def is_supplier_admin(self):
-        return self.role == self.Role.SUPPLIER_ADMIN
+        return self.has_role('supplier_admin')
 
     @property
     def is_sales_manager(self):
-        return self.role == self.Role.SALES_MANAGER
+        return self.has_role('sales_manager')
 
     @property
     def is_territory_manager(self):
-        return self.role == self.Role.TERRITORY_MANAGER
+        return self.has_role('territory_manager')
 
     @property
     def is_ambassador_manager(self):
-        return self.role == self.Role.AMBASSADOR_MANAGER
+        return self.has_role('ambassador_manager')
 
     @property
     def is_ambassador(self):
-        return self.role == self.Role.AMBASSADOR
+        return self.has_role('ambassador')
 
     @property
     def is_distributor_contact(self):
-        return self.role == self.Role.DISTRIBUTOR_CONTACT
+        return self.has_role('distributor_contact')
+
+    @property
+    def is_payroll_reviewer(self):
+        return self.has_role('payroll_reviewer')

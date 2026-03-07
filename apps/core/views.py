@@ -16,24 +16,12 @@ from .forms import (
     AdminPasswordResetForm,
     ProfileEditForm,
     CREATABLE_ROLES,
+    ROLE_CHOICES,
+    _allowed_codenames_for,
 )
 from apps.distribution.models import Distributor
 from apps.accounts.constants import US_STATES, US_STATES_DICT
 from apps.accounts.views import _build_enhanced_coverage_areas
-
-# ---------------------------------------------------------------------------
-# Role sets for access control
-# ---------------------------------------------------------------------------
-
-USER_MGMT_ROLES = {
-    User.Role.SAAS_ADMIN,
-    User.Role.SUPPLIER_ADMIN,
-}
-
-PASSWORD_RESET_ROLES = {
-    User.Role.SAAS_ADMIN,
-    User.Role.SUPPLIER_ADMIN,
-}
 
 
 # ---------------------------------------------------------------------------
@@ -51,16 +39,16 @@ def _can_manage_user(manager, target):
     if manager.is_sales_manager:
         return (
             target.company_id == manager.company_id
-            and target.role not in {User.Role.SAAS_ADMIN, User.Role.SUPPLIER_ADMIN}
+            and not (target.has_role('saas_admin') or target.has_role('supplier_admin'))
         )
     if manager.is_territory_manager:
         return (
             target.company_id == manager.company_id
-            and target.role in {User.Role.AMBASSADOR_MANAGER, User.Role.AMBASSADOR}
+            and (target.has_role('ambassador_manager') or target.has_role('ambassador'))
         )
     if manager.is_ambassador_manager:
         return (
-            target.role == User.Role.AMBASSADOR
+            target.has_role('ambassador')
             and target.created_by_id == manager.pk
         )
     return False
@@ -78,21 +66,19 @@ def _get_visible_users(requesting_user):
         return base_qs
 
     if u.is_sales_manager:
-        return base_qs.filter(role__in=[
-            User.Role.TERRITORY_MANAGER,
-            User.Role.AMBASSADOR_MANAGER,
-            User.Role.AMBASSADOR,
-            User.Role.DISTRIBUTOR_CONTACT,
-        ])
+        return base_qs.filter(roles__codename__in=[
+            'territory_manager', 'ambassador_manager', 'ambassador', 'distributor_contact',
+        ]).distinct()
 
     if u.is_territory_manager:
-        return base_qs.filter(role__in=[
-            User.Role.AMBASSADOR_MANAGER,
-            User.Role.AMBASSADOR,
-        ])
+        return base_qs.filter(roles__codename__in=[
+            'ambassador_manager', 'ambassador',
+        ]).distinct()
 
     if u.is_ambassador_manager:
-        return base_qs.filter(role=User.Role.AMBASSADOR, created_by=u)
+        return base_qs.filter(
+            roles__codename='ambassador', created_by=u
+        ).distinct()
 
     return User.objects.none()
 
@@ -119,7 +105,7 @@ def login_view(request):
                 next_url = request.GET.get('next', '')
                 if next_url:
                     return redirect(next_url)
-                if user.role in (User.Role.AMBASSADOR_MANAGER, User.Role.AMBASSADOR):
+                if user.has_permission('can_redirect_to_events_on_login'):
                     return redirect('event_list')
                 return redirect('dashboard')
         else:
@@ -161,7 +147,7 @@ PHASE_ROADMAP = [
 
 @login_required
 def dashboard(request):
-    if request.user.role in (User.Role.AMBASSADOR_MANAGER, User.Role.AMBASSADOR):
+    if request.user.has_permission('can_redirect_to_events_on_login'):
         return redirect('event_list')
     return render(request, 'core/dashboard.html', {'phases': PHASE_ROADMAP})
 
@@ -172,7 +158,7 @@ def dashboard(request):
 
 @login_required
 def user_list(request):
-    if request.user.role not in USER_MGMT_ROLES:
+    if not request.user.has_permission('can_manage_users'):
         return render(request, '403.html', status=403)
 
     users = _get_visible_users(request.user)
@@ -188,25 +174,25 @@ def user_list(request):
             | Q(username__icontains=search)
         )
     if role_filter:
-        users = users.filter(role=role_filter)
+        users = users.filter(roles__codename=role_filter).distinct()
 
     users = users.order_by('last_name', 'first_name')
-    can_create = bool(CREATABLE_ROLES.get(request.user.role))
+    can_create = request.user.has_permission('can_create_users')
 
     return render(request, 'core/user_list.html', {
         'users': users,
         'search': search,
         'role_filter': role_filter,
-        'role_choices': User.Role.choices,
+        'role_choices': ROLE_CHOICES,
         'can_create': can_create,
     })
 
 
 @login_required
 def user_create(request):
-    if request.user.role not in USER_MGMT_ROLES:
+    if not request.user.has_permission('can_manage_users'):
         return render(request, '403.html', status=403)
-    if not CREATABLE_ROLES.get(request.user.role):
+    if not request.user.has_permission('can_create_users'):
         return render(request, '403.html', status=403)
 
     if request.method == 'POST':
@@ -224,7 +210,7 @@ def user_create(request):
 
 @login_required
 def user_edit(request, pk):
-    if request.user.role not in USER_MGMT_ROLES:
+    if not request.user.has_permission('can_manage_users'):
         return render(request, '403.html', status=403)
 
     target = get_object_or_404(User, pk=pk)
@@ -269,7 +255,7 @@ def user_edit(request, pk):
 
 @login_required
 def user_deactivate(request, pk):
-    if request.user.role not in USER_MGMT_ROLES:
+    if not request.user.has_permission('can_manage_users'):
         return render(request, '403.html', status=403)
 
     target = get_object_or_404(User, pk=pk)
@@ -294,7 +280,7 @@ def user_deactivate(request, pk):
 
 @login_required
 def user_password_reset(request, pk):
-    if request.user.role not in PASSWORD_RESET_ROLES:
+    if not request.user.has_permission('can_reset_user_password'):
         return render(request, '403.html', status=403)
 
     target = get_object_or_404(User, pk=pk)

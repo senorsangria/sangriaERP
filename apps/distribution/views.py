@@ -16,7 +16,7 @@ def _require_supplier_admin(request):
     """Return 403 response if user is not a Supplier Admin, else None."""
     if not request.user.is_authenticated:
         return redirect('login')
-    if request.user.role != User.Role.SUPPLIER_ADMIN:
+    if not request.user.has_permission('can_manage_distributors'):
         return render(request, '403.html', status=403)
     return None
 

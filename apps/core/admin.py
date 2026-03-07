@@ -20,7 +20,7 @@ class UserAdmin(BaseUserAdmin):
         ('productERP', {
             'fields': (
                 'company',
-                'role',
+                'roles',
                 'phone',
                 'created_by',
             ),
@@ -33,12 +33,12 @@ class UserAdmin(BaseUserAdmin):
 
     add_fieldsets = BaseUserAdmin.add_fieldsets + (
         ('productERP', {
-            'fields': ('company', 'role'),
+            'fields': ('company', 'roles'),
         }),
     )
 
-    list_display = ('username', 'email', 'get_full_name', 'company', 'role', 'is_active')
-    list_filter = ('role', 'company', 'is_active', 'is_staff')
+    list_display = ('username', 'email', 'get_full_name', 'company', 'is_active')
+    list_filter = ('roles', 'company', 'is_active', 'is_staff')
     search_fields = ('username', 'email', 'first_name', 'last_name')
     filter_horizontal = ()
     readonly_fields = ('created_at', 'updated_at')

@@ -71,18 +71,15 @@ class EventForm(forms.ModelForm):
 
         # Ambassador: all roles eligible per ajax_ambassadors() (refined via AJAX)
         _ambassador_roles = [
-            User.Role.AMBASSADOR,
-            User.Role.AMBASSADOR_MANAGER,
-            User.Role.TERRITORY_MANAGER,
-            User.Role.SALES_MANAGER,
-            User.Role.SUPPLIER_ADMIN,
+            'ambassador', 'ambassador_manager', 'territory_manager',
+            'sales_manager', 'supplier_admin',
         ]
         self.fields['ambassador'].queryset = (
             User.objects.filter(
                 company=company,
                 is_active=True,
-                role__in=_ambassador_roles,
-            ).order_by('last_name', 'first_name')
+                roles__codename__in=_ambassador_roles,
+            ).distinct().order_by('last_name', 'first_name')
             if company else User.objects.none()
         )
         self.fields['ambassador'].required = False
@@ -92,15 +89,12 @@ class EventForm(forms.ModelForm):
         # On create form, also include the current user regardless of role so
         # the dropdown shows them pre-selected before any account is chosen.
         em_roles = [
-            User.Role.AMBASSADOR_MANAGER,
-            User.Role.TERRITORY_MANAGER,
-            User.Role.SALES_MANAGER,
-            User.Role.SUPPLIER_ADMIN,
+            'ambassador_manager', 'territory_manager', 'sales_manager', 'supplier_admin',
         ]
         if company:
             em_qs = User.objects.filter(
-                company=company, is_active=True, role__in=em_roles,
-            )
+                company=company, is_active=True, roles__codename__in=em_roles,
+            ).distinct()
             if user is not None and not self.instance.pk:
                 # Ensure the creating user is always in the queryset
                 em_qs = (em_qs | User.objects.filter(pk=user.pk)).distinct()

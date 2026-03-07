@@ -22,19 +22,11 @@ from .utils import get_account_associations
 from .utils import get_accounts_for_user
 
 
-_ALLOWED_ROLES = {
-    User.Role.TERRITORY_MANAGER,
-    User.Role.AMBASSADOR_MANAGER,
-    User.Role.SALES_MANAGER,
-    User.Role.SUPPLIER_ADMIN,
-}
-
-
 def _require_account_access(request):
-    """Return a 403 response if the user's role is not allowed, else None."""
+    """Return a 403 response if the user lacks account access, else None."""
     if not request.user.is_authenticated:
         return redirect('login')
-    if request.user.role not in _ALLOWED_ROLES:
+    if not request.user.has_permission('can_view_accounts'):
         return render(request, '403.html', status=403)
     return None
 
@@ -151,7 +143,7 @@ def account_list(request):
     # filters is_active=True).  Build the appropriate base queryset, applying
     # the same coverage-area scoping that get_accounts_for_user() provides.
     if active_status == 'inactive':
-        is_privileged = request.user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SAAS_ADMIN)
+        is_privileged = request.user.has_permission('can_view_all_accounts')
         if is_privileged:
             accounts = Account.objects.filter(
                 company=company, is_active=False, merged_into__isnull=True
@@ -187,7 +179,7 @@ def account_list(request):
     accounts = accounts.select_related('distributor')
 
     # Determine if we should show the "no coverage areas" message
-    is_privileged = request.user.role in (User.Role.SUPPLIER_ADMIN, User.Role.SAAS_ADMIN)
+    is_privileged = request.user.has_permission('can_view_all_accounts')
     show_no_coverage_message = False
     if not is_privileged:
         has_coverage = UserCoverageArea.objects.filter(

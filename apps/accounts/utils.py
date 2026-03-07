@@ -50,9 +50,7 @@ def get_accounts_for_user(user):
       - City coverage       → all accounts in that city + state
       - Account coverage    → that specific account directly
     """
-    from apps.core.models import User as UserModel
-
-    if user.role == UserModel.Role.SAAS_ADMIN:
+    if user.has_role('saas_admin'):
         # SaaS Admin sees all accounts across all companies
         return Account.active_accounts.all()
 
@@ -60,7 +58,7 @@ def get_accounts_for_user(user):
     if not company:
         return Account.active_accounts.none()
 
-    if user.role == UserModel.Role.SUPPLIER_ADMIN:
+    if user.has_role('supplier_admin'):
         # Supplier Admin sees all accounts for their company
         return Account.active_accounts.filter(company=company)
 
@@ -124,8 +122,8 @@ def get_users_covering_account(account, roles):
     roles = list(roles)
 
     # Separate Supplier Admin (always included) from coverage-filtered roles
-    include_supplier_admin = UserModel.Role.SUPPLIER_ADMIN in roles
-    filtered_roles = [r for r in roles if r != UserModel.Role.SUPPLIER_ADMIN]
+    include_supplier_admin = 'supplier_admin' in roles
+    filtered_roles = [r for r in roles if r != 'supplier_admin']
 
     # Build Q matching UserCoverageArea records that cover this account
     coverage_q = Q(pk__in=[])
@@ -169,16 +167,16 @@ def get_users_covering_account(account, roles):
         )
         coverage_filtered = UserModel.objects.filter(
             company=company,
-            role__in=filtered_roles,
+            roles__codename__in=filtered_roles,
             is_active=True,
             pk__in=covering_user_pks,
-        )
+        ).distinct()
         result_qs = coverage_filtered
 
     if include_supplier_admin:
         supplier_admins = UserModel.objects.filter(
             company=company,
-            role=UserModel.Role.SUPPLIER_ADMIN,
+            roles__codename='supplier_admin',
             is_active=True,
         )
         result_qs = result_qs | supplier_admins
