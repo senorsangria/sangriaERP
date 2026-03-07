@@ -2,6 +2,7 @@
 Event forms.
 """
 from django import forms
+from django.db.models import Q
 
 from apps.catalog.models import Item
 from apps.core.models import User
@@ -92,12 +93,17 @@ class EventForm(forms.ModelForm):
             'ambassador_manager', 'territory_manager', 'sales_manager', 'supplier_admin',
         ]
         if company:
-            em_qs = User.objects.filter(
-                company=company, is_active=True, roles__codename__in=em_roles,
-            ).distinct()
             if user is not None and not self.instance.pk:
-                # Ensure the creating user is always in the queryset
-                em_qs = (em_qs | User.objects.filter(pk=user.pk)).distinct()
+                # Ensure the creating user is always in the queryset, using Q
+                # objects to avoid combining distinct and non-distinct querysets.
+                em_qs = User.objects.filter(
+                    Q(company=company, is_active=True, roles__codename__in=em_roles)
+                    | Q(pk=user.pk)
+                ).distinct()
+            else:
+                em_qs = User.objects.filter(
+                    company=company, is_active=True, roles__codename__in=em_roles,
+                ).distinct()
             self.fields['event_manager'].queryset = em_qs.order_by('last_name', 'first_name')
         else:
             self.fields['event_manager'].queryset = User.objects.none()
