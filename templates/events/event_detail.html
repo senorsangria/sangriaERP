@@ -900,7 +900,10 @@
         'X-Requested-With': 'XMLHttpRequest',
       },
     })
-    .then(function (r) { return r.json(); })
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
     .then(function (data) {
       if (data.success) {
         var item = document.querySelector('.photo-item[data-photo-id="' + photoId + '"]');
@@ -1029,7 +1032,10 @@ function checkUnsavedExpense() {
       method: 'POST',
       headers: { 'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest' },
     })
-    .then(function (r) { return r.json(); })
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
     .then(function (data) {
       if (data.success) {
         var item = document.querySelector('.expense-item[data-expense-id="' + expenseId + '"]');

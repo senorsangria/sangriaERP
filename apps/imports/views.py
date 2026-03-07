@@ -897,6 +897,8 @@ def batch_delete(request, pk):
         if action == 'confirm':
             try:
                 with transaction.atomic():
+                    from apps.accounts.utils import get_account_associations
+
                     # Re-check deletable accounts inside the transaction
                     final_deletable_ids = []
                     for acct_id in auto_account_ids:
@@ -906,24 +908,48 @@ def batch_delete(request, pk):
                         if not other_records:
                             final_deletable_ids.append(acct_id)
 
-                    # Delete all sales records for this batch (cascades from batch delete)
+                    # For each deletable account, check associations to decide
+                    # whether to delete it or deactivate it.
+                    delete_account_ids = []
+                    deactivate_account_ids = []
+                    for acct_id in final_deletable_ids:
+                        account_obj = Account.objects.get(pk=acct_id)
+                        associations = get_account_associations(account_obj)
+                        if any(v > 0 for v in associations.values()):
+                            deactivate_account_ids.append(acct_id)
+                        else:
+                            delete_account_ids.append(acct_id)
+
+                    # Delete all sales records for this batch
                     deleted_sales, _ = SalesRecord.objects.filter(import_batch=batch).delete()
 
-                    # Delete auto-created accounts with no remaining sales
+                    # Delete accounts with no associations
                     deleted_accounts = 0
-                    if final_deletable_ids:
+                    if delete_account_ids:
                         deleted_accounts, _ = Account.objects.filter(
-                            id__in=final_deletable_ids
+                            id__in=delete_account_ids
                         ).delete()
+
+                    # Deactivate accounts that have associated data
+                    deactivated_accounts = 0
+                    if deactivate_account_ids:
+                        deactivated_accounts = Account.objects.filter(
+                            id__in=deactivate_account_ids
+                        ).update(is_active=False)
 
                     # Delete the batch record
                     batch.delete()
 
-                messages.success(
-                    request,
+                msg = (
                     f'Deleted {deleted_sales} sales records and '
-                    f'{deleted_accounts} accounts successfully.',
+                    f'{deleted_accounts} accounts successfully.'
                 )
+                if deactivated_accounts:
+                    msg += (
+                        f' {deactivated_accounts} account(s) with associated data '
+                        f'were deactivated instead of deleted.'
+                    )
+                messages.success(request, msg)
                 return redirect('batch_list')
 
             except Exception as exc:
