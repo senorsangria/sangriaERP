@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}Account Import{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-4">
+  <a href="{% url 'account_list' %}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left me-1"></i>Back
+  </a>
+  <div>
+    <h1 class="h3 mb-0 fw-bold">Account Import</h1>
+    <p class="text-muted small mb-0">Upload a CSV file to create or update accounts</p>
+  </div>
+</div>
+
+{% if error %}
+<div class="alert alert-danger mb-4">
+  <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error }}
+</div>
+{% endif %}
+
+<div class="row">
+  <div class="col-12 col-lg-7">
+
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white fw-semibold border-bottom small text-muted">
+        <i class="bi bi-upload me-2"></i>Upload CSV File
+      </div>
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data" novalidate>
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label fw-medium" for="csv_file">
+              CSV File <span class="text-danger">*</span>
+            </label>
+            <input
+              type="file"
+              class="form-control"
+              id="csv_file"
+              name="csv_file"
+              accept=".csv"
+              required
+            >
+            <div class="form-text">Accepted format: CSV exported from your account management system.</div>
+          </div>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-cloud-upload me-1"></i>Upload &amp; Preview
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold border-bottom small text-muted">
+        <i class="bi bi-info-circle me-2"></i>Expected CSV Columns
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th class="px-3">Column Name</th>
+              <th class="px-3">Maps To</th>
+              <th class="px-3">Required</th>
+            </tr>
+          </thead>
+          <tbody class="small">
+            <tr><td class="px-3"><code>Retail Accounts</code></td><td class="px-3">Account Name</td><td class="px-3"><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td class="px-3"><code>Address</code></td><td class="px-3">Street Address</td><td class="px-3"><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td class="px-3"><code>City</code></td><td class="px-3">City</td><td class="px-3"><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td class="px-3"><code>State</code></td><td class="px-3">State</td><td class="px-3"><span class="badge bg-danger">Required</span></td></tr>
+            <tr><td class="px-3"><code>Zip Code</code></td><td class="px-3">Zip Code</td><td class="px-3"><span class="badge bg-secondary">Optional</span></td></tr>
+            <tr><td class="px-3"><code>Counties</code></td><td class="px-3">County (state suffix stripped)</td><td class="px-3"><span class="badge bg-secondary">Optional</span></td></tr>
+            <tr><td class="px-3"><code>OnOff Premises</code></td><td class="px-3">On/Off Premise (ON or OFF)</td><td class="px-3"><span class="badge bg-secondary">Optional</span></td></tr>
+            <tr><td class="px-3"><code>Classes of Trade</code></td><td class="px-3">Account Type</td><td class="px-3"><span class="badge bg-secondary">Optional</span></td></tr>
+            <tr><td class="px-3"><code>VIP Outlet ID</code></td><td class="px-3">Third-Party ID</td><td class="px-3"><span class="badge bg-secondary">Optional</span></td></tr>
+            <tr><td class="px-3"><code>Distributor Routes</code></td><td class="px-3">Distributor Route</td><td class="px-3"><span class="badge bg-secondary">Optional</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer bg-white small text-muted">
+        <i class="bi bi-lightbulb me-1"></i>
+        Rows with missing required fields are skipped. Zip codes in Excel format
+        (<code>="07030"</code>) are automatically stripped. County state suffixes
+        (e.g. <code>UNION, NJ</code>) are stripped to county name only.
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

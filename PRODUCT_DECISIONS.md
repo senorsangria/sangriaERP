@@ -1688,5 +1688,99 @@ Some checks are permission-based AND object-level:
 
 ---
 
-*Last updated: March 7, 2026 (Phase 10.5: RBAC migration, Ok to Pay, Payroll Reviewer)*
+## Account Import (Phase 10.6)
+
+### Overview
+A CSV-based bulk import tool for creating and updating Account records. Accessible via **Imports → Account Import** in the sidebar. Gated by the `can_import_sales_data` permission (Supplier Admin and SaaS Admin roles).
+
+### Flow
+Three-step process (upload → preview → execute):
+
+1. **Upload** (`GET/POST /imports/accounts/upload/`) — User selects a CSV file and submits. The file is parsed in memory; results are stored in the session. User is redirected to Preview.
+2. **Preview** (`GET /imports/accounts/preview/`) — Shows summary cards (Total Rows, To Be Created, To Be Updated, Skipped) and a table of the first 20 rows with CREATE (green) / UPDATE (blue) badges. User confirms or cancels.
+3. **Execute** (`POST /imports/accounts/execute/`) — Reads rows from session, performs DB writes, clears session key, redirects to account list with a success message.
+
+### CSV Column Mapping
+
+| CSV Column | Maps To | Required |
+|---|---|---|
+| `Retail Accounts` | Account Name | Yes |
+| `Address` | Street Address | Yes |
+| `City` | City | Yes |
+| `State` | State | Yes |
+| `Zip Code` | Zip Code | No |
+| `Counties` | County (state suffix stripped) | No |
+| `OnOff Premises` | On/Off Premise (ON or OFF) | No |
+| `Classes of Trade` | Account Type (raw text) | No |
+| `VIP Outlet ID` | Third-Party ID | No |
+| `Distributor Routes` | Distributor Route | No |
+
+### Match Key / Deduplication
+Existing accounts are matched using a normalized key of **Name + Street + City + State** (uppercased, stripped of surrounding whitespace). If a match is found in the company's account records, the row is treated as an UPDATE; otherwise it is a CREATE.
+
+### CREATE Behaviour
+- All mapped fields are set from the CSV row.
+- `is_active = True` always.
+- `auto_created = True` always (marks the record as import-originated).
+- `company` is set from the logged-in user's company.
+
+### UPDATE Behaviour
+- Only non-key fields are updated: `zip_code`, `county`, `on_off_premise`, `account_type`, `third_party_id`, `distributor_route`.
+- **Name, street, city, state, `is_active`, and `auto_created` are never changed by an update.**
+- If a non-key field is blank in the CSV, the existing DB value is left unchanged (no overwrite with blank).
+
+### Data Cleaning
+- **Excel zip format**: values like `="07030"` are stripped to `07030` automatically.
+- **County state suffix**: values like `UNION, NJ` are stripped to `UNION` (everything after the first comma is discarded).
+- **Skipped rows**: any row missing one or more of the four required fields (Account Name, Address, City, State) is skipped and counted in the Skipped total.
+
+### Session Storage
+Session key: `account_import_preview`
+Structure:
+```python
+{
+    'rows': [
+        {
+            'action': 'CREATE' | 'UPDATE',
+            'account_pk': int | None,   # None for CREATE
+            'name': str,
+            'street': str,
+            'city': str,
+            'state': str,
+            'zip_code': str,
+            'county': str,
+            'on_off_premise': str,
+            'account_type': str,
+            'third_party_id': str,
+            'distributor_route': str,
+        },
+        ...
+    ],
+    'skipped': int,
+}
+```
+The session key is deleted immediately after Execute completes.
+
+### Account Model Fields Added (Phase 10.6)
+- `third_party_id` — `CharField(max_length=100, blank=True, default='')` — generic ID for third-party system integrations.
+- `distributor_route` — `CharField(max_length=500, blank=True, default='')` — raw text, full value from import source.
+- `account_type` — changed from constrained `TextChoices` field (max_length 20, choices) to raw `CharField(max_length=100, blank=True, default='')`. The `AccountType` inner class was removed entirely.
+
+### Permission Guard
+All three views call `_require_can_import(request)` which checks `request.user.has_permission('can_import_sales_data')`. Returns `HttpResponseForbidden` (403) if the user lacks the permission.
+
+### Navigation
+Account Import link appears in the sidebar (desktop and mobile) between Sales Import and the Item Mapping section, gated by `{% if user|has_perm:'can_import_sales_data' %}`.
+
+### Test Coverage (`apps/imports/account_import_tests.py`)
+- `StripExcelZipTest` — `_strip_excel_zip` helper (Excel format, plain zip, empty string)
+- `ParseCountyTest` — `_parse_county` helper (suffix stripping, plain value, empty string)
+- `ParseAccountCsvTest` — full CSV parsing: valid row, missing required field skipped, all optional fields, zip Excel format, county suffix stripping
+- `AccountImportUploadViewTest` — 403 for non-SA user, GET renders template, POST with valid CSV redirects to preview, POST with invalid CSV shows error
+- `AccountImportPreviewViewTest` — 403 for non-SA user, no session redirects to upload, valid session renders summary and rows
+- `AccountImportExecuteViewTest` — 403 for non-SA user, no session redirects to upload, CREATE creates account with correct fields and `auto_created=True`, UPDATE updates only non-key fields, UPDATE does not change `is_active`, success message includes create/update counts
+
+---
+
+*Last updated: March 7, 2026 (Phase 10.6: Account Import)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

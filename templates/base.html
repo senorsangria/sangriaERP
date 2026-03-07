@@ -156,6 +156,9 @@
           <li class="nav-item"><a class="nav-link" href="{% url 'account_list' %}"><i class="bi bi-shop me-1"></i>Accounts</a></li>
           <li class="nav-item"><a class="nav-link" href="{% url 'event_list' %}"><i class="bi bi-calendar-event me-1"></i>Events</a></li>
           <li class="nav-item"><a class="nav-link" href="{% url 'import_upload' %}"><i class="bi bi-cloud-upload me-1"></i>Sales Import</a></li>
+          {% if user|has_perm:'can_import_sales_data' %}
+          <li class="nav-item"><a class="nav-link" href="{% url 'account_import_upload' %}"><i class="bi bi-building-up me-1"></i>Account Import</a></li>
+          {% endif %}
           <li class="nav-item"><a class="nav-link" href="{% url 'mapping_list' %}"><i class="bi bi-arrow-left-right me-1"></i>Item Mapping</a></li>
           <li class="nav-item"><a class="nav-link" href="{% url 'batch_list' %}"><i class="bi bi-clock-history me-1"></i>Import History</a></li>
           {% endif %}
@@ -330,6 +333,13 @@
             <i class="bi bi-cloud-upload me-2"></i>Sales Import
           </a>
         </li>
+        {% if user|has_perm:'can_import_sales_data' %}
+        <li class="nav-item">
+          <a class="nav-link {% if 'account_import' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'account_import_upload' %}">
+            <i class="bi bi-building-up me-2"></i>Account Import
+          </a>
+        </li>
+        {% endif %}
         <li class="nav-item">
           <a class="nav-link {% if 'mapping' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'mapping_list' %}">
             <i class="bi bi-arrow-left-right me-2"></i>Item Mapping

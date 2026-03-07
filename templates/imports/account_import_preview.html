@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Account Import — Preview{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-4">
+  <a href="{% url 'account_import_upload' %}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left me-1"></i>Back
+  </a>
+  <div>
+    <h1 class="h3 mb-0 fw-bold">Import Preview</h1>
+    <p class="text-muted small mb-0">Review the changes before confirming</p>
+  </div>
+</div>
+
+<!-- Summary cards -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center h-100">
+      <div class="card-body py-3">
+        <div class="fs-2 fw-bold text-primary">{{ total }}</div>
+        <div class="small text-muted">Total Rows</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center h-100">
+      <div class="card-body py-3">
+        <div class="fs-2 fw-bold text-success">{{ creates }}</div>
+        <div class="small text-muted">To Be Created</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center h-100">
+      <div class="card-body py-3">
+        <div class="fs-2 fw-bold text-info">{{ updates }}</div>
+        <div class="small text-muted">To Be Updated</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card border-0 shadow-sm text-center h-100">
+      <div class="card-body py-3">
+        <div class="fs-2 fw-bold text-warning">{{ skipped }}</div>
+        <div class="small text-muted">Skipped</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Preview table (first 20 rows) -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-white fw-semibold border-bottom small text-muted">
+    <i class="bi bi-table me-2"></i>
+    Preview — first {% if preview_rows|length < 20 %}{{ preview_rows|length }}{% else %}20{% endif %} rows
+    {% if total > 20 %}
+    <span class="text-muted fw-normal">({{ total }} total)</span>
+    {% endif %}
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light">
+          <tr>
+            <th class="px-3">Action</th>
+            <th class="px-3">Account Name</th>
+            <th class="px-3">Address</th>
+            <th class="px-3">City</th>
+            <th class="px-3">State</th>
+          </tr>
+        </thead>
+        <tbody class="small">
+          {% for row in preview_rows %}
+          <tr>
+            <td class="px-3">
+              {% if row.action == 'CREATE' %}
+              <span class="badge bg-success">CREATE</span>
+              {% else %}
+              <span class="badge bg-primary">UPDATE</span>
+              {% endif %}
+            </td>
+            <td class="px-3">{{ row.name }}</td>
+            <td class="px-3">{{ row.street }}</td>
+            <td class="px-3">{{ row.city }}</td>
+            <td class="px-3">{{ row.state }}</td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="5" class="px-3 text-muted fst-italic">No processable rows found.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Actions -->
+<div class="d-flex gap-2 align-items-center">
+  <form method="post" action="{% url 'account_import_execute' %}">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-primary" {% if not total %}disabled{% endif %}>
+      <i class="bi bi-check-lg me-1"></i>Confirm Import
+    </button>
+  </form>
+  <a href="{% url 'account_import_upload' %}" class="btn btn-outline-secondary">
+    Cancel
+  </a>
+</div>
+
+{% if skipped %}
+<div class="alert alert-warning mt-3 small">
+  <i class="bi bi-exclamation-triangle me-1"></i>
+  {{ skipped }} row(s) were skipped because one or more required fields
+  (Account Name, Address, City, State) were missing.
+</div>
+{% endif %}
+{% endblock %}
