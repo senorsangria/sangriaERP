@@ -1,4 +1,4 @@
-{% load static %}<!doctype html>
+{% load static rbac %}<!doctype html>
 <html lang="en" class="h-100">
 <head>
   <meta charset="utf-8">
@@ -183,6 +183,10 @@
 
           {% if user.is_distributor_contact %}
           <li class="nav-item"><a class="nav-link text-white-50" href="#"><i class="bi bi-graph-up me-1"></i>Reports <small>(soon)</small></a></li>
+          {% endif %}
+
+          {% if user.is_payroll_reviewer %}
+          <li class="nav-item"><a class="nav-link" href="{% url 'event_list' %}"><i class="bi bi-calendar-event me-1"></i>Events</a></li>
           {% endif %}
 
           <li class="nav-item">
@@ -405,6 +409,20 @@
         <li class="nav-item">
           <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
             <i class="bi bi-calendar-check me-2"></i>My Events
+          </a>
+        </li>
+
+        {% elif user.is_payroll_reviewer %}
+        <!-- ---- Payroll Reviewer ---- -->
+        <li class="nav-item">
+          <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">
+            <i class="bi bi-speedometer2 me-2"></i>Dashboard
+          </a>
+        </li>
+        <li class="nav-section">Field</li>
+        <li class="nav-item">
+          <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
+            <i class="bi bi-calendar-event me-2"></i>Events
           </a>
         </li>
 

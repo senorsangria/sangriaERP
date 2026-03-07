@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load rbac %}
 {% block title %}Events{% endblock %}
 
 {% block extra_css %}
@@ -50,7 +51,7 @@
             aria-expanded="false" aria-controls="filterCard">
       <i class="bi bi-funnel me-1"></i>Filters
     </button>
-    {% if user.is_supplier_admin or user.is_sales_manager or user.is_territory_manager or user.is_ambassador_manager %}
+    {% if user|has_perm:'can_create_events' %}
     <button type="button" class="btn btn-sm btn-primary"
             data-bs-toggle="modal" data-bs-target="#newEventModal">
       <i class="bi bi-plus-lg me-1"></i>New Event
@@ -312,7 +313,7 @@
   {% endif %}
 </div>
 
-{% if user.is_supplier_admin or user.is_sales_manager or user.is_territory_manager or user.is_ambassador_manager %}
+{% if user|has_perm:'can_create_events' %}
 <!-- ================================================================
      New Event — Event Type Selection Modal
      ================================================================ -->
