@@ -1,7 +1,12 @@
 from django.urls import path
-from . import views
+from . import views, account_import_views
 
 urlpatterns = [
+    # Account Import (Phase 10.6)
+    path('imports/accounts/upload/',  account_import_views.account_import_upload,  name='account_import_upload'),
+    path('imports/accounts/preview/', account_import_views.account_import_preview, name='account_import_preview'),
+    path('imports/accounts/execute/', account_import_views.account_import_execute, name='account_import_execute'),
+
     # Sales Data Import (two-step: upload → preview → success)
     path('imports/upload/', views.import_upload, name='import_upload'),
     path('imports/preview/', views.import_preview, name='import_preview'),
