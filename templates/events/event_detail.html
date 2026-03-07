@@ -557,6 +557,30 @@
   </div>
   {% endif %}
 
+  <!-- Mark Ok to Pay (Complete → Ok to Pay) -->
+  {% if can_mark_ok_to_pay and event.status == 'complete' %}
+  <div class="col-12">
+    <div class="d-flex gap-2 flex-wrap">
+      <button type="button" class="btn btn-success"
+              data-bs-toggle="modal" data-bs-target="#okToPayModal">
+        <i class="bi bi-check2-circle me-1"></i>Mark Ok to Pay
+      </button>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Revert to Complete (Ok to Pay → Complete) -->
+  {% if can_mark_ok_to_pay and event.status == 'ok_to_pay' %}
+  <div class="col-12">
+    <div class="d-flex gap-2 flex-wrap">
+      <button type="button" class="btn btn-outline-secondary"
+              data-bs-toggle="modal" data-bs-target="#revertOkToPayModal">
+        <i class="bi bi-arrow-counterclockwise me-1"></i>Revert to Complete
+      </button>
+    </div>
+  </div>
+  {% endif %}
+
 </div><!-- /row -->
 
 <!-- ================================================================
@@ -760,6 +784,74 @@
           {% csrf_token %}
           <button type="submit" class="btn btn-warning">
             <i class="bi bi-arrow-counterclockwise me-1"></i>Revert to Recap Submitted
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ================================================================
+     Mark Ok to Pay confirmation modal (Complete → Ok to Pay)
+     ================================================================ -->
+{% if can_mark_ok_to_pay and event.status == 'complete' %}
+<div class="modal fade" id="okToPayModal" tabindex="-1" aria-labelledby="okToPayModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="okToPayModalLabel">
+          <i class="bi bi-check2-circle me-2 text-success"></i>Mark Ok to Pay
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>Mark this event as <strong>Ok to Pay</strong>?</p>
+        <p class="text-muted small mb-0">
+          {% if event.account %}{{ event.account.name }}{% else %}Admin Event{% endif %}
+          {% if event.date %} &mdash; {{ event.date|date:"m/d/y" }}{% endif %}
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <form method="post" action="{% url 'event_mark_ok_to_pay' event.pk %}" class="d-inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-success">
+            <i class="bi bi-check2-circle me-1"></i>Mark Ok to Pay
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ================================================================
+     Revert to Complete confirmation modal (Ok to Pay → Complete)
+     ================================================================ -->
+{% if can_mark_ok_to_pay and event.status == 'ok_to_pay' %}
+<div class="modal fade" id="revertOkToPayModal" tabindex="-1" aria-labelledby="revertOkToPayModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="revertOkToPayModalLabel">
+          <i class="bi bi-arrow-counterclockwise me-2"></i>Revert to Complete
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>Revert this event from <strong>Ok to Pay</strong> back to <strong>Complete</strong>?</p>
+        <p class="text-muted small mb-0">
+          {% if event.account %}{{ event.account.name }}{% else %}Admin Event{% endif %}
+          {% if event.date %} &mdash; {{ event.date|date:"m/d/y" }}{% endif %}
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <form method="post" action="{% url 'event_revert_ok_to_pay' event.pk %}" class="d-inline">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>Revert to Complete
           </button>
         </form>
       </div>

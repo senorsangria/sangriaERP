@@ -157,6 +157,10 @@ def _get_visible_events(user):
             ambassador=user
         ).exclude(status=Event.Status.DRAFT)
 
+    if user.has_role('payroll_reviewer'):
+        visible_accounts = get_accounts_for_user(user)
+        return qs.filter(account__in=visible_accounts)
+
     return Event.objects.none()
 
 
@@ -200,6 +204,7 @@ def _sort_events(events_qs):
     recap          = sorted([e for e in events if e.status == Event.Status.RECAP_SUBMITTED],    key=date_asc_key)
     scheduled      = sorted([e for e in events if e.status == Event.Status.SCHEDULED],         key=date_asc_key)
     complete       = sorted([e for e in events if e.status == Event.Status.COMPLETE],           key=date_desc_key)
+    ok_to_pay      = sorted([e for e in events if e.status == Event.Status.OK_TO_PAY],         key=date_desc_key)
 
     groups = []
     if revision:
@@ -214,6 +219,8 @@ def _sort_events(events_qs):
         groups.append(('Scheduled', 'scheduled', scheduled))
     if complete:
         groups.append(('Complete', 'complete', complete))
+    if ok_to_pay:
+        groups.append(('Ok to Pay', 'ok_to_pay', ok_to_pay))
 
     return groups
 
@@ -549,6 +556,7 @@ def event_detail(request, pk):
     can_unrelease = _has_revert_role or _is_event_manager
     can_revert_to_scheduled = _has_revert_role or _is_event_manager
     can_revert_revision_requested = _has_revert_role or _is_event_manager
+    can_mark_ok_to_pay = user.has_permission('can_mark_ok_to_pay')
 
     tasting_items_by_brand = None
     if event.event_type == Event.EventType.TASTING:
@@ -587,6 +595,7 @@ def event_detail(request, pk):
         'can_unrelease':          can_unrelease,
         'can_revert_to_scheduled': can_revert_to_scheduled,
         'can_revert_revision_requested': can_revert_revision_requested,
+        'can_mark_ok_to_pay':     can_mark_ok_to_pay,
         'recap_active':           recap_active,
         'show_recap':             show_recap,
         'tasting_items_by_brand': tasting_items_by_brand,
@@ -1144,6 +1153,62 @@ def event_revert_complete(request, pk):
         status=Event.Status.RECAP_SUBMITTED
     )
     messages.success(request, 'Event reverted to Recap Submitted.')
+    return redirect('event_detail', pk=pk)
+
+
+@login_required
+def event_mark_ok_to_pay(request, pk):
+    """
+    POST: Transition a Complete event to Ok to Pay.
+
+    Access: users with can_mark_ok_to_pay permission.
+    """
+    if request.method != 'POST':
+        return redirect('event_detail', pk=pk)
+
+    if not request.user.has_permission('can_mark_ok_to_pay'):
+        return render(request, '403.html', status=403)
+
+    company = request.user.company
+    visible = _get_visible_events(request.user)
+    event = get_object_or_404(visible, pk=pk, company=company)
+
+    if event.status != Event.Status.COMPLETE:
+        messages.error(request, 'Only Complete events can be marked Ok to Pay.')
+        return redirect('event_detail', pk=pk)
+
+    Event.objects.filter(pk=event.pk, status=Event.Status.COMPLETE).update(
+        status=Event.Status.OK_TO_PAY
+    )
+    messages.success(request, 'Event marked Ok to Pay.')
+    return redirect('event_detail', pk=pk)
+
+
+@login_required
+def event_revert_ok_to_pay(request, pk):
+    """
+    POST: Revert an Ok to Pay event back to Complete.
+
+    Access: users with can_mark_ok_to_pay permission.
+    """
+    if request.method != 'POST':
+        return redirect('event_detail', pk=pk)
+
+    if not request.user.has_permission('can_mark_ok_to_pay'):
+        return render(request, '403.html', status=403)
+
+    company = request.user.company
+    visible = _get_visible_events(request.user)
+    event = get_object_or_404(visible, pk=pk, company=company)
+
+    if event.status != Event.Status.OK_TO_PAY:
+        messages.error(request, 'Only Ok to Pay events can be reverted to Complete.')
+        return redirect('event_detail', pk=pk)
+
+    Event.objects.filter(pk=event.pk, status=Event.Status.OK_TO_PAY).update(
+        status=Event.Status.COMPLETE
+    )
+    messages.success(request, 'Event reverted to Complete.')
     return redirect('event_detail', pk=pk)
 
 

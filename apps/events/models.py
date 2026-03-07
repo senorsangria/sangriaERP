@@ -11,8 +11,8 @@ class Event(TimeStampedModel):
     A field activity: in-store tasting, special event, or admin hours.
 
     Status workflow:
-      Draft → Scheduled → Recap In Progress → Recap Submitted → Revision Requested → Complete
-      Admin events: Draft → Scheduled → Complete (no recap step)
+      Draft → Scheduled → Recap In Progress → Recap Submitted → Revision Requested → Complete → Ok to Pay
+      Admin events: Draft → Scheduled → Complete → Ok to Pay (no recap step)
 
     Visibility rules enforced in views/utils — not at model level.
     """
@@ -29,6 +29,7 @@ class Event(TimeStampedModel):
         RECAP_SUBMITTED    = 'recap_submitted',    'Recap Submitted'
         REVISION_REQUESTED = 'revision_requested', 'Revision Requested'
         COMPLETE           = 'complete',           'Complete'
+        OK_TO_PAY          = 'ok_to_pay',          'Ok to Pay'
 
     # Core fields
     company = models.ForeignKey(
@@ -142,6 +143,7 @@ class Event(TimeStampedModel):
             self.Status.RECAP_SUBMITTED:    'warning',
             self.Status.REVISION_REQUESTED: 'danger',
             self.Status.COMPLETE:           'success',
+            self.Status.OK_TO_PAY:          'bg-success',
         }.get(self.status, 'secondary')
 
 
