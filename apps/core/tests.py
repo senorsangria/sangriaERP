@@ -1,0 +1,185 @@
+"""
+Tests for apps.core — RBAC permission/role system and management commands.
+
+Phase 10.5 Step 10
+"""
+from io import StringIO
+
+from django.core.management import call_command
+from django.test import TestCase
+
+from apps.core.models import Company, User
+from apps.core.rbac import Permission, Role
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def make_company(name="Test Co"):
+    return Company.objects.create(name=name)
+
+
+def make_user(company, role_codename, username="testuser"):
+    user = User.objects.create_user(
+        username=username, password="testpass123", company=company,
+    )
+    role = Role.objects.get(codename=role_codename)
+    user.roles.set([role])
+    return user
+
+
+# ---------------------------------------------------------------------------
+# has_role() tests
+# ---------------------------------------------------------------------------
+
+class HasRoleTest(TestCase):
+    """user.has_role() returns True/False based on assigned roles."""
+
+    def setUp(self):
+        self.company = make_company()
+
+    def test_has_role_true_for_assigned_role(self):
+        user = make_user(self.company, 'supplier_admin')
+        self.assertTrue(user.has_role('supplier_admin'))
+
+    def test_has_role_false_for_unassigned_role(self):
+        user = make_user(self.company, 'ambassador')
+        self.assertFalse(user.has_role('supplier_admin'))
+
+    def test_has_role_false_for_no_roles(self):
+        user = User.objects.create_user(
+            username='noroles', password='testpass123', company=self.company
+        )
+        self.assertFalse(user.has_role('supplier_admin'))
+
+
+# ---------------------------------------------------------------------------
+# has_permission() tests
+# ---------------------------------------------------------------------------
+
+class HasPermissionTest(TestCase):
+    """user.has_permission() reflects union of all assigned role permissions."""
+
+    def setUp(self):
+        self.company = make_company()
+
+    def test_permission_true_when_role_has_it(self):
+        user = make_user(self.company, 'supplier_admin')
+        self.assertTrue(user.has_permission('can_manage_brands'))
+
+    def test_permission_false_when_role_lacks_it(self):
+        user = make_user(self.company, 'ambassador')
+        self.assertFalse(user.has_permission('can_manage_brands'))
+
+    def test_permission_false_for_user_with_no_roles(self):
+        user = User.objects.create_user(
+            username='noroles', password='testpass123', company=self.company
+        )
+        self.assertFalse(user.has_permission('can_view_events'))
+
+    def test_multiple_roles_give_union_of_permissions(self):
+        """A user with two roles gets all permissions from both."""
+        user = User.objects.create_user(
+            username='multirole', password='testpass123', company=self.company
+        )
+        ambassador_role = Role.objects.get(codename='ambassador')
+        supplier_role = Role.objects.get(codename='supplier_admin')
+        user.roles.set([ambassador_role, supplier_role])
+
+        # Ambassador has can_fill_recap; supplier_admin has can_manage_brands
+        self.assertTrue(user.has_permission('can_fill_recap'))
+        self.assertTrue(user.has_permission('can_manage_brands'))
+
+    def test_can_mark_ok_to_pay_payroll_reviewer(self):
+        user = make_user(self.company, 'payroll_reviewer')
+        self.assertTrue(user.has_permission('can_mark_ok_to_pay'))
+
+    def test_can_mark_ok_to_pay_supplier_admin(self):
+        user = make_user(self.company, 'supplier_admin')
+        self.assertTrue(user.has_permission('can_mark_ok_to_pay'))
+
+    def test_sales_manager_cannot_mark_ok_to_pay(self):
+        user = make_user(self.company, 'sales_manager')
+        self.assertFalse(user.has_permission('can_mark_ok_to_pay'))
+
+
+# ---------------------------------------------------------------------------
+# Role convenience properties
+# ---------------------------------------------------------------------------
+
+class RolePropertyTest(TestCase):
+    """is_<role> properties delegate to has_role() correctly."""
+
+    def setUp(self):
+        self.company = make_company()
+
+    def test_is_supplier_admin_true(self):
+        user = make_user(self.company, 'supplier_admin')
+        self.assertTrue(user.is_supplier_admin)
+        self.assertFalse(user.is_ambassador)
+
+    def test_is_payroll_reviewer_true(self):
+        user = make_user(self.company, 'payroll_reviewer')
+        self.assertTrue(user.is_payroll_reviewer)
+        self.assertFalse(user.is_supplier_admin)
+
+    def test_is_ambassador_manager_true(self):
+        user = make_user(self.company, 'ambassador_manager')
+        self.assertTrue(user.is_ambassador_manager)
+
+
+# ---------------------------------------------------------------------------
+# create_saas_admin management command
+# ---------------------------------------------------------------------------
+
+class CreateSaasAdminCommandTest(TestCase):
+    """create_saas_admin command creates a user with the saas_admin role."""
+
+    def test_creates_user_with_saas_admin_role(self):
+        # Simulate interactive input
+        input_sequence = '\n'.join([
+            'cmdtestadmin',   # username
+            'cmd@example.com',  # email
+            'Cmd',             # first name
+            'Admin',           # last name
+        ])
+        import unittest.mock as mock
+
+        password_mock = mock.patch(
+            'getpass.getpass',
+            return_value='SecurePass123!'
+        )
+        input_mock = mock.patch(
+            'builtins.input',
+            side_effect=[
+                'cmdtestadmin',
+                'cmd@example.com',
+                'Cmd',
+                'Admin',
+            ]
+        )
+
+        with password_mock, input_mock:
+            out = StringIO()
+            call_command('create_saas_admin', stdout=out)
+
+        self.assertTrue(User.objects.filter(username='cmdtestadmin').exists())
+        user = User.objects.get(username='cmdtestadmin')
+        self.assertTrue(user.has_role('saas_admin'))
+        self.assertTrue(user.is_staff)
+        self.assertIsNone(user.company)
+
+    def test_does_not_duplicate_existing_user(self):
+        company = make_company()
+        existing = make_user(company, 'ambassador', username='existingadmin')
+
+        import unittest.mock as mock
+        input_mock = mock.patch('builtins.input', return_value='existingadmin')
+
+        with input_mock:
+            out = StringIO()
+            call_command('create_saas_admin', stdout=out)
+
+        # Should still be only one user with that username
+        self.assertEqual(User.objects.filter(username='existingadmin').count(), 1)

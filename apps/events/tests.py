@@ -1761,3 +1761,153 @@ class AjaxEventAccountsSearchTest(TestCase):
         """'Crown Newark' should return only Crown (name=Crown, city=Newark)."""
         names = self._names(self._get('Crown Newark'))
         self.assertEqual(names, {'Crown Wine & Spirits'})
+
+
+# ---------------------------------------------------------------------------
+# Ok to Pay workflow tests
+# ---------------------------------------------------------------------------
+
+class OkToPayTransitionTest(TestCase):
+    """mark-ok-to-pay and revert-ok-to-pay status transitions."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_user(self.company, 'supplier_admin', username='sa')
+        self.account = make_account(self.company)
+        self.event = make_event(
+            self.company, self.admin,
+            Event.EventType.TASTING,
+            status=Event.Status.COMPLETE,
+            account=self.account,
+        )
+        self.client = Client()
+        self.client.login(username='sa', password='testpass123')
+
+    def test_mark_ok_to_pay_transitions_complete_to_ok_to_pay(self):
+        resp = self.client.post(
+            reverse('event_mark_ok_to_pay', args=[self.event.pk])
+        )
+        self.assertRedirects(resp, reverse('event_detail', args=[self.event.pk]))
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.OK_TO_PAY)
+
+    def test_mark_ok_to_pay_requires_post(self):
+        resp = self.client.get(
+            reverse('event_mark_ok_to_pay', args=[self.event.pk])
+        )
+        self.assertRedirects(resp, reverse('event_detail', args=[self.event.pk]))
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.COMPLETE)
+
+    def test_mark_ok_to_pay_blocked_without_permission(self):
+        """Sales Manager lacks can_mark_ok_to_pay — should get 403."""
+        sm = make_user(self.company, 'sales_manager', username='sm')
+        c = Client()
+        c.login(username='sm', password='testpass123')
+        resp = c.post(reverse('event_mark_ok_to_pay', args=[self.event.pk]))
+        self.assertEqual(resp.status_code, 403)
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.COMPLETE)
+
+    def test_mark_ok_to_pay_blocked_for_non_complete_event(self):
+        self.event.status = Event.Status.SCHEDULED
+        self.event.save()
+        self.client.post(reverse('event_mark_ok_to_pay', args=[self.event.pk]))
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.SCHEDULED)
+
+    def test_revert_ok_to_pay_transitions_back_to_complete(self):
+        self.event.status = Event.Status.OK_TO_PAY
+        self.event.save()
+        resp = self.client.post(
+            reverse('event_revert_ok_to_pay', args=[self.event.pk])
+        )
+        self.assertRedirects(resp, reverse('event_detail', args=[self.event.pk]))
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.COMPLETE)
+
+    def test_revert_ok_to_pay_blocked_without_permission(self):
+        self.event.status = Event.Status.OK_TO_PAY
+        self.event.save()
+        sm = make_user(self.company, 'sales_manager', username='sm2')
+        c = Client()
+        c.login(username='sm2', password='testpass123')
+        resp = c.post(reverse('event_revert_ok_to_pay', args=[self.event.pk]))
+        self.assertEqual(resp.status_code, 403)
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.OK_TO_PAY)
+
+    def test_payroll_reviewer_can_mark_ok_to_pay(self):
+        from apps.accounts.models import UserCoverageArea
+        pr = make_user(self.company, 'payroll_reviewer', username='pr')
+        UserCoverageArea.objects.create(
+            user=pr, company=self.company,
+            coverage_type=UserCoverageArea.CoverageType.ACCOUNT,
+            account=self.account,
+        )
+        c = Client()
+        c.login(username='pr', password='testpass123')
+        resp = c.post(reverse('event_mark_ok_to_pay', args=[self.event.pk]))
+        self.assertRedirects(resp, reverse('event_detail', args=[self.event.pk]))
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.status, Event.Status.OK_TO_PAY)
+
+
+# ---------------------------------------------------------------------------
+# Payroll Reviewer event visibility tests
+# ---------------------------------------------------------------------------
+
+class PayrollReviewerVisibilityTest(TestCase):
+    """Payroll Reviewer sees events at accounts in their coverage area."""
+
+    def setUp(self):
+        from apps.accounts.models import UserCoverageArea
+        self.company = make_company()
+        self.admin = make_user(self.company, 'supplier_admin', username='sa')
+        self.pr = make_user(self.company, 'payroll_reviewer', username='pr')
+        self.account = make_account(self.company, 'Covered Account')
+        self.other_account = make_account(self.company, 'Other Account')
+        # Assign coverage for the payroll reviewer (account-level)
+        UserCoverageArea.objects.create(
+            user=self.pr, company=self.company,
+            coverage_type=UserCoverageArea.CoverageType.ACCOUNT,
+            account=self.account,
+        )
+        self.client = Client()
+        self.client.login(username='pr', password='testpass123')
+
+    def _make_event(self, status, account=None):
+        return make_event(
+            self.company, self.admin,
+            Event.EventType.TASTING,
+            status=status,
+            account=account or self.account,
+        )
+
+    def test_payroll_reviewer_sees_complete_events_in_coverage(self):
+        event = self._make_event(Event.Status.COMPLETE)
+        resp = self.client.get(reverse('event_list'))
+        self.assertEqual(resp.status_code, 200)
+        pks = [e.pk for group in resp.context['event_groups'] for e in group[2]]
+        self.assertIn(event.pk, pks)
+
+    def test_payroll_reviewer_sees_draft_events_in_coverage(self):
+        event = self._make_event(Event.Status.DRAFT)
+        resp = self.client.get(reverse('event_list'))
+        self.assertEqual(resp.status_code, 200)
+        pks = [e.pk for group in resp.context['event_groups'] for e in group[2]]
+        self.assertIn(event.pk, pks)
+
+    def test_payroll_reviewer_does_not_see_events_outside_coverage(self):
+        event = self._make_event(Event.Status.COMPLETE, account=self.other_account)
+        resp = self.client.get(reverse('event_list'))
+        self.assertEqual(resp.status_code, 200)
+        pks = [e.pk for group in resp.context['event_groups'] for e in group[2]]
+        self.assertNotIn(event.pk, pks)
+
+    def test_payroll_reviewer_sees_ok_to_pay_events(self):
+        event = self._make_event(Event.Status.OK_TO_PAY)
+        resp = self.client.get(reverse('event_list'))
+        self.assertEqual(resp.status_code, 200)
+        pks = [e.pk for group in resp.context['event_groups'] for e in group[2]]
+        self.assertIn(event.pk, pks)
