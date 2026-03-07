@@ -190,10 +190,10 @@ def _sort_events(events_qs):
         return (e.date is not None, e.date or MAX_DATE)
 
     def date_desc_key(e):
-        # Negate for descending; put no-dates at end
+        # Negate ordinal for descending order; None dates sort last (0 > any negative ordinal)
         if e.date is None:
-            return (1, date_type.min)
-        return (0, date_type(9999 - e.date.year, 12 - e.date.month, 28 - min(e.date.day, 28)))
+            return 0
+        return -e.date.toordinal()
 
     # Materialize and split by status
     events = list(events_qs)
