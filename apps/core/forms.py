@@ -9,7 +9,8 @@ from apps.core.rbac import Role
 User = get_user_model()
 
 # ---------------------------------------------------------------------------
-# Role choices list — ordered by hierarchy
+# Role choices list — used by the user list filter dropdown.
+# User create/edit forms pull roles directly from the Role model.
 # ---------------------------------------------------------------------------
 
 ROLE_CHOICES = [
@@ -22,39 +23,6 @@ ROLE_CHOICES = [
     ('distributor_contact', 'Distributor Contact'),
     ('payroll_reviewer',    'Payroll Reviewer'),
 ]
-
-# ---------------------------------------------------------------------------
-# Role creation map — keys and values are codename strings.
-# Defines which roles a given creator is allowed to assign.
-# ---------------------------------------------------------------------------
-
-CREATABLE_ROLES = {
-    'saas_admin': [
-        'supplier_admin', 'sales_manager', 'territory_manager',
-        'ambassador_manager', 'ambassador', 'distributor_contact',
-    ],
-    'supplier_admin': [
-        'supplier_admin', 'sales_manager', 'territory_manager',
-        'ambassador_manager', 'ambassador', 'distributor_contact',
-    ],
-    'sales_manager': [
-        'territory_manager', 'ambassador_manager', 'ambassador', 'distributor_contact',
-    ],
-    'territory_manager': [
-        'ambassador_manager', 'ambassador',
-    ],
-    'ambassador_manager': [
-        'ambassador',
-    ],
-}
-
-
-def _allowed_codenames_for(user):
-    """Return the set of role codenames a user is allowed to assign to others."""
-    allowed = set()
-    for rc in user.get_role_codenames():
-        allowed |= set(CREATABLE_ROLES.get(rc, []))
-    return allowed
 
 
 # ---------------------------------------------------------------------------
@@ -72,10 +40,11 @@ class UserCreateForm(forms.ModelForm):
         widget=forms.PasswordInput(attrs={'class': 'form-control', 'autocomplete': 'new-password'}),
         label='Confirm Password',
     )
-    role = forms.ChoiceField(
-        choices=[('', 'Select Role')],
-        widget=forms.Select(attrs={'class': 'form-select'}),
-        label='Role',
+    roles = forms.ModelMultipleChoiceField(
+        queryset=Role.objects.all().order_by('name'),
+        widget=forms.CheckboxSelectMultiple(),
+        label='Roles',
+        required=True,
     )
 
     class Meta:
@@ -94,33 +63,19 @@ class UserCreateForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.creator = creator
 
-        if creator:
-            allowed = _allowed_codenames_for(creator)
-            self.fields['role'].choices = [('', 'Select Role')] + [
-                (codename, label) for codename, label in ROLE_CHOICES if codename in allowed
-            ]
-            self.fields['role'].initial = ''
-
-            # SaaS Admin needs to pick a company; everyone else inherits creator's company
-            if creator.is_saas_admin:
-                from apps.core.models import Company
-                self.fields['company'] = forms.ModelChoiceField(
-                    queryset=Company.objects.filter(is_active=True).order_by('name'),
-                    widget=forms.Select(attrs={'class': 'form-select'}),
-                    label='Company',
-                    required=True,
-                )
+        if creator and creator.is_saas_admin:
+            from apps.core.models import Company
+            self.fields['company'] = forms.ModelChoiceField(
+                queryset=Company.objects.filter(is_active=True).order_by('name'),
+                widget=forms.Select(attrs={'class': 'form-select'}),
+                label='Company',
+                required=True,
+            )
 
         for f in ['first_name', 'last_name', 'email', 'username']:
             self.fields[f].required = True
         self.fields['phone'].required = False
         self.fields['is_active'].initial = True
-
-    def clean_role(self):
-        role = self.cleaned_data.get('role')
-        if not role:
-            raise forms.ValidationError('Please select a role.')
-        return role
 
     def clean_username(self):
         username = self.cleaned_data.get('username', '').lower()
@@ -147,13 +102,9 @@ class UserCreateForm(forms.ModelForm):
             user.created_by = self.creator
         if commit:
             user.save()
-            role_codename = self.cleaned_data.get('role')
-            if role_codename:
-                try:
-                    role_obj = Role.objects.get(codename=role_codename)
-                    user.roles.set([role_obj])
-                except Role.DoesNotExist:
-                    pass
+            roles = self.cleaned_data.get('roles')
+            if roles:
+                user.roles.set(roles)
         return user
 
 
@@ -162,10 +113,11 @@ class UserCreateForm(forms.ModelForm):
 # ---------------------------------------------------------------------------
 
 class UserEditForm(forms.ModelForm):
-    role = forms.ChoiceField(
-        choices=[],
-        widget=forms.Select(attrs={'class': 'form-select'}),
-        label='Role',
+    roles = forms.ModelMultipleChoiceField(
+        queryset=Role.objects.all().order_by('name'),
+        widget=forms.CheckboxSelectMultiple(),
+        label='Roles',
+        required=True,
     )
 
     class Meta:
@@ -182,26 +134,9 @@ class UserEditForm(forms.ModelForm):
 
     def __init__(self, *args, editor=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.editor = editor
 
-        current_roles = (
-            set(self.instance.roles.values_list('codename', flat=True))
-            if self.instance and self.instance.pk
-            else set()
-        )
-        current_role = next(iter(current_roles), None)
-
-        if editor:
-            allowed = _allowed_codenames_for(editor)
-            self.fields['role'].choices = [
-                (codename, label) for codename, label in ROLE_CHOICES
-                if codename in allowed or codename == current_role
-            ]
-        else:
-            self.fields['role'].choices = ROLE_CHOICES
-
-        if current_role:
-            self.fields['role'].initial = current_role
+        if self.instance and self.instance.pk:
+            self.fields['roles'].initial = self.instance.roles.all()
 
         for f in ['first_name', 'last_name', 'email', 'username']:
             self.fields[f].required = True
@@ -219,13 +154,9 @@ class UserEditForm(forms.ModelForm):
     def save(self, commit=True):
         user = super().save(commit=commit)
         if commit:
-            role_codename = self.cleaned_data.get('role')
-            if role_codename:
-                try:
-                    role_obj = Role.objects.get(codename=role_codename)
-                    user.roles.set([role_obj])
-                except Role.DoesNotExist:
-                    pass
+            roles = self.cleaned_data.get('roles')
+            if roles is not None:
+                user.roles.set(roles)
         return user
 
 

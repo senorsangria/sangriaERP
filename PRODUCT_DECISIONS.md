@@ -304,9 +304,6 @@ Searchable list for one-off or exception assignments
 - Placeholder pages for features not yet built
 
 ### User Management
-- Delegated user creation — users can create roles at or
-  below their own level
-- Role dropdown defaults to "Select Role" blank option
 - Company auto-assigned based on creator's company
 - User list view with search and filter by name or role
 - Mobile-optimized user list — role and status displayed
@@ -316,6 +313,17 @@ Searchable list for one-off or exception assignments
 - Password change as separate action
 - Supplier Admin and Sales Manager can reset other
   users' passwords
+
+### User Roles UI
+- The role field on user create and edit forms is a checkbox list
+  supporting multiple role assignments
+- All roles from the Role model are available with no restrictions
+  on assignment — any user with can_manage_users permission can
+  assign any role to any user
+- At least one role must be selected (enforced client and server side)
+- CREATABLE_ROLES has been removed — available roles are pulled
+  directly from the Role model in the database, making new roles
+  automatically available in the UI without code changes
 
 ### Access Control
 - All pages require authentication

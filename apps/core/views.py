@@ -15,9 +15,7 @@ from .forms import (
     PasswordChangeForm,
     AdminPasswordResetForm,
     ProfileEditForm,
-    CREATABLE_ROLES,
     ROLE_CHOICES,
-    _allowed_codenames_for,
 )
 from apps.distribution.models import Distributor
 from apps.accounts.constants import US_STATES, US_STATES_DICT
