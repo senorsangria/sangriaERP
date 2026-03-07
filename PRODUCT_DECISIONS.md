@@ -283,7 +283,7 @@ Searchable list for one-off or exception assignments
 | Phase 10.3.3 | Event Recap Form (Tasting + Festival) | ✅ Complete |
 | Phase 10.3.3 Tweaks | Festival→Special Event, Sort Order, Revert Complete, Account Mgmt | ✅ Complete |
 | Phase 10.4 | Expense Management | ✅ Complete |
-| Phase 10.5 | Event Export | ⬜ Pending |
+| Phase 10.5 | RBAC Migration + Ok to Pay + Payroll Reviewer | ✅ Complete |
 
 ---
 
@@ -558,7 +558,7 @@ is platform-agnostic)
 - Phase 10.2 — Event Scheduling & Status Workflow
 - Phase 10.3 — Event Recap
 - Phase 10.4 — Expense Management
-- Phase 10.5 — Event Export
+- Phase 10.5 — RBAC Migration + Ok to Pay + Payroll Reviewer
 - Phase 2.5 — Manual Account Creation
   (inserted before Phase 10 work begins)
 
@@ -646,7 +646,7 @@ Event setup fields (set by creator, not ambassador):
   the event
 
 ### Event Status Workflow
-Six statuses in order:
+Seven statuses in order:
 
 1. Draft — event is being set up, not yet visible to ambassador.
    Creator is still coordinating with account.
@@ -659,6 +659,8 @@ Six statuses in order:
    the recap; revision_note field captures what needs to be fixed
 6. Complete — event creator has reviewed recap and marked event
    as complete
+7. Ok to Pay — Payroll Reviewer (or Supplier Admin / SaaS Admin) has
+   reviewed the event and confirmed it is ready for payroll processing
 
 ### Revert Completed Events
 - Completed events can be reverted to Recap Submitted by Supplier Admin,
@@ -680,14 +682,15 @@ Six statuses in order:
 - After transition, redirects to the event detail page with a success message
 
 Admin events follow a simpler flow:
-Draft → Recap Submitted → Complete (no recap step, no Scheduled)
+Draft → Scheduled → Complete → Ok to Pay (no recap step)
 
-Tasting and Festival events follow:
-Draft → Scheduled → Recap In Progress → Recap Submitted → Complete
+Tasting and Special Event events follow:
+Draft → Scheduled → Recap In Progress → Recap Submitted → Complete → Ok to Pay
 
 Unlock behavior: Recap Submitted → Recap In Progress (not back to Scheduled)
 
 Badge color for Recap In Progress: bg-warning text-dark (yellow/amber)
+Badge color for Ok to Pay: bg-success (green, same as Complete)
 
 ### revision_note Field
 - Added to Event model in Phase 10.2
@@ -1537,5 +1540,145 @@ Light red background (#fff5f5) applies to any event requiring user action:
 
 ---
 
-*Last updated: March 6, 2026 (UI Tweaks session: mobile event list date layout; items-to-sampled Draft-only; expense unsaved guard; get_account_associations utility; account deletion updated)*
+## Phase 10.5 — RBAC Migration
+
+### Architecture
+Three-layer role-based access control:
+
+```
+User → roles (M2M) → Role → permissions (M2M) → Permission
+```
+
+- `User.roles` — ManyToManyField to `core.Role`
+- `Role.permissions` — ManyToManyField to `core.Permission`
+- `user.has_role(codename)` — checks role assignment, instance-cached
+- `user.has_permission(codename)` — checks any role's permissions, instance-cached
+- `user.is_<role>` properties — convenience properties delegating to `has_role()`
+
+Replaced the previous single `role` CharField on User.
+
+### Roles and Codenames
+| Role | Codename |
+|------|----------|
+| SaaS Admin | `saas_admin` |
+| Supplier Admin | `supplier_admin` |
+| Sales Manager | `sales_manager` |
+| Territory Manager | `territory_manager` |
+| Ambassador Manager | `ambassador_manager` |
+| Ambassador | `ambassador` |
+| Distributor Contact | `distributor_contact` |
+| Payroll Reviewer | `payroll_reviewer` |
+
+### Permissions (32 total)
+
+**Authentication & Navigation**
+- `can_access_dashboard` — Can access the dashboard
+- `can_redirect_to_events_on_login` — Redirect to events list on login instead of dashboard
+
+**User Management**
+- `can_manage_users` — Can access user management
+- `can_create_users` — Can create new users
+- `can_reset_user_password` — Can reset another user's password
+- `can_manage_user` — Can edit and manage individual users
+- `can_view_coverage_areas_tab` — Can view coverage areas tab on user profile
+- `can_assign_coverage_areas` — Can add/remove coverage area assignments
+
+**Catalog**
+- `can_manage_brands` — Can create and edit brands
+- `can_manage_items` — Can create and edit items
+- `can_reorder_items` — Can change item sort order
+
+**Distributors**
+- `can_manage_distributors` — Can create and edit distributors
+
+**Imports**
+- `can_import_sales_data` — Can import sales data files
+
+**Accounts**
+- `can_view_accounts` — Can view the account list and detail pages
+- `can_create_accounts` — Can create new accounts
+- `can_edit_accounts` — Can edit account details
+- `can_toggle_account_status` — Can activate and deactivate accounts
+- `can_delete_accounts` — Can delete manually created accounts
+- `can_view_all_accounts` — Can view all accounts regardless of coverage area
+
+**Events**
+- `can_view_events` — Can view the event list and detail pages
+- `can_export_events_csv` — Can export the event list as CSV
+- `can_view_draft_events` — Can see events in Draft status
+- `can_create_events` — Can create new events
+- `can_edit_events` — Can edit event setup fields
+- `can_release_event` — Can release a Draft event to Scheduled
+- `can_request_revision` — Can request revision on a submitted recap
+- `can_approve_event` — Can approve and complete a submitted recap
+- `can_delete_event` — Can permanently delete Draft events
+- `can_fill_recap` — Can fill out and submit event recap
+- `can_view_all_events` — Can view all events regardless of coverage area
+
+**Platform**
+- `can_view_saas_admin_ui` — Can access the SaaS admin UI
+- `can_mark_ok_to_pay` — Can mark events as OK to pay
+
+### Role → Permission Mappings
+
+**SaaS Admin** — all 32 permissions (full access)
+
+**Supplier Admin** — all event/account/catalog/user/import permissions, including `can_mark_ok_to_pay`; excludes `can_view_saas_admin_ui`
+
+**Sales Manager** — dashboard, accounts (full CRUD in own scope), events
+(full workflow including approve/delete), password reset; no user creation,
+no mark ok to pay
+
+**Territory Manager** — dashboard, accounts (full CRUD in own scope), events
+(full workflow including approve/delete); no user creation, no password reset,
+no mark ok to pay
+
+**Ambassador Manager** — same as Territory Manager
+
+**Ambassador** — redirect to events on login, view events, fill recap; no
+dashboard, no account access, no create/approve permissions
+
+**Distributor Contact** — no permissions (placeholder role)
+
+**Payroll Reviewer** — dashboard, view events (all statuses including draft),
+export events CSV, mark ok to pay
+
+### Hybrid Permission Checks
+Some checks are permission-based AND object-level:
+- `can_revert` (Complete → Recap Submitted): `can_approve_event` OR is the assigned Event Manager
+- `can_unrelease` (Scheduled → Draft): same as above
+- `can_revert_to_scheduled` (Recap Submitted → Scheduled): same
+- `can_revert_revision_requested` (Revision Requested → Scheduled): same
+
+### Payroll Reviewer Visibility
+- Sees all events at accounts in their coverage area (uses `get_accounts_for_user()`)
+- All statuses visible including Draft (has `can_view_draft_events`)
+- Coverage area rules apply — not company-wide visibility
+
+### Ok to Pay Workflow
+- Status: `ok_to_pay` ('Ok to Pay'), added after Complete in the status chain
+- Badge: `bg-success` (green, same as Complete)
+- Transition: Complete → Ok to Pay via POST `/events/<id>/mark-ok-to-pay/`
+- Revert: Ok to Pay → Complete via POST `/events/<id>/revert-ok-to-pay/`
+- Both require `can_mark_ok_to_pay` permission
+- Both use Bootstrap confirmation modals before executing
+- Roles with `can_mark_ok_to_pay`: SaaS Admin, Supplier Admin, Payroll Reviewer
+
+### create_saas_admin Management Command
+- Located at `apps/core/management/commands/create_saas_admin.py`
+- Creates a user with the `saas_admin` role (no company required)
+- Interactive prompts for username, email, first name, last name, password
+- Idempotent: safe to run if the username already exists (reports existing)
+- Usage: `python manage.py create_saas_admin`
+
+### Template Tag: has_perm
+- Located at `apps/core/templatetags/rbac.py`
+- Filter: `{% load rbac %}{% if user|has_perm:'can_do_something' %}`
+- Wraps `user.has_permission(codename)` for use in Django templates
+- Used in place of `user.is_*` properties when permission-level (not role-level)
+  checks are needed in templates
+
+---
+
+*Last updated: March 7, 2026 (Phase 10.5: RBAC migration, Ok to Pay, Payroll Reviewer)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
