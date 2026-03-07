@@ -44,12 +44,6 @@ class Account(TimeStampedModel):
       trimmed, abbreviations standardized — used for matching and deduplication
     """
 
-    class AccountType(models.TextChoices):
-        LIQUOR_STORE = 'liquor_store', 'Liquor Store'
-        RESTAURANT = 'restaurant', 'Restaurant'
-        FESTIVAL = 'festival', 'Festival'
-        OTHER = 'other', 'Other'
-
     company = models.ForeignKey(
         'core.Company',
         on_delete=models.PROTECT,
@@ -107,9 +101,22 @@ class Account(TimeStampedModel):
     )
 
     account_type = models.CharField(
-        max_length=20,
-        choices=AccountType.choices,
-        default=AccountType.OTHER,
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='Raw text, no validation. Values vary by source.',
+    )
+    third_party_id = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='Generic ID for future third-party system integrations.',
+    )
+    distributor_route = models.CharField(
+        max_length=500,
+        blank=True,
+        default='',
+        help_text='Raw text, full value from import source.',
     )
     is_active = models.BooleanField(default=True)
     auto_created = models.BooleanField(

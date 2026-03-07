@@ -54,7 +54,7 @@ class AccountForm(forms.ModelForm):
             'zip_code': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
             'phone': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
             'county': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
-            'account_type': forms.Select(attrs={'class': 'form-select'}),
+            'account_type': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
             'distributor': forms.Select(attrs={'class': 'form-select'}),
             'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
@@ -84,7 +84,7 @@ class AccountForm(forms.ModelForm):
         # Set defaults for new records
         if not self.instance.pk:
             self.fields['on_off_premise'].initial = 'Unknown'
-            self.fields['account_type'].initial = Account.AccountType.OTHER
+            self.fields['account_type'].initial = ''
             self.fields['is_active'].initial = True
 
     def clean_name(self):
