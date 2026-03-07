@@ -155,8 +155,9 @@ def get_users_covering_account(account, roles):
         account_id=account.pk,
     )
 
-    # Coverage-filtered users
-    result_qs = UserModel.objects.none()
+    # Build a combined Q for the final query to avoid combining distinct and
+    # non-distinct querysets via | (which raises TypeError after RBAC migration).
+    combined_q = Q(pk__in=[])
 
     if filtered_roles:
         covering_user_pks = (
@@ -165,20 +166,18 @@ def get_users_covering_account(account, roles):
             .values_list('user_id', flat=True)
             .distinct()
         )
-        coverage_filtered = UserModel.objects.filter(
+        combined_q |= Q(
             company=company,
             roles__codename__in=filtered_roles,
             is_active=True,
             pk__in=covering_user_pks,
-        ).distinct()
-        result_qs = coverage_filtered
+        )
 
     if include_supplier_admin:
-        supplier_admins = UserModel.objects.filter(
+        combined_q |= Q(
             company=company,
             roles__codename='supplier_admin',
             is_active=True,
         )
-        result_qs = result_qs | supplier_admins
 
-    return result_qs.order_by('last_name', 'first_name').distinct()
+    return UserModel.objects.filter(combined_q).distinct().order_by('last_name', 'first_name')
