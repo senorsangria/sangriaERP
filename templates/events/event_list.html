@@ -50,7 +50,7 @@
             aria-expanded="false" aria-controls="filterCard">
       <i class="bi bi-funnel me-1"></i>Filters
     </button>
-    {% if user.role == 'supplier_admin' or user.role == 'sales_manager' or user.role == 'territory_manager' or user.role == 'ambassador_manager' %}
+    {% if user.is_supplier_admin or user.is_sales_manager or user.is_territory_manager or user.is_ambassador_manager %}
     <button type="button" class="btn btn-sm btn-primary"
             data-bs-toggle="modal" data-bs-target="#newEventModal">
       <i class="bi bi-plus-lg me-1"></i>New Event
@@ -312,7 +312,7 @@
   {% endif %}
 </div>
 
-{% if user.role == 'supplier_admin' or user.role == 'sales_manager' or user.role == 'territory_manager' or user.role == 'ambassador_manager' %}
+{% if user.is_supplier_admin or user.is_sales_manager or user.is_territory_manager or user.is_ambassador_manager %}
 <!-- ================================================================
      New Event — Event Type Selection Modal
      ================================================================ -->
