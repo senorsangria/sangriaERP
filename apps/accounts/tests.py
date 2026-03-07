@@ -163,12 +163,13 @@ class AccountItemPriceHistoryTest(TestCase):
             item=self.item,
             date_first_associated=datetime.date.today(),
         )
+        from apps.core.rbac import Role
         self.user = User.objects.create_user(
             username="testuser",
             password="testpass123",
             company=self.company,
-            role=User.Role.SUPPLIER_ADMIN,
         )
+        self.user.roles.set([Role.objects.get(codename='supplier_admin')])
 
     def test_create_price_history_with_user(self):
         ph = AccountItemPriceHistory.objects.create(
@@ -214,13 +215,15 @@ from django.test import Client
 from django.urls import reverse
 
 
-def make_user(company, role, username="testuser"):
-    return User.objects.create_user(
+def make_user(company, role_codename, username="testuser"):
+    from apps.core.rbac import Role
+    user = User.objects.create_user(
         username=username,
         password="testpass123",
         company=company,
-        role=role,
     )
+    user.roles.set([Role.objects.get(codename=role_codename)])
+    return user
 
 
 class AccountDeleteTest(TestCase):
@@ -228,7 +231,7 @@ class AccountDeleteTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.admin = make_user(self.company, 'supplier_admin', "admin")
         self.client = Client()
         self.client.login(username="admin", password="testpass123")
 
@@ -301,7 +304,7 @@ class AccountToggleAllAccountsTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.admin = make_user(self.company, 'supplier_admin', "admin")
         self.client = Client()
         self.client.login(username="admin", password="testpass123")
 
@@ -357,7 +360,7 @@ class AccountDetailItemsDisplayTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.admin = make_user(self.company, 'supplier_admin', "admin")
         self.account = make_account(self.company)
         self.client = Client()
         self.client.login(username="admin", password="testpass123")
@@ -405,10 +408,12 @@ class AjaxAccountsSearchTest(TestCase):
     def setUp(self):
         self.company = make_company()
         # Supplier Admin sees all company accounts — no coverage area setup needed
+        from apps.core.rbac import Role
         self.user = User.objects.create_user(
             username='sadmin', password='testpass123',
-            company=self.company, role=User.Role.SUPPLIER_ADMIN,
+            company=self.company,
         )
+        self.user.roles.set([Role.objects.get(codename='supplier_admin')])
         self.client = Client()
         self.client.login(username='sadmin', password='testpass123')
         self.url = reverse('ajax_accounts_search')

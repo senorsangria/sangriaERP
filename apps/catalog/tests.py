@@ -19,12 +19,14 @@ def make_company(name="Test Co"):
 
 
 def make_supplier_admin(company, username="admin"):
-    return User.objects.create_user(
+    from apps.core.rbac import Role
+    user = User.objects.create_user(
         username=username,
         password="testpass123",
         company=company,
-        role=User.Role.SUPPLIER_ADMIN,
     )
+    user.roles.set([Role.objects.get(codename='supplier_admin')])
+    return user
 
 
 def make_brand(company, name="Test Brand"):
@@ -114,10 +116,12 @@ class ItemMoveUpTest(TestCase):
         self.assertEqual(resp.status_code, 405)
 
     def test_move_up_requires_supplier_admin(self):
+        from apps.core.rbac import Role
         other = User.objects.create_user(
             username="other", password="testpass123",
-            company=self.company, role=User.Role.AMBASSADOR,
+            company=self.company,
         )
+        other.roles.set([Role.objects.get(codename='ambassador')])
         c = Client()
         c.login(username="other", password="testpass123")
         resp = c.post(reverse("item_move_up", args=[self.brand.pk, self.item_b.pk]))

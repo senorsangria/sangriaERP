@@ -28,13 +28,16 @@ def make_company(name="Test Beverage Co"):
     return Company.objects.create(name=name)
 
 
-def make_user(company, role, username="testuser"):
-    return User.objects.create_user(
+def make_user(company, role_codename, username="testuser"):
+    from apps.core.rbac import Role
+    user = User.objects.create_user(
         username=username,
         password="testpass123",
         company=company,
-        role=role,
     )
+    role = Role.objects.get(codename=role_codename)
+    user.roles.set([role])
+    return user
 
 
 def make_account(company, name="Test Liquors"):
@@ -75,8 +78,8 @@ class AdminEventReleaseTransitionTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "manager")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "manager")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.client = Client()
         self.client.login(username="manager", password="testpass123")
 
@@ -130,8 +133,8 @@ class EventReleaseValidationTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "manager")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "manager")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.client = Client()
         self.client.login(username="manager", password="testpass123")
 
@@ -182,8 +185,8 @@ class EventReleasePermissionTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "manager")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "manager")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
 
     def _release_as(self, role_user, event):
         c = Client()
@@ -217,8 +220,8 @@ class AdminEventApproveTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "manager")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "manager")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.client = Client()
         self.client.login(username="manager", password="testpass123")
 
@@ -242,8 +245,8 @@ class RequestRevisionAdminBlockTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "manager")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "manager")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.client = Client()
         self.client.login(username="manager", password="testpass123")
 
@@ -308,8 +311,8 @@ class ItemsSectionVisibilityTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "manager")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "manager")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
         self.client = Client()
         self.client.login(username="manager", password="testpass123")
@@ -358,8 +361,8 @@ class EventDetailLayoutTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "manager")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "manager")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.client = Client()
         self.client.login(username="manager", password="testpass123")
 
@@ -424,8 +427,8 @@ class TastingReleaseItemsRequiredTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "manager")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "manager")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
         self.client = Client()
         self.client.login(username="manager", password="testpass123")
@@ -509,8 +512,8 @@ class RecapSaveTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "mgr")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
         self.item = make_item(self.company)
         self.event = make_event(
@@ -568,7 +571,7 @@ class RecapSaveTest(TestCase):
 
     def test_save_blocked_for_non_recap_user(self):
         """A user without recap access gets 403."""
-        other = make_user(self.company, User.Role.SALES_MANAGER, "other")
+        other = make_user(self.company, 'sales_manager', "other")
         c = Client()
         c.login(username="other", password="testpass123")
         response = c.post(reverse("event_save_recap", args=[self.event.pk]), {
@@ -599,8 +602,8 @@ class RecapSubmitTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "mgr")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
         self.item = make_item(self.company)
         self.event = make_event(
@@ -692,8 +695,8 @@ class RecapUnlockTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "mgr")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
         self.event = make_event(
             self.company, self.manager, Event.EventType.TASTING,
@@ -718,7 +721,7 @@ class RecapUnlockTest(TestCase):
         self.assertNotEqual(self.event.status, Event.Status.RECAP_IN_PROGRESS)
 
     def test_unlock_blocked_for_non_recap_user(self):
-        other = make_user(self.company, User.Role.SALES_MANAGER, "other")
+        other = make_user(self.company, 'sales_manager', "other")
         c = Client()
         c.login(username="other", password="testpass123")
         response = c.post(reverse("event_unlock_recap", args=[self.event.pk]))
@@ -739,8 +742,8 @@ class SpecialEventRecapTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "mgr")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
         self.event = make_event(
             self.company, self.manager, Event.EventType.SPECIAL_EVENT,
@@ -785,9 +788,9 @@ class RecapAccessRulesTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
-        self.other_user = make_user(self.company, User.Role.SALES_MANAGER, "other")
+        self.manager = make_user(self.company, 'supplier_admin', "mgr")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
+        self.other_user = make_user(self.company, 'sales_manager', "other")
         self.account = make_account(self.company)
         self.event = make_event(
             self.company, self.manager, Event.EventType.TASTING,
@@ -841,8 +844,8 @@ class ApproveRaceConditionTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "mgr")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
         self.event = make_event(
             self.company, self.manager, Event.EventType.TASTING,
@@ -876,7 +879,7 @@ class EventDurationDisplayTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
+        self.manager = make_user(self.company, 'supplier_admin', "mgr")
         self.event = make_event(
             self.company, self.manager, Event.EventType.ADMIN,
             date=date.today(),
@@ -912,8 +915,8 @@ class ItemsSectionRecapInProgressTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.manager = make_user(self.company, User.Role.SUPPLIER_ADMIN, "mgr")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.manager = make_user(self.company, 'supplier_admin', "mgr")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
         self.client = Client()
         self.client.login(username="mgr", password="testpass123")
@@ -937,9 +940,9 @@ class EventRevertCompleteTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
-        self.sales_mgr = make_user(self.company, User.Role.SALES_MANAGER, "salesmgr")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.admin = make_user(self.company, 'supplier_admin', "admin")
+        self.sales_mgr = make_user(self.company, 'sales_manager', "salesmgr")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
 
     def _complete_event(self, event_manager=None):
@@ -971,14 +974,14 @@ class EventRevertCompleteTest(TestCase):
 
     def test_assigned_event_manager_can_revert(self):
         """An Ambassador Manager who is the assigned event manager can revert."""
-        event_mgr = make_user(self.company, User.Role.AMBASSADOR_MANAGER, "evtmgr")
+        event_mgr = make_user(self.company, 'ambassador_manager', "evtmgr")
         event = self._complete_event(event_manager=event_mgr)
         self._revert_as("evtmgr", event)
         self.assertEqual(event.status, Event.Status.RECAP_SUBMITTED)
 
     def test_unassigned_ambassador_manager_cannot_revert(self):
         """An Ambassador Manager not assigned as event manager cannot revert."""
-        other = make_user(self.company, User.Role.AMBASSADOR_MANAGER, "other")
+        other = make_user(self.company, 'ambassador_manager', "other")
         event = self._complete_event()
         self._revert_as("other", event)
         self.assertEqual(event.status, Event.Status.COMPLETE)
@@ -1016,8 +1019,8 @@ class EventPhotoDeleteTest(TestCase):
         self.EventPhoto = EventPhoto
 
         self.company  = make_company()
-        self.admin    = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.admin    = make_user(self.company, 'supplier_admin', "admin")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account  = make_account(self.company)
         self.brand    = Brand.objects.create(company=self.company, name="TestBrand")
 
@@ -1084,7 +1087,7 @@ class EventPhotoDeleteTest(TestCase):
         self.assertEqual(resp.status_code, 405)
 
     def test_unrelated_user_cannot_delete(self):
-        stranger = make_user(self.company, User.Role.SALES_MANAGER, "stranger")
+        stranger = make_user(self.company, 'sales_manager', "stranger")
         resp = self._delete("stranger")
         # Sales Manager without coverage area cannot recap, so 403
         self.assertEqual(resp.status_code, 403)
@@ -1102,10 +1105,10 @@ class UnreleasePermissionTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
-        self.sales = make_user(self.company, User.Role.SALES_MANAGER, "sales")
-        self.amb_mgr = make_user(self.company, User.Role.AMBASSADOR_MANAGER, "ambmgr")
-        self.amb = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.admin = make_user(self.company, 'supplier_admin', "admin")
+        self.sales = make_user(self.company, 'sales_manager', "sales")
+        self.amb_mgr = make_user(self.company, 'ambassador_manager', "ambmgr")
+        self.amb = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
 
     def _make_scheduled(self, event_manager=None):
@@ -1150,7 +1153,7 @@ class UnreleasePermissionTest(TestCase):
 
     def test_non_assigned_amb_manager_cannot_unrelease(self):
         """An Ambassador Manager who is NOT the event_manager cannot see the event (404)."""
-        other_mgr = make_user(self.company, User.Role.AMBASSADOR_MANAGER, "othermgr")
+        other_mgr = make_user(self.company, 'ambassador_manager', "othermgr")
         event = self._make_scheduled(event_manager=self.admin)
         resp = self._post("othermgr", event)
         # Event is not visible to this user → 404 (also prevents the action)
@@ -1191,12 +1194,12 @@ class CsvExportColumnsTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
-        self.amb = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.admin = make_user(self.company, 'supplier_admin', "admin")
+        self.amb = make_user(self.company, 'ambassador', "amb")
         self.amb.first_name = "Jane"
         self.amb.last_name = "Smith"
         self.amb.save()
-        self.mgr = make_user(self.company, User.Role.SALES_MANAGER, "mgr")
+        self.mgr = make_user(self.company, 'sales_manager', "mgr")
         self.mgr.first_name = "Bob"
         self.mgr.last_name = "Jones"
         self.mgr.save()
@@ -1302,7 +1305,7 @@ class CsvExpenseColumnsTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.admin   = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.admin   = make_user(self.company, 'supplier_admin', "admin")
         self.account = make_account(self.company)
         self.client  = Client()
         self.client.login(username="admin", password="testpass123")
@@ -1377,10 +1380,10 @@ class RevertRecapSubmittedTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
-        self.sales = make_user(self.company, User.Role.SALES_MANAGER, "sales")
-        self.amb_mgr = make_user(self.company, User.Role.AMBASSADOR_MANAGER, "ambmgr")
-        self.amb = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.admin = make_user(self.company, 'supplier_admin', "admin")
+        self.sales = make_user(self.company, 'sales_manager', "sales")
+        self.amb_mgr = make_user(self.company, 'ambassador_manager', "ambmgr")
+        self.amb = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
         self.item = make_item(self.company)
 
@@ -1495,7 +1498,7 @@ class CsvDurationDecimalTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
-        self.admin = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
+        self.admin = make_user(self.company, 'supplier_admin', "admin")
         self.client = Client()
         self.client.login(username="admin", password="testpass123")
 
@@ -1554,8 +1557,8 @@ class ExpenseTest(TestCase):
         from apps.accounts.models import UserCoverageArea
 
         self.company   = make_company()
-        self.admin     = make_user(self.company, User.Role.SUPPLIER_ADMIN, "admin")
-        self.ambassador = make_user(self.company, User.Role.AMBASSADOR, "amb")
+        self.admin     = make_user(self.company, 'supplier_admin', "admin")
+        self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account   = make_account(self.company)
         self.SimpleUploadedFile = SimpleUploadedFile
 
@@ -1636,7 +1639,7 @@ class ExpenseTest(TestCase):
         self.assertEqual(Expense.objects.filter(event=self.event).count(), 0)
 
     def test_add_expense_non_recap_user_denied(self):
-        stranger = make_user(self.company, User.Role.SALES_MANAGER, "stranger")
+        stranger = make_user(self.company, 'sales_manager', "stranger")
         # Sales Manager without coverage area cannot recap
         resp = self._add('stranger')
         self.assertEqual(resp.status_code, 403)
@@ -1693,7 +1696,7 @@ class AjaxEventAccountsSearchTest(TestCase):
     def setUp(self):
         self.company = make_company()
         # Supplier Admin sees all company accounts — no coverage area setup needed
-        self.user = make_user(self.company, User.Role.SUPPLIER_ADMIN, 'sadmin')
+        self.user = make_user(self.company, 'supplier_admin', 'sadmin')
         self.client = Client()
         self.client.login(username='sadmin', password='testpass123')
         self.url = reverse('ajax_event_accounts')
