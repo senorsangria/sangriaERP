@@ -1693,9 +1693,17 @@ A CSV-based bulk import tool for creating and updating Account records. Accessib
 ### Flow
 Three-step process (upload → preview → execute):
 
-1. **Upload** (`GET/POST /imports/accounts/upload/`) — User selects a CSV file and submits. The file is parsed in memory; results are stored in the session. User is redirected to Preview.
-2. **Preview** (`GET /imports/accounts/preview/`) — Shows summary cards (Total Rows, To Be Created, To Be Updated, Skipped) and a table of the first 20 rows with CREATE (green) / UPDATE (blue) badges. User confirms or cancels.
+1. **Upload** (`GET/POST /imports/accounts/upload/`) — User selects a distributor (required) and a CSV file, then submits. The file is parsed in memory; results are stored in the session along with the selected distributor. User is redirected to Preview.
+2. **Preview** (`GET /imports/accounts/preview/`) — Shows the selected distributor name, summary cards (Total Rows, To Be Created, To Be Updated, Skipped), and a table of the first 20 rows with CREATE (green) / UPDATE (blue) badges. User confirms or cancels.
 3. **Execute** (`POST /imports/accounts/execute/`) — Reads rows from session, performs DB writes, clears session key, redirects to account list with a success message.
+
+### Distributor Selection
+- A distributor dropdown is shown on the Upload form above the CSV file input.
+- Selecting a distributor is **required** — submitting without one returns a validation error.
+- The selected distributor scopes both the match lookup and the data written:
+  - Match lookup only considers accounts already assigned to that distributor.
+  - CREATE rows have `distributor` set to the selected distributor.
+  - UPDATE rows always have `distributor` updated to the selected distributor.
 
 ### CSV Column Mapping
 
@@ -1713,16 +1721,18 @@ Three-step process (upload → preview → execute):
 | `Distributor Routes` | Distributor Route | No |
 
 ### Match Key / Deduplication
-Existing accounts are matched using a normalized key of **Name + Street + City + State** (uppercased, stripped of surrounding whitespace). If a match is found in the company's account records, the row is treated as an UPDATE; otherwise it is a CREATE.
+Existing accounts are matched using a normalized key of **distributor + Name + Street + City + State**. The match lookup is first filtered to accounts belonging to the selected distributor, then matched on Name + Street + City + State (uppercased, stripped of surrounding whitespace). An account with the same name and address but under a different distributor is treated as a CREATE, not an UPDATE.
 
 ### CREATE Behaviour
 - All mapped fields are set from the CSV row.
+- `distributor` is set to the selected distributor.
 - `is_active = True` always.
 - `auto_created = True` always (marks the record as import-originated).
 - `company` is set from the logged-in user's company.
 
 ### UPDATE Behaviour
-- Only non-key fields are updated: `zip_code`, `county`, `on_off_premise`, `account_type`, `third_party_id`, `distributor_route`.
+- `distributor` is always updated to the selected distributor.
+- Other non-key fields updated when non-blank: `zip_code`, `county`, `on_off_premise`, `account_type`, `third_party_id`, `distributor_route`.
 - **Name, street, city, state, `is_active`, and `auto_created` are never changed by an update.**
 - If a non-key field is blank in the CSV, the existing DB value is left unchanged (no overwrite with blank).
 
@@ -1736,10 +1746,12 @@ Session key: `account_import_preview`
 Structure:
 ```python
 {
+    'distributor_pk': int,
+    'distributor_name': str,
     'rows': [
         {
             'action': 'CREATE' | 'UPDATE',
-            'account_pk': int | None,   # None for CREATE
+            'existing_pk': int | None,  # None for CREATE
             'name': str,
             'street': str,
             'city': str,
@@ -1773,9 +1785,9 @@ Account Import link appears in the sidebar (desktop and mobile) between Sales Im
 - `StripExcelZipTest` — `_strip_excel_zip` helper (Excel format, plain zip, empty string)
 - `ParseCountyTest` — `_parse_county` helper (suffix stripping, plain value, empty string)
 - `ParseAccountCsvTest` — full CSV parsing: valid row, missing required field skipped, all optional fields, zip Excel format, county suffix stripping
-- `AccountImportUploadViewTest` — 403 for non-SA user, GET renders template, POST with valid CSV redirects to preview, POST with invalid CSV shows error
-- `AccountImportPreviewViewTest` — 403 for non-SA user, no session redirects to upload, valid session renders summary and rows
-- `AccountImportExecuteViewTest` — 403 for non-SA user, no session redirects to upload, CREATE creates account with correct fields and `auto_created=True`, UPDATE updates only non-key fields, UPDATE does not change `is_active`, success message includes create/update counts
+- `AccountImportUploadViewTest` — 403 for non-SA user, GET renders template, POST without distributor shows error, POST stores distributor in session, match scoped to distributor, POST with valid CSV redirects to preview, POST with invalid CSV shows error
+- `AccountImportPreviewViewTest` — 403 for non-SA user, no session redirects to upload, valid session renders summary and rows, distributor name shown on preview
+- `AccountImportExecuteViewTest` — 403 for non-SA user, no session redirects to upload, CREATE creates account with correct fields, CREATE sets distributor, UPDATE updates only non-key fields, UPDATE sets distributor, UPDATE does not change `is_active`, success message includes create/update counts
 
 ### Account Type — Future Normalization (Deferred)
 
@@ -1801,6 +1813,58 @@ user maps it to a canonical type before the import completes.
 
 This is deferred until enough imports from different distributor sources have
 been run to establish a clear canonical list.
+
+---
+
+## Account Detail — Import Data Card
+
+The account detail page displays a second card titled "Import Data" alongside the
+main Account Details card. The Import Data card is only shown when at least one of
+the following three fields is non-empty:
+
+- **Account Type** — raw text value from the `Classes of Trade` CSV column.
+- **Third Party ID** — raw value from the `VIP Outlet ID` CSV column.
+- **Distributor Route** — raw value from the `Distributor Routes` CSV column.
+
+The card is read-only and visible to all roles with the `can_view_accounts`
+permission (the same gate as the rest of the account detail page).
+
+---
+
+## Account List — Bulk Delete
+
+Accessible to **Supplier Admin only** (requires both `can_delete_accounts`
+permission and the `supplier_admin` role).
+
+### UI
+- Each row in the account list has a checkbox (shown only to Supplier Admin).
+- A Select All checkbox appears in the table header.
+- A "Delete Selected (N)" button appears below the filters bar when one or more
+  checkboxes are checked. Button is hidden when nothing is selected.
+- Clicking Delete Selected opens a Bootstrap confirmation modal.
+- Confirming submits the bulk delete form.
+
+### Endpoint
+`POST /accounts/bulk-delete/` (name: `account_bulk_delete`)
+
+### Logic
+For each selected account, `get_account_associations(account)` is called to check
+for linked data (events, items, etc.):
+- **No associations** → account is permanently deleted.
+- **Has associations** → account is deactivated (`is_active = False`), not deleted.
+
+The success message reports both deleted and deactivated counts separately.
+
+### Access Control
+Unauthenticated users and users without the required role/permission receive a 403.
+The endpoint only accepts POST; a GET request redirects to the account list.
+
+### Test Coverage (`apps/accounts/tests.py` — `AccountBulkDeleteTest`)
+- Non-Supplier-Admin gets 403, account untouched
+- Supplier Admin deletes account with no associations
+- Account with associations is deactivated, not deleted
+- Success message reports deleted vs deactivated counts
+- No PKs selected → warning message, redirect to account list
 
 ---
 

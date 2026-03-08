@@ -7,7 +7,12 @@ Covers:
 - Account create and update execution
 - Access control (403 for non-Supplier-Admin)
 - Update does not overwrite key fields or is_active
+- Distributor selection required on upload
+- Match scoped to selected distributor
+- Distributor set on CREATE, updated on UPDATE
+- Bulk delete (Supplier Admin only, associations → deactivate)
 """
+import csv
 import io
 
 from django.contrib.messages import get_messages
@@ -17,6 +22,7 @@ from django.urls import reverse
 from apps.accounts.models import Account
 from apps.core.models import Company, User
 from apps.core.rbac import Role
+from apps.distribution.models import Distributor
 from apps.imports.account_import_views import (
     _parse_account_csv,
     _parse_county,
@@ -64,18 +70,26 @@ def _make_csv(rows, include_optional=True):
                 r.get('state', 'NJ'),
             ]
 
-    lines = [','.join(headers)]
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(headers)
     for r in rows:
-        values = row_values(r)
-        lines.append(','.join(str(v) for v in values))
-    return '\n'.join(lines)
+        writer.writerow([str(v) for v in row_values(r)])
+    return buf.getvalue()
 
 
 class AccountImportTestBase(TestCase):
-    """Base class: sets up company, supplier admin user, and non-admin user."""
+    """Base class: sets up company, distributor, supplier admin user, and non-admin user."""
 
     def setUp(self):
         self.company = Company.objects.create(name='Test Beverage Co')
+
+        # Distributor
+        self.distributor = Distributor.objects.create(
+            company=self.company,
+            name='Test Distributor',
+            is_active=True,
+        )
 
         # Supplier Admin
         self.sa_role = Role.objects.get(codename='supplier_admin')
@@ -103,13 +117,15 @@ class AccountImportTestBase(TestCase):
     def _login_amb(self):
         self.client.force_login(self.amb_user)
 
-    def _upload_csv(self, csv_text):
-        """POST the upload form with a CSV string."""
+    def _upload_csv(self, csv_text, distributor_pk=None):
+        """POST the upload form with a CSV string and distributor selection."""
+        if distributor_pk is None:
+            distributor_pk = self.distributor.pk
         f = io.BytesIO(csv_text.encode('utf-8'))
         f.name = 'test_accounts.csv'
         return self.client.post(
             reverse('account_import_upload'),
-            {'csv_file': f},
+            {'csv_file': f, 'distributor_pk': distributor_pk},
         )
 
 
@@ -244,6 +260,19 @@ class AccountImportUploadViewTest(AccountImportTestBase):
         resp = self.client.get(reverse('account_import_upload'))
         self.assertNotEqual(resp.status_code, 200)
 
+    def test_upload_without_distributor_shows_error(self):
+        """Submitting without selecting a distributor shows a validation error."""
+        self._login_sa()
+        csv_text = _make_csv([{'name': 'Store A'}])
+        f = io.BytesIO(csv_text.encode('utf-8'))
+        f.name = 'test_accounts.csv'
+        resp = self.client.post(
+            reverse('account_import_upload'),
+            {'csv_file': f, 'distributor_pk': ''},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Please select a distributor')
+
     def test_upload_creates_session_data(self):
         self._login_sa()
         csv_text = _make_csv([{'name': 'Store A'}])
@@ -251,10 +280,19 @@ class AccountImportUploadViewTest(AccountImportTestBase):
         self.assertRedirects(resp, reverse('account_import_preview'))
         self.assertIn('account_import_preview', self.client.session)
 
+    def test_upload_session_stores_distributor_pk(self):
+        self._login_sa()
+        csv_text = _make_csv([{'name': 'Store A'}])
+        self._upload_csv(csv_text)
+        preview = self.client.session['account_import_preview']
+        self.assertEqual(preview['distributor_pk'], self.distributor.pk)
+        self.assertEqual(preview['distributor_name'], self.distributor.name)
+
     def test_upload_session_has_correct_counts(self):
-        # Create an existing account that should be UPDATE
+        # Create an existing account under the same distributor that should be UPDATE
         Account.objects.create(
             company=self.company,
+            distributor=self.distributor,
             name='EXISTING STORE',
             street='1 MAIN ST',
             city='HOBOKEN',
@@ -273,9 +311,41 @@ class AccountImportUploadViewTest(AccountImportTestBase):
         self.assertIn('UPDATE', actions)
         self.assertIn('CREATE', actions)
 
+    def test_match_scoped_to_distributor(self):
+        """
+        An account with the same name/address but under a DIFFERENT distributor
+        must be treated as CREATE, not UPDATE.
+        """
+        other_distributor = Distributor.objects.create(
+            company=self.company,
+            name='Other Distributor',
+            is_active=True,
+        )
+        # Account exists under other_distributor
+        Account.objects.create(
+            company=self.company,
+            distributor=other_distributor,
+            name='SAME NAME STORE',
+            street='1 MAIN ST',
+            city='HOBOKEN',
+            state='NJ',
+        )
+        self._login_sa()
+        # Upload CSV for self.distributor — should see CREATE, not UPDATE
+        csv_text = _make_csv([
+            {'name': 'SAME NAME STORE', 'street': '1 Main St',
+             'city': 'Hoboken', 'state': 'NJ'},
+        ])
+        self._upload_csv(csv_text, distributor_pk=self.distributor.pk)
+        preview = self.client.session['account_import_preview']
+        self.assertEqual(preview['rows'][0]['action'], 'CREATE')
+
     def test_no_file_shows_error(self):
         self._login_sa()
-        resp = self.client.post(reverse('account_import_upload'), {})
+        resp = self.client.post(
+            reverse('account_import_upload'),
+            {'distributor_pk': self.distributor.pk},
+        )
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Please select a CSV file')
 
@@ -294,7 +364,12 @@ class AccountImportPreviewViewTest(AccountImportTestBase):
                      'on_off_premise': 'Unknown', 'account_type': '',
                      'third_party_id': '', 'distributor_route': ''}]
         session = self.client.session
-        session['account_import_preview'] = {'rows': rows, 'skipped': skipped}
+        session['account_import_preview'] = {
+            'rows': rows,
+            'skipped': skipped,
+            'distributor_pk': self.distributor.pk,
+            'distributor_name': self.distributor.name,
+        }
         session.save()
 
     def test_preview_renders(self):
@@ -303,6 +378,12 @@ class AccountImportPreviewViewTest(AccountImportTestBase):
         resp = self.client.get(reverse('account_import_preview'))
         self.assertEqual(resp.status_code, 200)
         self.assertTemplateUsed(resp, 'imports/account_import_preview.html')
+
+    def test_preview_shows_distributor_name(self):
+        self._login_sa()
+        self._seed_session()
+        resp = self.client.get(reverse('account_import_preview'))
+        self.assertContains(resp, self.distributor.name)
 
     def test_preview_shows_correct_counts(self):
         self._login_sa()
@@ -343,7 +424,12 @@ class AccountImportExecuteViewTest(AccountImportTestBase):
 
     def _seed_session(self, rows, skipped=0):
         session = self.client.session
-        session['account_import_preview'] = {'rows': rows, 'skipped': skipped}
+        session['account_import_preview'] = {
+            'rows': rows,
+            'skipped': skipped,
+            'distributor_pk': self.distributor.pk,
+            'distributor_name': self.distributor.name,
+        }
         session.save()
 
     def _make_create_row(self, **kwargs):
@@ -366,7 +452,8 @@ class AccountImportExecuteViewTest(AccountImportTestBase):
     def test_get_redirects_to_preview(self):
         self._login_sa()
         resp = self.client.get(reverse('account_import_execute'))
-        self.assertRedirects(resp, reverse('account_import_preview'))
+        self.assertRedirects(resp, reverse('account_import_preview'),
+                             fetch_redirect_response=False)
 
     def test_create_new_account(self):
         self._login_sa()
@@ -389,6 +476,14 @@ class AccountImportExecuteViewTest(AccountImportTestBase):
         self.assertTrue(account.is_active)
         self.assertTrue(account.auto_created)
 
+    def test_create_sets_distributor(self):
+        """CREATE rows must have the selected distributor set."""
+        self._login_sa()
+        self._seed_session([self._make_create_row()])
+        self.client.post(reverse('account_import_execute'))
+        account = Account.objects.get(company=self.company, name='New Store')
+        self.assertEqual(account.distributor, self.distributor)
+
     def test_create_clears_session(self):
         self._login_sa()
         self._seed_session([self._make_create_row()])
@@ -399,6 +494,7 @@ class AccountImportExecuteViewTest(AccountImportTestBase):
         # Create the account first
         existing = Account.objects.create(
             company=self.company,
+            distributor=self.distributor,
             name='OLD STORE',
             street='10 OAK AVE',
             city='CAMDEN',
@@ -437,6 +533,42 @@ class AccountImportExecuteViewTest(AccountImportTestBase):
         self.assertEqual(existing.account_type, 'Bar')
         self.assertEqual(existing.third_party_id, 'VIP999')
         self.assertEqual(existing.distributor_route, 'Route 3')
+
+    def test_update_sets_distributor(self):
+        """UPDATE rows must have the distributor updated to the selected distributor."""
+        other_distributor = Distributor.objects.create(
+            company=self.company,
+            name='Old Distributor',
+            is_active=True,
+        )
+        existing = Account.objects.create(
+            company=self.company,
+            distributor=other_distributor,
+            name='EXISTING STORE',
+            street='1 MAIN ST',
+            city='HOBOKEN',
+            state='NJ',
+        )
+        self._login_sa()
+        row = {
+            'action': 'UPDATE',
+            'existing_pk': existing.pk,
+            'name': 'EXISTING STORE',
+            'street': '1 MAIN ST',
+            'city': 'HOBOKEN',
+            'state': 'NJ',
+            'zip_code': '',
+            'county': '',
+            'on_off_premise': 'Unknown',
+            'account_type': '',
+            'third_party_id': '',
+            'distributor_route': '',
+        }
+        self._seed_session([row])
+        self.client.post(reverse('account_import_execute'))
+
+        existing.refresh_from_db()
+        self.assertEqual(existing.distributor, self.distributor)
 
     def test_update_does_not_overwrite_key_fields(self):
         existing = Account.objects.create(
@@ -511,3 +643,127 @@ class AccountImportExecuteViewTest(AccountImportTestBase):
         self._login_sa()
         resp = self.client.post(reverse('account_import_execute'))
         self.assertRedirects(resp, reverse('account_import_upload'))
+
+
+# ---------------------------------------------------------------------------
+# Bulk delete tests
+# ---------------------------------------------------------------------------
+
+class AccountBulkDeleteTest(TestCase):
+    """account_bulk_delete: delete accounts with no data; deactivate those with data."""
+
+    def setUp(self):
+        self.company = Company.objects.create(name='Bulk Delete Co')
+
+        self.sa_role = Role.objects.get(codename='supplier_admin')
+        self.sa_user = User.objects.create_user(
+            username='sa_bulk',
+            password='testpass123',
+            company=self.company,
+        )
+        self.sa_user.roles.set([self.sa_role])
+
+        self.amb_role = Role.objects.get(codename='ambassador')
+        self.amb_user = User.objects.create_user(
+            username='amb_bulk',
+            password='testpass123',
+            company=self.company,
+        )
+        self.amb_user.roles.set([self.amb_role])
+
+        self.client = Client()
+
+    def _make_account(self, name='Test Account'):
+        return Account.objects.create(
+            company=self.company,
+            name=name,
+            street='1 Test St',
+            city='Testville',
+            state='NJ',
+            is_active=True,
+        )
+
+    def _post_bulk_delete(self, pks):
+        return self.client.post(
+            reverse('account_bulk_delete'),
+            {'account_pks': pks},
+        )
+
+    def test_non_supplier_admin_gets_403(self):
+        """Ambassador cannot access bulk delete."""
+        self.client.force_login(self.amb_user)
+        account = self._make_account()
+        resp = self._post_bulk_delete([account.pk])
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(Account.objects.filter(pk=account.pk).exists())
+
+    def test_supplier_admin_can_delete_account_with_no_associations(self):
+        """Accounts with no associations are permanently deleted."""
+        self.client.force_login(self.sa_user)
+        account = self._make_account('No-Data Store')
+        resp = self._post_bulk_delete([account.pk])
+        self.assertRedirects(resp, reverse('account_list'))
+        self.assertFalse(Account.objects.filter(pk=account.pk).exists())
+
+    def test_account_with_associations_is_deactivated_not_deleted(self):
+        """Accounts with associated events/photos are deactivated, not deleted."""
+        from apps.events.models import Event
+        from apps.catalog.models import Brand
+
+        self.client.force_login(self.sa_user)
+        account = self._make_account('Has-Events Store')
+
+        creator = self.sa_user
+        Event.objects.create(
+            company=self.company,
+            created_by=creator,
+            event_manager=creator,
+            event_type=Event.EventType.TASTING,
+            status=Event.Status.DRAFT,
+            account=account,
+        )
+
+        resp = self._post_bulk_delete([account.pk])
+        self.assertRedirects(resp, reverse('account_list'))
+
+        account.refresh_from_db()
+        self.assertTrue(Account.objects.filter(pk=account.pk).exists())
+        self.assertFalse(account.is_active)
+
+    def test_success_message_shows_correct_counts(self):
+        """Success message reports deleted vs deactivated counts."""
+        from apps.events.models import Event
+
+        self.client.force_login(self.sa_user)
+
+        clean_account = self._make_account('Clean Store')
+        dirty_account = self._make_account('Dirty Store')
+
+        Event.objects.create(
+            company=self.company,
+            created_by=self.sa_user,
+            event_manager=self.sa_user,
+            event_type=Event.EventType.TASTING,
+            status=Event.Status.DRAFT,
+            account=dirty_account,
+        )
+
+        resp = self._post_bulk_delete([clean_account.pk, dirty_account.pk])
+        resp_follow = self.client.get(reverse('account_list'), follow=True)
+        # Follow the redirect manually and check messages
+        resp2 = self.client.post(
+            reverse('account_bulk_delete'),
+            {'account_pks': []},
+            follow=True,
+        )
+        msgs_direct = [str(m) for m in get_messages(resp.wsgi_request)]
+        self.assertTrue(any('deleted' in m for m in msgs_direct))
+        self.assertTrue(any('deactivated' in m for m in msgs_direct))
+
+    def test_no_pks_selected_shows_warning(self):
+        """Posting with no PKs shows a warning message."""
+        self.client.force_login(self.sa_user)
+        resp = self._post_bulk_delete([])
+        self.assertRedirects(resp, reverse('account_list'))
+        resp2 = self.client.get(reverse('account_list'))
+        # No accounts should have been changed

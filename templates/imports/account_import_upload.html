@@ -29,6 +29,23 @@
       <div class="card-body">
         <form method="post" enctype="multipart/form-data" novalidate>
           {% csrf_token %}
+
+          <div class="mb-3">
+            <label class="form-label fw-medium" for="distributor_pk">
+              Distributor <span class="text-danger">*</span>
+            </label>
+            <select class="form-select" id="distributor_pk" name="distributor_pk" required>
+              <option value="">— Select a distributor —</option>
+              {% for dist in distributors %}
+              <option value="{{ dist.pk }}"
+                {% if selected_distributor_pk == dist.pk|stringformat:"s" %}selected{% endif %}>
+                {{ dist.name }}
+              </option>
+              {% endfor %}
+            </select>
+            <div class="form-text">All accounts in this CSV will be associated with the selected distributor.</div>
+          </div>
+
           <div class="mb-3">
             <label class="form-label fw-medium" for="csv_file">
               CSV File <span class="text-danger">*</span>
@@ -82,6 +99,8 @@
         Rows with missing required fields are skipped. Zip codes in Excel format
         (<code>="07030"</code>) are automatically stripped. County state suffixes
         (e.g. <code>UNION, NJ</code>) are stripped to county name only.
+        Account matching is scoped to the selected distributor — the same
+        name and address under a different distributor will be treated as a new account.
       </div>
     </div>
 

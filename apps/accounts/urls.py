@@ -6,6 +6,7 @@ from . import views
 urlpatterns = [
     # Account management
     path('accounts/', views.account_list, name='account_list'),
+    path('accounts/bulk-delete/', views.account_bulk_delete, name='account_bulk_delete'),
     path('accounts/create/', views.account_create, name='account_create'),
     path('accounts/<int:pk>/', views.account_detail, name='account_detail'),
     path('accounts/<int:pk>/edit/', views.account_edit, name='account_edit'),

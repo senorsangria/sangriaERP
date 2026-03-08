@@ -5,6 +5,7 @@ Phase 10.3.2
 """
 import datetime
 
+from django.contrib.messages import get_messages
 from django.db import IntegrityError
 from django.test import Client, TestCase
 from django.urls import reverse
@@ -480,3 +481,99 @@ class AjaxAccountsSearchTest(TestCase):
         """'Crown Newark' should return only Crown (name=Crown, city=Newark)."""
         names = self._names(self._get('Crown Newark'))
         self.assertEqual(names, {'Crown Wine & Spirits'})
+
+
+# ---------------------------------------------------------------------------
+# Phase 10.6 — Account bulk delete
+# ---------------------------------------------------------------------------
+
+class AccountBulkDeleteTest(TestCase):
+    """account_bulk_delete: delete accounts with no data; deactivate those with data."""
+
+    def setUp(self):
+        self.company = make_company('Bulk Delete Co')
+
+        self.sa_user = make_user(self.company, 'supplier_admin', 'sa_bulk')
+        self.amb_user = make_user(self.company, 'ambassador', 'amb_bulk')
+
+        self.client = Client()
+
+    def _make_account(self, name='Test Account'):
+        return Account.objects.create(
+            company=self.company,
+            name=name,
+            street='1 Test St',
+            city='Testville',
+            state='NJ',
+            is_active=True,
+        )
+
+    def _post_bulk_delete(self, pks):
+        return self.client.post(
+            reverse('account_bulk_delete'),
+            {'account_pks': pks},
+        )
+
+    def test_non_supplier_admin_gets_403(self):
+        """Ambassador cannot access bulk delete."""
+        self.client.force_login(self.amb_user)
+        account = self._make_account()
+        resp = self._post_bulk_delete([account.pk])
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(Account.objects.filter(pk=account.pk).exists())
+
+    def test_supplier_admin_can_delete_account_with_no_associations(self):
+        """Accounts with no associations are permanently deleted."""
+        self.client.force_login(self.sa_user)
+        account = self._make_account('No-Data Store')
+        resp = self._post_bulk_delete([account.pk])
+        self.assertRedirects(resp, reverse('account_list'))
+        self.assertFalse(Account.objects.filter(pk=account.pk).exists())
+
+    def test_account_with_associations_is_deactivated_not_deleted(self):
+        """Accounts with associated events are deactivated, not deleted."""
+        self.client.force_login(self.sa_user)
+        account = self._make_account('Has-Events Store')
+
+        Event.objects.create(
+            company=self.company,
+            created_by=self.sa_user,
+            event_manager=self.sa_user,
+            event_type=Event.EventType.TASTING,
+            status=Event.Status.DRAFT,
+            account=account,
+        )
+
+        resp = self._post_bulk_delete([account.pk])
+        self.assertRedirects(resp, reverse('account_list'))
+
+        account.refresh_from_db()
+        self.assertTrue(Account.objects.filter(pk=account.pk).exists())
+        self.assertFalse(account.is_active)
+
+    def test_success_message_shows_correct_counts(self):
+        """Success message reports deleted vs deactivated counts."""
+        self.client.force_login(self.sa_user)
+
+        clean_account = self._make_account('Clean Store')
+        dirty_account = self._make_account('Dirty Store')
+
+        Event.objects.create(
+            company=self.company,
+            created_by=self.sa_user,
+            event_manager=self.sa_user,
+            event_type=Event.EventType.TASTING,
+            status=Event.Status.DRAFT,
+            account=dirty_account,
+        )
+
+        resp = self._post_bulk_delete([clean_account.pk, dirty_account.pk])
+        msgs = [str(m) for m in get_messages(resp.wsgi_request)]
+        self.assertTrue(any('deleted' in m for m in msgs))
+        self.assertTrue(any('deactivated' in m for m in msgs))
+
+    def test_no_pks_selected_shows_warning(self):
+        """Posting with no PKs shows a warning message and redirects."""
+        self.client.force_login(self.sa_user)
+        resp = self._post_bulk_delete([])
+        self.assertRedirects(resp, reverse('account_list'))

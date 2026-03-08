@@ -17,6 +17,7 @@ from django.db import transaction
 from django.shortcuts import redirect, render
 
 from apps.accounts.models import Account
+from apps.distribution.models import Distributor
 
 
 # ---------------------------------------------------------------------------
@@ -169,15 +170,19 @@ def _parse_account_csv(file_obj):
 # Match existing accounts
 # ---------------------------------------------------------------------------
 
-def _categorize_rows(rows, company):
+def _categorize_rows(rows, company, distributor):
     """
     For each parsed row, determine whether it is a CREATE or UPDATE.
 
-    Match key: name + street + city + state (all normalized to uppercase).
+    Match key: distributor + name + street + city + state (all normalized).
+    Only accounts belonging to the selected distributor are considered for
+    matching — accounts under a different distributor with the same address
+    are treated as CREATE, not UPDATE.
+
     Returns list of dicts adding 'action': 'CREATE' | 'UPDATE' and
     'existing_pk': int|None.
     """
-    # Build lookup of existing accounts keyed by normalized tuple
+    # Build lookup of existing accounts for this distributor keyed by normalized tuple
     existing = {
         (
             _normalize_key(a.name),
@@ -185,9 +190,9 @@ def _categorize_rows(rows, company):
             _normalize_key(a.city),
             _normalize_key(a.state),
         ): a.pk
-        for a in Account.objects.filter(company=company).only(
-            'pk', 'name', 'street', 'city', 'state'
-        )
+        for a in Account.objects.filter(
+            company=company, distributor=distributor
+        ).only('pk', 'name', 'street', 'city', 'state')
     }
 
     result = []
@@ -215,41 +220,65 @@ def account_import_upload(request):
     if denied:
         return denied
 
+    company = request.user.company
+    distributors = Distributor.objects.filter(company=company, is_active=True).order_by('name')
+
+    def _render_upload(error=None, selected_distributor_pk=''):
+        return render(request, 'imports/account_import_upload.html', {
+            'distributors': distributors,
+            'error': error,
+            'selected_distributor_pk': selected_distributor_pk,
+        })
+
     if request.method == 'POST':
+        distributor_pk = request.POST.get('distributor_pk', '').strip()
+        if not distributor_pk:
+            return _render_upload(error='Please select a distributor.')
+
+        try:
+            distributor = Distributor.objects.get(pk=distributor_pk, company=company, is_active=True)
+        except Distributor.DoesNotExist:
+            return _render_upload(error='Invalid distributor selected.')
+
         uploaded = request.FILES.get('csv_file')
         if not uploaded:
-            return render(request, 'imports/account_import_upload.html', {
-                'error': 'Please select a CSV file to upload.',
-            })
+            return _render_upload(
+                error='Please select a CSV file to upload.',
+                selected_distributor_pk=distributor_pk,
+            )
 
         try:
             rows, skipped = _parse_account_csv(uploaded)
         except ValueError as exc:
-            return render(request, 'imports/account_import_upload.html', {
-                'error': str(exc),
-            })
+            return _render_upload(
+                error=str(exc),
+                selected_distributor_pk=distributor_pk,
+            )
         except Exception as exc:
-            return render(request, 'imports/account_import_upload.html', {
-                'error': f'Could not parse CSV: {exc}',
-            })
+            return _render_upload(
+                error=f'Could not parse CSV: {exc}',
+                selected_distributor_pk=distributor_pk,
+            )
 
         if not rows and skipped == 0:
-            return render(request, 'imports/account_import_upload.html', {
-                'error': 'The CSV file appears to be empty.',
-            })
+            return _render_upload(
+                error='The CSV file appears to be empty.',
+                selected_distributor_pk=distributor_pk,
+            )
 
-        company = request.user.company
-        categorized = _categorize_rows(rows, company)
+        categorized = _categorize_rows(rows, company, distributor)
 
         # Store in session for the preview/execute steps
         request.session['account_import_preview'] = {
             'rows': categorized,
             'skipped': skipped,
+            'distributor_pk': distributor.pk,
+            'distributor_name': distributor.name,
         }
 
         return redirect('account_import_preview')
 
-    return render(request, 'imports/account_import_upload.html', {})
+    return _render_upload()
 
 
 # ---------------------------------------------------------------------------
@@ -266,17 +295,19 @@ def account_import_preview(request):
         messages.warning(request, 'No import in progress. Please upload a CSV file.')
         return redirect('account_import_upload')
 
-    rows    = preview_data['rows']
-    skipped = preview_data['skipped']
+    rows             = preview_data['rows']
+    skipped          = preview_data['skipped']
+    distributor_name = preview_data.get('distributor_name', '')
     creates = sum(1 for r in rows if r['action'] == 'CREATE')
     updates = sum(1 for r in rows if r['action'] == 'UPDATE')
 
     return render(request, 'imports/account_import_preview.html', {
-        'total':        len(rows),
-        'creates':      creates,
-        'updates':      updates,
-        'skipped':      skipped,
-        'preview_rows': rows[:20],
+        'total':            len(rows),
+        'creates':          creates,
+        'updates':          updates,
+        'skipped':          skipped,
+        'preview_rows':     rows[:20],
+        'distributor_name': distributor_name,
     })
 
 
@@ -297,8 +328,17 @@ def account_import_execute(request):
         messages.warning(request, 'No import in progress. Please upload a CSV file.')
         return redirect('account_import_upload')
 
-    rows    = preview_data['rows']
-    company = request.user.company
+    rows             = preview_data['rows']
+    distributor_pk   = preview_data.get('distributor_pk')
+    company          = request.user.company
+
+    # Resolve distributor — fall back to None if session data is stale
+    distributor = None
+    if distributor_pk:
+        try:
+            distributor = Distributor.objects.get(pk=distributor_pk, company=company)
+        except Distributor.DoesNotExist:
+            pass
 
     created_count = 0
     updated_count = 0
@@ -308,6 +348,7 @@ def account_import_execute(request):
             if row['action'] == 'CREATE':
                 Account.objects.create(
                     company=company,
+                    distributor=distributor,
                     name=row['name'],
                     street=row['street'],
                     city=row['city'],
@@ -328,7 +369,7 @@ def account_import_execute(request):
                 created_count += 1
 
             elif row['action'] == 'UPDATE' and row.get('existing_pk'):
-                update_fields = {}
+                update_fields = {'distributor': distributor}
                 if row['zip_code']:
                     update_fields['zip_code'] = row['zip_code']
                 if row['county']:
@@ -342,10 +383,9 @@ def account_import_execute(request):
                 if row['distributor_route']:
                     update_fields['distributor_route'] = row['distributor_route']
 
-                if update_fields:
-                    Account.objects.filter(
-                        pk=row['existing_pk'], company=company
-                    ).update(**update_fields)
+                Account.objects.filter(
+                    pk=row['existing_pk'], company=company
+                ).update(**update_fields)
                 updated_count += 1
 
     # Clear session

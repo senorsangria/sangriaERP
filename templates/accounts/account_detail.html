@@ -122,11 +122,6 @@
           </div>
 
           <div class="row mb-2">
-            <dt class="col-5 text-muted fw-normal small">Account Type</dt>
-            <dd class="col-7 mb-0 small">{{ account.get_account_type_display }}</dd>
-          </div>
-
-          <div class="row mb-2">
             <dt class="col-5 text-muted fw-normal small">Distributor</dt>
             <dd class="col-7 mb-0 small">{{ account.distributor.name|default:"None" }}</dd>
           </div>
@@ -140,6 +135,41 @@
       </div>
     </div>
   </div>
+
+  {% if account.account_type or account.third_party_id or account.distributor_route %}
+  <div class="col-12 col-lg-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent fw-semibold">Import Data</div>
+      <div class="card-body">
+        <dl class="mb-0">
+
+          {% if account.account_type %}
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Account Type</dt>
+            <dd class="col-7 mb-0 small">{{ account.account_type }}</dd>
+          </div>
+          {% endif %}
+
+          {% if account.third_party_id %}
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Third Party ID</dt>
+            <dd class="col-7 mb-0 small">{{ account.third_party_id }}</dd>
+          </div>
+          {% endif %}
+
+          {% if account.distributor_route %}
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Distributor Route</dt>
+            <dd class="col-7 mb-0 small">{{ account.distributor_route }}</dd>
+          </div>
+          {% endif %}
+
+        </dl>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
 </div>
 
 <!-- Associated Items -->

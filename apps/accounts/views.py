@@ -219,12 +219,18 @@ def account_list(request):
 
     filters_active = bool(search or distributor_id or on_off or source or active_status)
 
+    can_bulk_delete = (
+        request.user.has_permission('can_delete_accounts')
+        and request.user.has_role('supplier_admin')
+    )
+
     return render(request, 'accounts/account_list.html', {
         'accounts':            accounts,
         'distributors':        distributors,
         'filters':             filters,
         'filters_active':      filters_active,
         'show_no_coverage_message': show_no_coverage_message,
+        'can_bulk_delete':     can_bulk_delete,
     })
 
 
@@ -379,6 +385,74 @@ def account_delete(request, pk):
         return redirect('account_list')
 
     return redirect('account_detail', pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# Bulk delete (Supplier Admin only)
+# ---------------------------------------------------------------------------
+
+@login_required
+def account_bulk_delete(request):
+    """
+    POST: Delete or deactivate a list of accounts.
+
+    Gate: requires can_delete_accounts permission AND supplier_admin role.
+
+    For each selected account:
+      - If no associations: delete the account permanently.
+      - If has associations: deactivate (is_active = False) instead.
+
+    Returns a redirect to account_list with a summary message.
+    """
+    if not request.user.is_authenticated:
+        return render(request, '403.html', status=403)
+    if not (request.user.has_permission('can_delete_accounts')
+            and request.user.has_role('supplier_admin')):
+        return render(request, '403.html', status=403)
+
+    if request.method != 'POST':
+        return redirect('account_list')
+
+    company = request.user.company
+    pks_raw = request.POST.getlist('account_pks')
+
+    # Sanitise to integer PKs
+    try:
+        pks = [int(pk) for pk in pks_raw if str(pk).strip().isdigit()]
+    except (ValueError, TypeError):
+        pks = []
+
+    if not pks:
+        messages.warning(request, 'No accounts selected.')
+        return redirect('account_list')
+
+    accounts = Account.objects.filter(pk__in=pks, company=company)
+
+    deleted_count = 0
+    deactivated_count = 0
+
+    for account in accounts:
+        associations = get_account_associations(account)
+        has_data = any(v > 0 for v in associations.values())
+        if has_data:
+            account.is_active = False
+            account.save(update_fields=['is_active'])
+            deactivated_count += 1
+        else:
+            account.delete()
+            deleted_count += 1
+
+    parts = []
+    if deleted_count:
+        parts.append(f'{deleted_count} account{"s" if deleted_count != 1 else ""} deleted')
+    if deactivated_count:
+        parts.append(
+            f'{deactivated_count} account{"s" if deactivated_count != 1 else ""} '
+            f'deactivated (had associated data)'
+        )
+    msg = ', '.join(parts) + '.' if parts else 'No accounts were changed.'
+    messages.success(request, msg)
+    return redirect('account_list')
 
 
 # ---------------------------------------------------------------------------
