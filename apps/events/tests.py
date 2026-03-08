@@ -1152,10 +1152,16 @@ class UnreleasePermissionTest(TestCase):
         self.assertEqual(event.status, Event.Status.DRAFT)
 
     def test_assigned_event_manager_can_unrelease(self):
-        """An Ambassador Manager who is the assigned event_manager can unrelease."""
+        """An Ambassador Manager who is the assigned event_manager can unrelease.
+
+        After unrelease the event becomes a Draft that the ambassador manager
+        did not create, so they can no longer access the detail page — only
+        check the redirect itself (302), not its destination.
+        """
         event = self._make_scheduled(event_manager=self.amb_mgr)
         resp = self._post("ambmgr", event)
-        self.assertRedirects(resp, reverse("event_detail", args=[event.pk]))
+        self.assertRedirects(resp, reverse("event_detail", args=[event.pk]),
+                             fetch_redirect_response=False)
         event.refresh_from_db()
         self.assertEqual(event.status, Event.Status.DRAFT)
 

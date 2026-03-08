@@ -1785,7 +1785,9 @@ Implemented in `_get_visible_events()` in `apps/events/views.py`.
 Use `get_accounts_for_user(user)` for all coverage area filtering — never
 inline the coverage logic. Apply `.distinct()` to avoid duplicate results.
 
-### Tasting and Special Events (event_type != ADMIN)
+### Non-Draft Event Visibility
+
+#### Tasting and Special Events (event_type != ADMIN)
 
 | Role | Visible events |
 |------|---------------|
@@ -1796,7 +1798,7 @@ inline the coverage logic. Apply `.distinct()` to avoid duplicate results.
 | Ambassador Manager | Events where they are the creator, assigned ambassador, or assigned event manager |
 | Ambassador | Events where they are the creator, assigned ambassador, or assigned event manager |
 
-### Admin Events (event_type == ADMIN)
+#### Admin Events (event_type == ADMIN)
 
 | Role | Visible events |
 |------|---------------|
@@ -1807,15 +1809,33 @@ inline the coverage logic. Apply `.distinct()` to avoid duplicate results.
 | Ambassador Manager | Only admin events where they are the creator or assigned ambassador |
 | Ambassador | Only admin events where they are the creator or assigned ambassador |
 
+### Draft Event Visibility
+
+Draft events have stricter visibility than non-draft events:
+
+| Role | Visible draft events |
+|------|---------------------|
+| Supplier Admin | All draft events |
+| Sales Manager | Drafts at accounts in their coverage area, all admin drafts, plus any draft they created |
+| Territory Manager | Same as Sales Manager |
+| Payroll Reviewer | Same as Sales Manager |
+| Ambassador Manager | Only drafts they created |
+| Ambassador | Only drafts they created |
+
+**Key rule:** Ambassadors and Ambassador Managers do NOT see draft events
+unless they are the creator, even if they are assigned as ambassador or
+event manager on the event.
+
 ### Implementation Notes
-- Tasting/Special and Admin rules are combined into a single queryset per role
-  using Q objects — no two separate queries concatenated
+- Non-draft and draft rules are combined into a single queryset per role using
+  Q objects — no two separate queries concatenated
 - `get_accounts_for_user(user)` handles per-role coverage scoping correctly;
   do not duplicate or inline this logic
-- Draft visibility is handled separately by `_can_view_drafts()` and applied
-  in the event_list view — `_get_visible_events()` does not filter drafts
+- `_can_view_drafts()` returns `True` for all roles — fine-grained draft
+  filtering is handled entirely inside `_get_visible_events()`, not in the
+  event_list view
 
 ---
 
-*Last updated: March 8, 2026 (Event List Visibility Rules update)*
+*Last updated: March 8, 2026 (Draft event visibility rules update)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

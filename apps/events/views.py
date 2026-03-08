@@ -111,27 +111,32 @@ def _get_visible_events(user):
     """
     Return a queryset of events visible to the given user.
 
+    Non-draft events follow role-based rules (coverage area, assignment, etc.).
+    Draft events have stricter visibility — only the creator sees them unless
+    the user is Supplier Admin, Sales Manager, Territory Manager, or Payroll
+    Reviewer (who also see drafts in their coverage area / all admin drafts).
+
     Tasting and Special Events (event_type != ADMIN):
-      Supplier Admin      — all company events
+      Supplier Admin      — all company events (including all drafts)
       Sales Manager       — events at accounts in coverage area, or assigned
-                            as ambassador or event manager
-      Territory Manager   — events at accounts in coverage area, or assigned
-                            as ambassador or event manager
-      Payroll Reviewer    — events at accounts in coverage area only
-      Ambassador Manager  — events where they are creator, assigned ambassador,
-                            or assigned event manager
-      Ambassador          — events where they are creator, assigned ambassador,
-                            or assigned event manager
+                            as ambassador or event manager; drafts only in
+                            coverage area, all admin drafts, or created by user
+      Territory Manager   — same as Sales Manager
+      Payroll Reviewer    — same as Sales Manager
+      Ambassador Manager  — non-draft events where creator, ambassador, or
+                            event manager; draft only if created by user
+      Ambassador          — non-draft events where creator, ambassador, or
+                            event manager; draft only if created by user
 
     Admin Events (event_type == ADMIN):
-      Supplier Admin      — all admin events
-      Sales Manager       — all admin events
-      Territory Manager   — all admin events
-      Payroll Reviewer    — all admin events
-      Ambassador Manager  — only admin events where they are creator or
-                            assigned ambassador
-      Ambassador          — only admin events where they are creator or
-                            assigned ambassador
+      Supplier Admin      — all admin events (including all drafts)
+      Sales Manager       — all admin events; all admin drafts
+      Territory Manager   — all admin events; all admin drafts
+      Payroll Reviewer    — all admin events; all admin drafts
+      Ambassador Manager  — non-draft admin events where creator or ambassador;
+                            draft admin only if created by user
+      Ambassador          — non-draft admin events where creator or ambassador;
+                            draft admin only if created by user
     """
     company = user.company
     if not company:
@@ -147,49 +152,81 @@ def _get_visible_events(user):
 
     if user.has_role('sales_manager'):
         visible_accounts = get_accounts_for_user(user)
-        return qs.filter(
+        non_drafts = (
             Q(account__in=visible_accounts)       # tasting/special in coverage
             | Q(event_type=Event.EventType.ADMIN) # all admin events
             | Q(ambassador=user)                  # assigned as ambassador
             | Q(event_manager=user)               # assigned as event manager
-        ).distinct()
+        )
+        non_drafts &= ~Q(status=Event.Status.DRAFT)
+        drafts = Q(status=Event.Status.DRAFT) & (
+            Q(account__in=visible_accounts)       # draft in coverage area
+            | Q(event_type=Event.EventType.ADMIN) # all admin drafts
+            | Q(created_by=user)                  # drafts they created
+        )
+        return qs.filter(non_drafts | drafts).distinct()
 
     if user.has_role('territory_manager'):
         visible_accounts = get_accounts_for_user(user)
-        return qs.filter(
+        non_drafts = (
             Q(account__in=visible_accounts)       # tasting/special in coverage
             | Q(event_type=Event.EventType.ADMIN) # all admin events
             | Q(ambassador=user)                  # assigned as ambassador
             | Q(event_manager=user)               # assigned as event manager
-        ).distinct()
+        )
+        non_drafts &= ~Q(status=Event.Status.DRAFT)
+        drafts = Q(status=Event.Status.DRAFT) & (
+            Q(account__in=visible_accounts)       # draft in coverage area
+            | Q(event_type=Event.EventType.ADMIN) # all admin drafts
+            | Q(created_by=user)                  # drafts they created
+        )
+        return qs.filter(non_drafts | drafts).distinct()
 
     if user.has_role('payroll_reviewer'):
         visible_accounts = get_accounts_for_user(user)
-        return qs.filter(
+        non_drafts = (
             Q(account__in=visible_accounts)       # tasting/special in coverage
             | Q(event_type=Event.EventType.ADMIN) # all admin events
-        ).distinct()
+        )
+        non_drafts &= ~Q(status=Event.Status.DRAFT)
+        drafts = Q(status=Event.Status.DRAFT) & (
+            Q(account__in=visible_accounts)       # draft in coverage area
+            | Q(event_type=Event.EventType.ADMIN) # all admin drafts
+            | Q(created_by=user)                  # drafts they created
+        )
+        return qs.filter(non_drafts | drafts).distinct()
 
     if user.has_role('ambassador_manager'):
-        return qs.filter(
+        non_drafts = (
             Q(created_by=user)                                                # creator of any event
             | Q(ambassador=user)                                              # assigned as ambassador
             | (Q(event_manager=user) & ~Q(event_type=Event.EventType.ADMIN)) # event manager (non-admin only)
-        ).distinct()
+        )
+        non_drafts &= ~Q(status=Event.Status.DRAFT)
+        drafts = Q(created_by=user, status=Event.Status.DRAFT)
+        return qs.filter(non_drafts | drafts).distinct()
 
     if user.has_role('ambassador'):
-        return qs.filter(
+        non_drafts = (
             Q(created_by=user)                                                # creator of any event
             | Q(ambassador=user)                                              # assigned as ambassador
             | (Q(event_manager=user) & ~Q(event_type=Event.EventType.ADMIN)) # event manager (non-admin only)
-        ).distinct()
+        )
+        non_drafts &= ~Q(status=Event.Status.DRAFT)
+        drafts = Q(created_by=user, status=Event.Status.DRAFT)
+        return qs.filter(non_drafts | drafts).distinct()
 
     return Event.objects.none()
 
 
 def _can_view_drafts(user):
-    """True if this user should see Draft events."""
-    return user.has_permission('can_view_draft_events')
+    """
+    Draft visibility is now handled entirely inside _get_visible_events()
+    per role. Return True for all authenticated users so the belt-and-
+    suspenders filter in event_list does not incorrectly strip drafts that
+    _get_visible_events() has already correctly included.
+    """
+    return True
 
 
 def _sort_events(events_qs):
