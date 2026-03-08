@@ -1165,9 +1165,6 @@ Admin:
 - Event manager always set to creator on save; event manager field not shown
 - Ambassador dropdown populated from all company users on page load
   (no account-based filtering required)
-- Sales Manager visibility: all admin events in the company are visible
-  to Sales Managers (no account scoping — per spec, admin events are
-  visible to creator and anyone above them in the role hierarchy)
 
 ### AJAX Endpoints
 - GET /events/ajax/ambassadors/?account_id=X — ambassadors, AMs, TMs, Sales
@@ -1782,5 +1779,43 @@ Account Import link appears in the sidebar (desktop and mobile) between Sales Im
 
 ---
 
-*Last updated: March 7, 2026 (Phase 10.6: Account Import)*
+## Event List Visibility Rules
+
+Implemented in `_get_visible_events()` in `apps/events/views.py`.
+Use `get_accounts_for_user(user)` for all coverage area filtering — never
+inline the coverage logic. Apply `.distinct()` to avoid duplicate results.
+
+### Tasting and Special Events (event_type != ADMIN)
+
+| Role | Visible events |
+|------|---------------|
+| Supplier Admin | All company events |
+| Sales Manager | Events at accounts in their coverage area, OR events where they are the assigned ambassador or event manager |
+| Territory Manager | Events at accounts in their coverage area, OR events where they are the assigned ambassador or event manager |
+| Payroll Reviewer | Events at accounts in their coverage area only |
+| Ambassador Manager | Events where they are the creator, assigned ambassador, or assigned event manager |
+| Ambassador | Events where they are the creator, assigned ambassador, or assigned event manager |
+
+### Admin Events (event_type == ADMIN)
+
+| Role | Visible events |
+|------|---------------|
+| Supplier Admin | All admin events |
+| Sales Manager | All admin events |
+| Territory Manager | All admin events |
+| Payroll Reviewer | All admin events |
+| Ambassador Manager | Only admin events where they are the creator or assigned ambassador |
+| Ambassador | Only admin events where they are the creator or assigned ambassador |
+
+### Implementation Notes
+- Tasting/Special and Admin rules are combined into a single queryset per role
+  using Q objects — no two separate queries concatenated
+- `get_accounts_for_user(user)` handles per-role coverage scoping correctly;
+  do not duplicate or inline this logic
+- Draft visibility is handled separately by `_can_view_drafts()` and applied
+  in the event_list view — `_get_visible_events()` does not filter drafts
+
+---
+
+*Last updated: March 8, 2026 (Event List Visibility Rules update)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

@@ -570,14 +570,14 @@ class RecapSaveTest(TestCase):
         self.assertEqual(recap.bottles_used_for_samples, 1)
 
     def test_save_blocked_for_non_recap_user(self):
-        """A user without recap access gets 403."""
+        """A Sales Manager with no coverage area cannot see the event (404)."""
         other = make_user(self.company, 'sales_manager', "other")
         c = Client()
         c.login(username="other", password="testpass123")
         response = c.post(reverse("event_save_recap", args=[self.event.pk]), {
             "recap_notes": "Should not save",
         })
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 404)
         self.event.refresh_from_db()
         self.assertEqual(self.event.recap_notes, "")
 
@@ -725,7 +725,7 @@ class RecapUnlockTest(TestCase):
         c = Client()
         c.login(username="other", password="testpass123")
         response = c.post(reverse("event_unlock_recap", args=[self.event.pk]))
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 404)
         self.event.refresh_from_db()
         self.assertEqual(self.event.status, Event.Status.RECAP_SUBMITTED)
 
@@ -822,12 +822,12 @@ class RecapAccessRulesTest(TestCase):
         self.assertEqual(self.event.status, Event.Status.RECAP_IN_PROGRESS)
 
     def test_unrelated_user_cannot_save_recap(self):
-        """A Sales Manager with no coverage area cannot access recap."""
+        """A Sales Manager with no coverage area cannot see the event (404)."""
         self.client.login(username="other", password="testpass123")
         response = self.client.post(reverse("event_save_recap", args=[self.event.pk]), {
             "recap_notes": "Unauthorized",
         })
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 404)
 
     def test_admin_event_has_no_recap(self):
         """_can_recap returns False for Admin events."""
@@ -944,6 +944,10 @@ class EventRevertCompleteTest(TestCase):
         self.sales_mgr = make_user(self.company, 'sales_manager', "salesmgr")
         self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
+        UserCoverageArea.objects.create(
+            user=self.sales_mgr, company=self.company,
+            coverage_type='account', account=self.account,
+        )
 
     def _complete_event(self, event_manager=None):
         event = make_event(
@@ -1089,8 +1093,8 @@ class EventPhotoDeleteTest(TestCase):
     def test_unrelated_user_cannot_delete(self):
         stranger = make_user(self.company, 'sales_manager', "stranger")
         resp = self._delete("stranger")
-        # Sales Manager without coverage area cannot recap, so 403
-        self.assertEqual(resp.status_code, 403)
+        # Sales Manager without coverage area cannot see the event (404)
+        self.assertEqual(resp.status_code, 404)
         self.assertTrue(self.EventPhoto.objects.filter(pk=self.photo.pk).exists())
 
 # ---------------------------------------------------------------------------
@@ -1110,6 +1114,10 @@ class UnreleasePermissionTest(TestCase):
         self.amb_mgr = make_user(self.company, 'ambassador_manager', "ambmgr")
         self.amb = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
+        UserCoverageArea.objects.create(
+            user=self.sales, company=self.company,
+            coverage_type='account', account=self.account,
+        )
 
     def _make_scheduled(self, event_manager=None):
         em = event_manager or self.admin
@@ -1386,6 +1394,10 @@ class RevertRecapSubmittedTest(TestCase):
         self.amb = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
         self.item = make_item(self.company)
+        UserCoverageArea.objects.create(
+            user=self.sales, company=self.company,
+            coverage_type='account', account=self.account,
+        )
 
     def _make_recap_submitted(self, event_manager=None):
         em = event_manager or self.admin
@@ -1640,9 +1652,9 @@ class ExpenseTest(TestCase):
 
     def test_add_expense_non_recap_user_denied(self):
         stranger = make_user(self.company, 'sales_manager', "stranger")
-        # Sales Manager without coverage area cannot recap
+        # Sales Manager without coverage area cannot see the event (404)
         resp = self._add('stranger')
-        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.status_code, 404)
 
     def test_delete_expense_success(self):
         expense = Expense.objects.create(

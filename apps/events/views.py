@@ -111,14 +111,27 @@ def _get_visible_events(user):
     """
     Return a queryset of events visible to the given user.
 
-    Visibility rules by role:
+    Tasting and Special Events (event_type != ADMIN):
       Supplier Admin      — all company events
-      Sales Manager       — all events at company accounts + admin events by
-                            TM / AM / Ambassador below them
-      Territory Manager   — events at accounts in their coverage area +
-                            admin events they created
-      Ambassador Manager  — events they created or are event_manager on
-      Ambassador          — events they are assigned to (no Drafts)
+      Sales Manager       — events at accounts in coverage area, or assigned
+                            as ambassador or event manager
+      Territory Manager   — events at accounts in coverage area, or assigned
+                            as ambassador or event manager
+      Payroll Reviewer    — events at accounts in coverage area only
+      Ambassador Manager  — events where they are creator, assigned ambassador,
+                            or assigned event manager
+      Ambassador          — events where they are creator, assigned ambassador,
+                            or assigned event manager
+
+    Admin Events (event_type == ADMIN):
+      Supplier Admin      — all admin events
+      Sales Manager       — all admin events
+      Territory Manager   — all admin events
+      Payroll Reviewer    — all admin events
+      Ambassador Manager  — only admin events where they are creator or
+                            assigned ambassador
+      Ambassador          — only admin events where they are creator or
+                            assigned ambassador
     """
     company = user.company
     if not company:
@@ -133,33 +146,43 @@ def _get_visible_events(user):
         return qs
 
     if user.has_role('sales_manager'):
-        # Sales Managers see all events with accounts, plus all admin events
-        # (admin events have no account scoping per the product spec)
+        visible_accounts = get_accounts_for_user(user)
         return qs.filter(
-            Q(account__isnull=False)
-            | Q(event_type=Event.EventType.ADMIN)
-        )
+            Q(account__in=visible_accounts)       # tasting/special in coverage
+            | Q(event_type=Event.EventType.ADMIN) # all admin events
+            | Q(ambassador=user)                  # assigned as ambassador
+            | Q(event_manager=user)               # assigned as event manager
+        ).distinct()
 
     if user.has_role('territory_manager'):
         visible_accounts = get_accounts_for_user(user)
         return qs.filter(
-            Q(account__in=visible_accounts)
-            | Q(event_type=Event.EventType.ADMIN, created_by=user)
-        )
-
-    if user.has_role('ambassador_manager'):
-        return qs.filter(
-            Q(created_by=user) | Q(event_manager=user)
-        )
-
-    if user.has_role('ambassador'):
-        return qs.filter(
-            ambassador=user
-        ).exclude(status=Event.Status.DRAFT)
+            Q(account__in=visible_accounts)       # tasting/special in coverage
+            | Q(event_type=Event.EventType.ADMIN) # all admin events
+            | Q(ambassador=user)                  # assigned as ambassador
+            | Q(event_manager=user)               # assigned as event manager
+        ).distinct()
 
     if user.has_role('payroll_reviewer'):
         visible_accounts = get_accounts_for_user(user)
-        return qs.filter(account__in=visible_accounts)
+        return qs.filter(
+            Q(account__in=visible_accounts)       # tasting/special in coverage
+            | Q(event_type=Event.EventType.ADMIN) # all admin events
+        ).distinct()
+
+    if user.has_role('ambassador_manager'):
+        return qs.filter(
+            Q(created_by=user)                                                # creator of any event
+            | Q(ambassador=user)                                              # assigned as ambassador
+            | (Q(event_manager=user) & ~Q(event_type=Event.EventType.ADMIN)) # event manager (non-admin only)
+        ).distinct()
+
+    if user.has_role('ambassador'):
+        return qs.filter(
+            Q(created_by=user)                                                # creator of any event
+            | Q(ambassador=user)                                              # assigned as ambassador
+            | (Q(event_manager=user) & ~Q(event_type=Event.EventType.ADMIN)) # event manager (non-admin only)
+        ).distinct()
 
     return Event.objects.none()
 
