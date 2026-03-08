@@ -1777,6 +1777,31 @@ Account Import link appears in the sidebar (desktop and mobile) between Sales Im
 - `AccountImportPreviewViewTest` — 403 for non-SA user, no session redirects to upload, valid session renders summary and rows
 - `AccountImportExecuteViewTest` — 403 for non-SA user, no session redirects to upload, CREATE creates account with correct fields and `auto_created=True`, UPDATE updates only non-key fields, UPDATE does not change `is_active`, success message includes create/update counts
 
+### Account Type — Future Normalization (Deferred)
+
+The `account_type` field currently stores raw text values directly from the
+import source. Different distributors may use different values for the same
+type of account (e.g. "BAR/TAVERN" from VIP, "BAR" from another system).
+
+A future phase will introduce a three-layer normalization structure:
+
+1. **AccountTypeMaster** — a canonical list of account type values defined
+   and controlled by the tenant (e.g. Bar/Tavern, Liquor Store, Restaurant)
+
+2. **AccountTypeMapping** — maps raw incoming values from distributor sources
+   to a canonical AccountTypeMaster record (e.g. "BAR/TAVERN" from VIP →
+   "Bar/Tavern")
+
+3. **Account.account_type** — will link to AccountTypeMaster instead of
+   storing raw text
+
+The import flow will work similarly to the existing Item Mapping feature —
+if an incoming account type value is unrecognized, it gets flagged and the
+user maps it to a canonical type before the import completes.
+
+This is deferred until enough imports from different distributor sources have
+been run to establish a clear canonical list.
+
 ---
 
 ## Event List Visibility Rules
