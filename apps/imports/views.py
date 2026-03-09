@@ -20,6 +20,7 @@ import csv
 import os
 import uuid
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.db import transaction
@@ -103,6 +104,7 @@ def _parse_csv_headers(headers):
         'dates':      headers.index('Dates'),
         'item_names': headers.index('Item Names'),
         'item_id':    headers.index('Item Name ID'),
+        'price':      headers.index('Price') if 'Price' in headers else None,
         'quantity':   len(headers) - 1,     # always last column
     }
 
@@ -194,6 +196,15 @@ def _read_csv_rows(filepath, cols):
                 except (ValueError, TypeError):
                     quantity = 0
 
+                # Price — optional column; null if absent, blank, or non-numeric
+                price = None
+                if cols['price'] is not None and len(row) > cols['price']:
+                    raw_price = row[cols['price']].strip()
+                    try:
+                        price = Decimal(raw_price) if raw_price else None
+                    except InvalidOperation:
+                        price = None
+
                 rows.append({
                     'account_name':  row[cols['account']].strip(),
                     'address':       row[cols['address']].strip(),
@@ -206,6 +217,7 @@ def _read_csv_rows(filepath, cols):
                     'sale_date':     _parse_date(row[cols['dates']]),
                     'item_id':       row[cols['item_id']].strip(),
                     'quantity':      quantity,
+                    'price':         price,
                 })
             except Exception as exc:
                 errors.append(f'Line {line_num}: {exc}')
@@ -601,6 +613,7 @@ def _execute_import(request, company, distributor, filepath, filename):
                 item=item,
                 sale_date=r['sale_date'],
                 quantity=r['quantity'],
+                distributor_wholesale_price=r.get('price'),
             ))
 
         # Bulk create sales records in batches of 1000

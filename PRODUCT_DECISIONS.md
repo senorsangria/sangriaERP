@@ -983,6 +983,15 @@ Admin:
 - Migration path: create `sales.SalesRecord` → delete `imports.SalesRecord`;
   data preserved (table had 0 records at migration time)
 
+### SalesRecord — distributor_wholesale_price Field
+- New field: `distributor_wholesale_price` — `DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)`
+- Source: optional `Price` column in the sales CSV (column may be absent; individual rows may have blank values)
+- Purpose: distributor wholesale case price paid by the retailer, as reported in the distributor export
+- Distinct from shelf/retail price captured during event recaps (`AccountItem.current_price` / `AccountItemPriceHistory`)
+- No connection to `AccountItem` or `AccountItemPriceHistory` — stored as raw import data only
+- Parsing rules: blank → null; non-numeric or unparseable → null (never errors or skips a row)
+- Display and usage of this field is deferred to a future phase
+
 ### Distributor Cleaned Up
 - Removed from `Distributor`: `brands` (M2M to catalog.Brand), `email`, `phone`
 - `brands` M2M was unused; brand-distributor relationships will be modeled

@@ -36,6 +36,12 @@ class SalesRecord(TimeStampedModel):
     quantity = models.IntegerField(
         help_text='Quantity sold. May be negative for returns/corrections.',
     )
+    distributor_wholesale_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         app_label = 'sales'

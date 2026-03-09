@@ -17,6 +17,7 @@ from apps.core.models import Company, User
 from apps.distribution.models import Distributor
 from apps.imports.models import ImportBatch, ItemMapping
 from apps.imports.views import _execute_import
+from apps.sales.models import SalesRecord
 
 
 # ---------------------------------------------------------------------------
@@ -361,3 +362,89 @@ class ImportReactivatesInactiveAccountsTest(ImportTestBase):
         batch = self._run_import(rows)
         self.assertEqual(batch.accounts_created, 0)
         self.assertEqual(batch.accounts_reactivated, 1)
+
+
+# ---------------------------------------------------------------------------
+# distributor_wholesale_price field on SalesRecord
+# ---------------------------------------------------------------------------
+
+_CSV_HEADERS_WITH_PRICE = [
+    'Retail Accounts', 'Address', 'City', 'State', 'Zip Code',
+    'VIP Outlet ID', 'Counties', 'OnOff Premises', 'Dates',
+    'Item Names', 'Item Name ID', 'Price', 'Quantity',
+]
+
+
+def _build_csv_with_price(rows):
+    """Like _build_csv but includes a Price column before Quantity."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(_CSV_HEADERS_WITH_PRICE)
+    for r in rows:
+        writer.writerow([
+            r.get('account_name', 'Test Store'),
+            r.get('address', '1 Main St'),
+            r.get('city', 'Hoboken'),
+            r.get('state', 'NJ'),
+            r.get('zip_code', '07030'),
+            r.get('vip_outlet_id', '12345'),
+            r.get('county', 'Hudson, NJ'),
+            r.get('on_off', 'OFF'),
+            r.get('date_str', '01/15/2024'),
+            r.get('item_name', 'Classic Red 750ml'),
+            r.get('item_id', 'Red0750'),
+            r.get('price', ''),
+            r.get('quantity', '10'),
+        ])
+    tmp = tempfile.NamedTemporaryFile(
+        mode='w', suffix='.csv', delete=False, encoding='utf-8-sig',
+    )
+    tmp.write(buf.getvalue())
+    tmp.flush()
+    tmp.close()
+    return tmp.name
+
+
+class ImportWholesalePriceTest(ImportTestBase):
+    """distributor_wholesale_price is captured from the optional Price column."""
+
+    def _run_import_with_price(self, rows, filename='test_price.csv'):
+        filepath = _build_csv_with_price(rows)
+        try:
+            batch = _execute_import(
+                request=None,
+                company=self.company,
+                distributor=self.distributor,
+                filepath=filepath,
+                filename=filename,
+            )
+        finally:
+            if os.path.exists(filepath):
+                os.unlink(filepath)
+        return batch
+
+    def test_valid_price_stored(self):
+        """A valid Price value is stored on SalesRecord."""
+        self._run_import_with_price([{'date_str': '01/15/2024', 'price': '24.99'}])
+        record = SalesRecord.objects.get(company=self.company)
+        from decimal import Decimal
+        self.assertEqual(record.distributor_wholesale_price, Decimal('24.99'))
+
+    def test_blank_price_stores_null(self):
+        """A blank Price cell stores null, not an error."""
+        self._run_import_with_price([{'date_str': '01/15/2024', 'price': ''}])
+        record = SalesRecord.objects.get(company=self.company)
+        self.assertIsNone(record.distributor_wholesale_price)
+
+    def test_no_price_column_stores_null(self):
+        """When the Price column is absent entirely, price is stored as null."""
+        rows = [{'date_str': '01/15/2024', 'item_id': 'Red0750'}]
+        self._run_import(rows)   # uses _build_csv — no Price column
+        record = SalesRecord.objects.get(company=self.company)
+        self.assertIsNone(record.distributor_wholesale_price)
+
+    def test_invalid_price_stores_null(self):
+        """A non-numeric Price value stores null without crashing."""
+        self._run_import_with_price([{'date_str': '01/15/2024', 'price': 'N/A'}])
+        record = SalesRecord.objects.get(company=self.company)
+        self.assertIsNone(record.distributor_wholesale_price)
