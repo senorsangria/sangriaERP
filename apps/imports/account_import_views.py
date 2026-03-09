@@ -18,6 +18,7 @@ from django.shortcuts import redirect, render
 
 from apps.accounts.models import Account
 from apps.distribution.models import Distributor
+from utils.normalize import normalize_address
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +187,7 @@ def _categorize_rows(rows, company, distributor):
     existing = {
         (
             _normalize_key(a.name),
-            _normalize_key(a.street),
+            normalize_address(a.street),
             _normalize_key(a.city),
             _normalize_key(a.state),
         ): a.pk
@@ -199,7 +200,7 @@ def _categorize_rows(rows, company, distributor):
     for row in rows:
         key = (
             _normalize_key(row['name']),
-            _normalize_key(row['street']),
+            normalize_address(row['street']),
             _normalize_key(row['city']),
             _normalize_key(row['state']),
         )
@@ -362,7 +363,7 @@ def account_import_execute(request):
                     is_active=True,
                     auto_created=True,
                     # Normalized fields
-                    address_normalized=_normalize_key(row['street']),
+                    address_normalized=normalize_address(row['street']),
                     city_normalized=_normalize_key(row['city']),
                     state_normalized=_normalize_key(row['state']),
                 )

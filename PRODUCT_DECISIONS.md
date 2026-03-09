@@ -1726,7 +1726,13 @@ Three-step process (upload → preview → execute):
 | `Distributor Routes` | Distributor Route | No |
 
 ### Match Key / Deduplication
-Existing accounts are matched using a normalized key of **distributor + Name + Street + City + State**. The match lookup is first filtered to accounts belonging to the selected distributor, then matched on Name + Street + City + State (uppercased, stripped of surrounding whitespace). An account with the same name and address but under a different distributor is treated as a CREATE, not an UPDATE.
+Existing accounts are matched using a normalized key of **distributor + Name + Street + City + State**. The match lookup is first filtered to accounts belonging to the selected distributor, then matched on Name + Street + City + State. An account with the same name and address but under a different distributor is treated as a CREATE, not an UPDATE.
+
+Normalization applied to each key component:
+- **Street/address**: `normalize_address()` from `utils/normalize.py` — uppercase, strip whitespace, remove punctuation, expand street-type abbreviations (STREET→ST, AVENUE→AVE, etc.). Same function used by the sales import, ensuring cross-import compatibility.
+- **Name, city, state**: simple uppercase + strip only (via `_normalize_key()`).
+
+`address_normalized` stored on Account records must always be computed via `normalize_address()` regardless of which import path creates the account. Using a different normalization function for the stored value vs. the lookup key would cause duplicate accounts when both import paths are run against overlapping accounts.
 
 ### CREATE Behaviour
 - All mapped fields are set from the CSV row.
