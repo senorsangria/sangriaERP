@@ -362,20 +362,18 @@ def account_delete(request, pk):
     if request.method == 'POST':
         associations = get_account_associations(account)
 
-        blocking = []
-        if associations.get('events', 0):
-            n = associations['events']
-            blocking.append(f'{n} event{"s" if n != 1 else ""}')
-        if associations.get('photos', 0):
-            n = associations['photos']
-            blocking.append(f'{n} photo{"s" if n != 1 else ""}')
+        blocking = [
+            f'{count} {key.replace("_", " ")}'
+            for key, count in associations.items()
+            if count > 0
+        ]
 
         if blocking:
             messages.error(
                 request,
-                f'This account cannot be deleted because it has '
-                + ' and '.join(blocking)
-                + ' associated to it. You can deactivate the account instead.',
+                'This account cannot be deleted because it has associated data: '
+                + ', '.join(blocking)
+                + '. You can deactivate the account instead.',
             )
             return redirect('account_detail', pk=pk)
 

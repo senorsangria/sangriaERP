@@ -24,10 +24,12 @@ def get_account_associations(account):
         {'events': 3, 'photos': 0}
     """
     from apps.events.models import Event, EventPhoto
+    from apps.sales.models import SalesRecord
 
     return {
         'events': Event.objects.filter(account=account).count(),
         'photos': EventPhoto.objects.filter(account=account).count(),
+        'sales_records': SalesRecord.objects.filter(account=account).count(),
     }
 
 

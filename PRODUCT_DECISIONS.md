@@ -800,10 +800,12 @@ Admin:
 ### Account Deletion
 - Only manually created accounts (auto_created=False) can be deleted
 - Before deleting, `get_account_associations(account)` in `apps/accounts/utils.py`
-  is called to get all association counts (events, photos)
+  is called to get all association counts (events, photos, sales records)
 - If any association count is greater than zero, deletion is blocked with a clear
-  error message listing what is blocking it with actual counts and a note that
-  deactivation is always available as an alternative
+  error message built dynamically from all non-zero association types with actual
+  counts and a note that deactivation is always available as an alternative
+- Sales data (SalesRecord) blocks both manual and bulk account deletes; Import
+  History batch delete still deletes sales data and accounts together (intentional)
 - If all counts are zero, deletion proceeds with an existing confirmation modal
 - Imported accounts (auto_created=True) do not get a delete option
 - Deactivation is always available for any account regardless of associated data
@@ -811,10 +813,13 @@ Admin:
 ### get_account_associations() Utility
 - Located in `apps/accounts/utils.py`
 - Single centralized place where account association checks live
-- Returns a dict mapping association name → count, e.g. `{'events': 3, 'photos': 0}`
-- Current associations checked: events (Event records), photos (EventPhoto records)
+- Returns a dict mapping association name → count, e.g. `{'events': 3, 'photos': 0, 'sales_records': 5}`
+- Current associations checked: events (Event records), photos (EventPhoto records),
+  sales_records (SalesRecord records from apps/sales/models.py)
 - When new association types are added in the future, only this function needs updating
 - All callers (deletion check, blocking messages, future features) use this function
+- account_delete() builds its blocking error message dynamically from all non-zero
+  association types, so adding a new key here is automatically reflected in the message
 
 ### Account Deactivation
 - Any account (manual or imported) can be deactivated regardless of associated data
