@@ -45,6 +45,10 @@ def distributor_create(request):
     if denied:
         return denied
 
+    if not request.user.company:
+        messages.error(request, "Your account is not associated with a company. Please contact your administrator.")
+        return redirect('dashboard')
+
     if request.method == 'POST':
         form = DistributorForm(request.POST, company=request.user.company)
         if form.is_valid():
@@ -65,6 +69,10 @@ def distributor_edit(request, pk):
     denied = _require_supplier_admin(request)
     if denied:
         return denied
+
+    if not request.user.company:
+        messages.error(request, "Your account is not associated with a company. Please contact your administrator.")
+        return redirect('dashboard')
 
     distributor = get_object_or_404(Distributor, pk=pk, company=request.user.company)
 

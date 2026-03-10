@@ -411,6 +411,10 @@ Searchable list for one-off or exception assignments
 - Distributor detail page: full info, accounts list (placeholder until Phase 2.2), import history (placeholder)
 - Distributor model extended with city, state, notes fields (migration 0002)
 - No brand-distributor junction table created (relationship derived from sales data in future phase)
+- `distributor_create` and `distributor_edit` guard against `request.user.company` being None:
+  if company is absent the user is redirected to the dashboard with an error message
+- `DistributorForm.save()` raises `ValueError` if `self.company` is None rather than silently
+  inserting NULL into the database (safety net — the view guard should catch it first)
 
 ### Navigation Updates
 - Supplier Admin sidebar: Brands and Distributors are now live links (removed "Soon" badges)

@@ -66,7 +66,9 @@ class DistributorForm(forms.ModelForm):
 
     def save(self, commit=True):
         distributor = super().save(commit=False)
-        if self.company and not distributor.pk:
+        if not self.company:
+            raise ValueError("Cannot save Distributor without a company.")
+        if not distributor.pk:
             distributor.company = self.company
         if commit:
             distributor.save()
