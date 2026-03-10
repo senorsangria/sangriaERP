@@ -239,23 +239,8 @@
       </div>
       <div class="card-body">
 
-        <!-- Step 1: Coverage Type -->
+        <!-- Step 1: Distributor (always required) -->
         <div class="mb-3">
-          <label class="form-label fw-medium" for="ca-type">Coverage Type</label>
-          <select id="ca-type" class="form-select" style="max-width:280px">
-            <option value="">Select type…</option>
-            <option value="distributor">Distributor</option>
-            <option value="state">State</option>
-            <option value="county">County</option>
-            <option value="city">City</option>
-            <option value="account">Account</option>
-          </select>
-        </div>
-
-        <!-- Step 2: Type-specific inputs (shown/hidden by JS) -->
-
-        <!-- Distributor input -->
-        <div id="ca-distributor-section" class="d-none mb-3">
           <label class="form-label fw-medium" for="ca-distributor-select">Distributor</label>
           {% if distributors %}
           <select id="ca-distributor-select" class="form-select" style="max-width:360px">
@@ -268,6 +253,21 @@
           <div class="text-muted small">No distributors available yet.</div>
           {% endif %}
         </div>
+
+        <!-- Step 2: Coverage Type -->
+        <div class="mb-3">
+          <label class="form-label fw-medium" for="ca-type">Coverage Type</label>
+          <select id="ca-type" class="form-select" style="max-width:280px">
+            <option value="">Select type…</option>
+            <option value="distributor">Distributor</option>
+            <option value="state">State</option>
+            <option value="county">County</option>
+            <option value="city">City</option>
+            <option value="account">Account</option>
+          </select>
+        </div>
+
+        <!-- Step 3: Type-specific inputs (shown/hidden by JS) -->
 
         <!-- State input (loaded via AJAX when State type is selected) -->
         <div id="ca-state-section" class="d-none mb-3">
@@ -392,7 +392,6 @@
   const addBtn          = document.getElementById('ca-add-btn');
 
   const sections = {
-    distributor : document.getElementById('ca-distributor-section'),
     state       : document.getElementById('ca-state-section'),
     county      : document.getElementById('ca-county-section'),
     city        : document.getElementById('ca-city-section'),
@@ -404,7 +403,8 @@
     Object.entries(sections).forEach(([k, el]) => {
       if (el) el.classList.toggle('d-none', k !== type);
     });
-    // Show Add button for non-account types (and only when a type is selected)
+    // Show Add button for all non-account types (and only when a type is selected)
+    // For type=distributor no sub-section is shown; the Add button appears immediately.
     if (addBtnWrapper) {
       addBtnWrapper.classList.toggle('d-none', !type || type === 'account');
     }
@@ -438,7 +438,7 @@
     showSection('');
     clearMsg();
 
-    // Reset distributor
+    // Reset top distributor selector
     const distSel = document.getElementById('ca-distributor-select');
     if (distSel) distSel.value = '';
 
@@ -676,14 +676,14 @@
       const type = typeSelect.value;
       if (!type) { showError('Please select a coverage type.'); return; }
 
-      const data = { coverage_type: type };
+      const distributorId = document.getElementById('ca-distributor-select')
+        ? document.getElementById('ca-distributor-select').value
+        : '';
+      if (!distributorId) { showError('Please select a distributor.'); return; }
 
-      if (type === 'distributor') {
-        const v = document.getElementById('ca-distributor-select').value;
-        if (!v) { showError('Please select a distributor.'); return; }
-        data.distributor_id = v;
+      const data = { coverage_type: type, distributor_id: distributorId };
 
-      } else if (type === 'state') {
+      if (type === 'state') {
         const v = document.getElementById('ca-state-select').value;
         if (!v) { showError('Please select a state.'); return; }
         data.state = v;
@@ -704,6 +704,7 @@
         data.state = state;
         data.city  = city;
       }
+      // type === 'distributor': no additional fields needed
 
       addCoverageArea(data);
     });
@@ -716,7 +717,11 @@
       // Account search result "Add" button
       if (e.target.classList.contains('ca-add-account-btn')) {
         const accountId = e.target.getAttribute('data-account-id');
-        addCoverageArea({ coverage_type: 'account', account_id: accountId });
+        const distributorId = document.getElementById('ca-distributor-select')
+          ? document.getElementById('ca-distributor-select').value
+          : '';
+        if (!distributorId) { showError('Please select a distributor first.'); return; }
+        addCoverageArea({ coverage_type: 'account', account_id: accountId, distributor_id: distributorId });
         return;
       }
 

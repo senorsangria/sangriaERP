@@ -1,7 +1,7 @@
 {% comment %}
 Coverage areas table partial.
 Context variables:
-  enhanced_coverage_areas  — list of dicts: {ca, display_value, display_state}
+  enhanced_coverage_areas  — list of dicts: {ca, display_value, display_state, distributor_name}
   target                   — the User being edited
 {% endcomment %}
 
@@ -13,6 +13,7 @@ Context variables:
         <th style="width:120px">Type</th>
         <th>Value</th>
         <th style="width:70px">State</th>
+        <th>Distributor</th>
         <th style="width:140px" class="text-end">Action</th>
       </tr>
     </thead>
@@ -31,6 +32,7 @@ Context variables:
         </td>
         <td class="small">{{ item.display_value }}</td>
         <td class="small text-muted">{{ item.display_state }}</td>
+        <td class="small text-muted">{{ item.distributor_name }}</td>
         <td class="text-end">
           <button
             type="button"

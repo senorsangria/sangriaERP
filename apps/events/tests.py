@@ -17,6 +17,7 @@ from django.urls import reverse
 from apps.accounts.models import Account
 from apps.catalog.models import Brand, Item
 from apps.core.models import Company, User
+from apps.distribution.models import Distributor
 from apps.events.models import Event, Expense, EventPhoto
 
 
@@ -26,6 +27,10 @@ from apps.events.models import Event, Expense, EventPhoto
 
 def make_company(name="Test Beverage Co"):
     return Company.objects.create(name=name)
+
+
+def make_distributor(company, name="Test Distributor"):
+    return Distributor.objects.create(company=company, name=name)
 
 
 def make_user(company, role_codename, username="testuser"):
@@ -944,9 +949,11 @@ class EventRevertCompleteTest(TestCase):
         self.sales_mgr = make_user(self.company, 'sales_manager', "salesmgr")
         self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
+        self.distributor = make_distributor(self.company)
         UserCoverageArea.objects.create(
             user=self.sales_mgr, company=self.company,
             coverage_type='account', account=self.account,
+            distributor=self.distributor,
         )
 
     def _complete_event(self, event_manager=None):
@@ -1027,12 +1034,14 @@ class EventPhotoDeleteTest(TestCase):
         self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account  = make_account(self.company)
         self.brand    = Brand.objects.create(company=self.company, name="TestBrand")
+        self.distributor = make_distributor(self.company)
 
         # Tasting event in Recap In Progress with ambassador assigned
         from apps.accounts.models import UserCoverageArea
         UserCoverageArea.objects.create(
             user=self.ambassador, company=self.company,
             coverage_type='account', account=self.account,
+            distributor=self.distributor,
         )
         self.event = make_event(
             self.company, self.admin, Event.EventType.TASTING,
@@ -1065,6 +1074,7 @@ class EventPhotoDeleteTest(TestCase):
         UserCoverageArea.objects.create(
             user=self.admin, company=self.company,
             coverage_type='account', account=self.account,
+            distributor=self.distributor,
         )
         resp = self._delete("admin")
         self.assertEqual(resp.status_code, 200)
@@ -1114,9 +1124,11 @@ class UnreleasePermissionTest(TestCase):
         self.amb_mgr = make_user(self.company, 'ambassador_manager', "ambmgr")
         self.amb = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
+        self.distributor = make_distributor(self.company)
         UserCoverageArea.objects.create(
             user=self.sales, company=self.company,
             coverage_type='account', account=self.account,
+            distributor=self.distributor,
         )
 
     def _make_scheduled(self, event_manager=None):
@@ -1400,9 +1412,11 @@ class RevertRecapSubmittedTest(TestCase):
         self.amb = make_user(self.company, 'ambassador', "amb")
         self.account = make_account(self.company)
         self.item = make_item(self.company)
+        self.distributor = make_distributor(self.company)
         UserCoverageArea.objects.create(
             user=self.sales, company=self.company,
             coverage_type='account', account=self.account,
+            distributor=self.distributor,
         )
 
     def _make_recap_submitted(self, event_manager=None):
@@ -1578,12 +1592,14 @@ class ExpenseTest(TestCase):
         self.admin     = make_user(self.company, 'supplier_admin', "admin")
         self.ambassador = make_user(self.company, 'ambassador', "amb")
         self.account   = make_account(self.company)
+        self.distributor = make_distributor(self.company)
         self.SimpleUploadedFile = SimpleUploadedFile
 
         # Ambassador needs coverage area so _can_recap returns True
         UserCoverageArea.objects.create(
             user=self.ambassador, company=self.company,
             coverage_type='account', account=self.account,
+            distributor=self.distributor,
         )
 
         self.event = make_event(
@@ -1858,10 +1874,12 @@ class OkToPayTransitionTest(TestCase):
     def test_payroll_reviewer_can_mark_ok_to_pay(self):
         from apps.accounts.models import UserCoverageArea
         pr = make_user(self.company, 'payroll_reviewer', username='pr')
+        distributor = make_distributor(self.company)
         UserCoverageArea.objects.create(
             user=pr, company=self.company,
             coverage_type=UserCoverageArea.CoverageType.ACCOUNT,
             account=self.account,
+            distributor=distributor,
         )
         c = Client()
         c.login(username='pr', password='testpass123')
@@ -1885,11 +1903,13 @@ class PayrollReviewerVisibilityTest(TestCase):
         self.pr = make_user(self.company, 'payroll_reviewer', username='pr')
         self.account = make_account(self.company, 'Covered Account')
         self.other_account = make_account(self.company, 'Other Account')
+        self.distributor = make_distributor(self.company)
         # Assign coverage for the payroll reviewer (account-level)
         UserCoverageArea.objects.create(
             user=self.pr, company=self.company,
             coverage_type=UserCoverageArea.CoverageType.ACCOUNT,
             account=self.account,
+            distributor=self.distributor,
         )
         self.client = Client()
         self.client.login(username='pr', password='testpass123')

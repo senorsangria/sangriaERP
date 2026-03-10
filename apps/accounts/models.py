@@ -172,9 +172,7 @@ class UserCoverageArea(TimeStampedModel):
     )
     distributor = models.ForeignKey(
         'distribution.Distributor',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
+        on_delete=models.PROTECT,
         related_name='coverage_areas',
     )
     account = models.ForeignKey(

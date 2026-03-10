@@ -577,3 +577,167 @@ class AccountBulkDeleteTest(TestCase):
         self.client.force_login(self.sa_user)
         resp = self._post_bulk_delete([])
         self.assertRedirects(resp, reverse('account_list'))
+
+
+# ---------------------------------------------------------------------------
+# Coverage area restructure — distributor required on every row
+# ---------------------------------------------------------------------------
+
+from apps.accounts.models import UserCoverageArea
+from apps.accounts.utils import get_distributors_for_user
+
+
+class GetDistributorsForUserTest(TestCase):
+    """get_distributors_for_user() returns correct distributor sets per role."""
+
+    def setUp(self):
+        from apps.core.rbac import Role
+        self.company = make_company('Dist Test Co')
+        self.dist_a = make_distributor(self.company, 'Peerless Beverage')
+        self.dist_b = make_distributor(self.company, 'Harbor Distributing')
+
+        def _make(role, username):
+            u = User.objects.create_user(username=username, password='testpass123',
+                                         company=self.company)
+            u.roles.set([Role.objects.get(codename=role)])
+            return u
+
+        self.admin = _make('supplier_admin', 'sa')
+        self.tm = _make('territory_manager', 'tm')
+
+    def test_supplier_admin_gets_all_company_distributors(self):
+        result = list(get_distributors_for_user(self.admin))
+        self.assertIn(self.dist_a, result)
+        self.assertIn(self.dist_b, result)
+
+    def test_user_with_no_coverage_areas_gets_empty_queryset(self):
+        result = list(get_distributors_for_user(self.tm))
+        self.assertEqual(result, [])
+
+    def test_user_gets_only_their_assigned_distributors(self):
+        UserCoverageArea.objects.create(
+            user=self.tm, company=self.company,
+            coverage_type=UserCoverageArea.CoverageType.DISTRIBUTOR,
+            distributor=self.dist_a,
+        )
+        result = list(get_distributors_for_user(self.tm))
+        self.assertIn(self.dist_a, result)
+        self.assertNotIn(self.dist_b, result)
+
+    def test_multiple_coverage_types_return_distinct_distributors(self):
+        """Two coverage areas under the same distributor yield only one entry."""
+        account = make_account(self.company, self.dist_a)
+        UserCoverageArea.objects.create(
+            user=self.tm, company=self.company,
+            coverage_type=UserCoverageArea.CoverageType.DISTRIBUTOR,
+            distributor=self.dist_a,
+        )
+        UserCoverageArea.objects.create(
+            user=self.tm, company=self.company,
+            coverage_type=UserCoverageArea.CoverageType.ACCOUNT,
+            distributor=self.dist_a,
+            account=account,
+        )
+        result = list(get_distributors_for_user(self.tm))
+        self.assertEqual(result.count(self.dist_a), 1)
+
+
+class CoverageAreaAddViewTest(TestCase):
+    """coverage_area_add: distributor always required; sets correctly on all types."""
+
+    def setUp(self):
+        from apps.core.rbac import Role
+        self.company = make_company('CA Add Test Co')
+        self.distributor = make_distributor(self.company, 'Test Dist')
+
+        def _make(role, username):
+            u = User.objects.create_user(username=username, password='testpass123',
+                                         company=self.company)
+            u.roles.set([Role.objects.get(codename=role)])
+            return u
+
+        self.admin = _make('supplier_admin', 'sa_ca')
+        self.target = _make('territory_manager', 'tm_ca')
+        self.client = Client()
+        self.client.login(username='sa_ca', password='testpass123')
+        self.url = reverse('coverage_area_add', args=[self.target.pk])
+
+    def _post(self, data):
+        return self.client.post(self.url, data,
+                                HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+
+    # ── Missing distributor ──────────────────────────────────────────────────
+
+    def test_missing_distributor_returns_error_for_distributor_type(self):
+        resp = self._post({'coverage_type': 'distributor'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('distributor', resp.json()['error'].lower())
+
+    def test_missing_distributor_returns_error_for_state_type(self):
+        resp = self._post({'coverage_type': 'state', 'state': 'NJ'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('distributor', resp.json()['error'].lower())
+
+    def test_missing_distributor_returns_error_for_county_type(self):
+        resp = self._post({'coverage_type': 'county', 'state': 'NJ', 'county': 'Hudson'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('distributor', resp.json()['error'].lower())
+
+    def test_missing_distributor_returns_error_for_city_type(self):
+        resp = self._post({'coverage_type': 'city', 'state': 'NJ', 'city': 'Hoboken'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('distributor', resp.json()['error'].lower())
+
+    def test_missing_distributor_returns_error_for_account_type(self):
+        account = make_account(self.company, self.distributor)
+        resp = self._post({'coverage_type': 'account', 'account_id': account.pk})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('distributor', resp.json()['error'].lower())
+
+    # ── Distributor correctly stored on all types ────────────────────────────
+
+    def test_distributor_type_stores_distributor(self):
+        resp = self._post({'coverage_type': 'distributor',
+                           'distributor_id': self.distributor.pk})
+        self.assertEqual(resp.status_code, 200)
+        ca = UserCoverageArea.objects.get(user=self.target,
+                                          coverage_type='distributor')
+        self.assertEqual(ca.distributor, self.distributor)
+
+    def test_state_type_stores_distributor(self):
+        resp = self._post({'coverage_type': 'state', 'state': 'NJ',
+                           'distributor_id': self.distributor.pk})
+        self.assertEqual(resp.status_code, 200)
+        ca = UserCoverageArea.objects.get(user=self.target, coverage_type='state')
+        self.assertEqual(ca.distributor, self.distributor)
+        self.assertEqual(ca.state, 'NJ')
+
+    def test_county_type_stores_distributor(self):
+        resp = self._post({'coverage_type': 'county', 'state': 'NJ',
+                           'county': 'Hudson',
+                           'distributor_id': self.distributor.pk})
+        self.assertEqual(resp.status_code, 200)
+        ca = UserCoverageArea.objects.get(user=self.target, coverage_type='county')
+        self.assertEqual(ca.distributor, self.distributor)
+        self.assertEqual(ca.state, 'NJ')
+        self.assertEqual(ca.county, 'Hudson')
+
+    def test_city_type_stores_distributor(self):
+        resp = self._post({'coverage_type': 'city', 'state': 'NJ',
+                           'city': 'Hoboken',
+                           'distributor_id': self.distributor.pk})
+        self.assertEqual(resp.status_code, 200)
+        ca = UserCoverageArea.objects.get(user=self.target, coverage_type='city')
+        self.assertEqual(ca.distributor, self.distributor)
+        self.assertEqual(ca.state, 'NJ')
+        self.assertEqual(ca.city, 'Hoboken')
+
+    def test_account_type_stores_distributor(self):
+        account = make_account(self.company, self.distributor)
+        resp = self._post({'coverage_type': 'account',
+                           'account_id': account.pk,
+                           'distributor_id': self.distributor.pk})
+        self.assertEqual(resp.status_code, 200)
+        ca = UserCoverageArea.objects.get(user=self.target, coverage_type='account')
+        self.assertEqual(ca.distributor, self.distributor)
+        self.assertEqual(ca.account, account)

@@ -982,6 +982,32 @@ Admin:
   `core_user_assigned_distributors`, `core_user_managed_ambassadors`
 - UserCoverageArea not yet wired to any view logic; structure only in this phase
 
+### UserCoverageArea — Distributor Required on Every Row (Restructure)
+- `distributor` FK on `UserCoverageArea` is **non-nullable** (PROTECT); every row
+  must be scoped to a specific distributor
+- `coverage_type=distributor` means "all accounts under this distributor"; the
+  distributor FK is still required (same as all other types)
+- Every sub-filter (county, city, state, account) is additionally scoped to a
+  specific distributor, enabling distributor-scoped reports, maps, and visibility
+- **UI change**: distributor selector is the first required field in the "Add
+  Coverage Area" form, always visible; the type-specific fields appear below it
+- The separate "Distributor" sub-section (previously shown only when type=distributor
+  was selected) has been removed — the top-level distributor field replaces it
+- All POST submissions to `coverage_area_add` must include `distributor_id`; the
+  server rejects requests with a missing or invalid distributor
+- Duplicate detection now includes distributor in the uniqueness key for all types
+- Table display includes a Distributor column; rows ordered by distributor name first
+- Migration: `0005_usercoveragearea_distributor_required` — alters distributor FK
+  from nullable SET_NULL to non-nullable PROTECT
+
+### get_distributors_for_user() Utility
+- New function in `apps/accounts/utils.py`
+- Returns a queryset of `Distributor` objects the user has access to:
+  - SaaS Admin / Supplier Admin: all active distributors for their company
+  - All other roles: distinct distributors from their `UserCoverageArea` rows
+- Used by reports, maps, and other distributor-scoped features to resolve which
+  distributors a user can access without re-querying coverage areas directly
+
 ### SalesRecord Moved: imports → sales
 - `SalesRecord` model moved from `apps.imports` to `apps.sales`
 - `account` FK updated to point to `accounts.Account` (not `distribution.Account`)
@@ -1058,21 +1084,23 @@ Admin:
 
 ### Coverage Areas Tab — Add Coverage Area Form
 
-- Coverage Type dropdown with five options: Distributor, State, County, City, Account
+- **Distributor** dropdown is the first required field, always visible; scopes all
+  coverage area rows to a specific distributor
+- Coverage Type dropdown below with five options: Distributor, State, County, City, Account
 - Form is always visible below the assignments table; resets after each successful
   addition so multiple entries can be added without extra navigation
-- **Distributor type**: dropdown of all active distributors for the company
+- **Distributor type**: selecting distributor type + clicking Add creates a
+  "all accounts under this distributor" row — no additional field needed
 - **State type**: dropdown populated via AJAX from distinct `state_normalized` values
-  in the company's active accounts (same pattern as County and City); shows
-  "No states available yet" message if no account data exists
+  in the company's active accounts; shows "No states available yet" if no data
 - **County type**: state dropdown first; county dropdown populated via AJAX when
   state is selected; message shown if no counties exist for that state yet
 - **City type**: state dropdown first; city dropdown populated via AJAX when state
   is selected; message shown if no cities exist for that state yet
 - **Account type**: live search box (triggers after 2+ characters with 300 ms
   debounce); results show account name, address, distributor; each result has an
-  inline Add button; search box clears after adding; no separate Add button for
-  this type
+  inline Add button; distributor must be selected first or an error is shown
+- All POST submissions include `distributor_id` for all coverage types
 
 ### AJAX Endpoints (accounts app)
 
@@ -1122,7 +1150,10 @@ Admin:
 ### Coverage Area Utilities (apps/accounts/utils.py)
 - get_accounts_for_user(user) — returns queryset of active accounts visible to
   a user based on their UserCoverageArea records (union logic); Supplier Admin
-  and Sales Manager see all company accounts
+  sees all company accounts; all other roles filtered by coverage areas
+- get_distributors_for_user(user) — returns queryset of Distributor objects the
+  user has access to; SaaS/Supplier Admin get all company distributors; all other
+  roles get distinct distributors from their UserCoverageArea rows
 - get_users_covering_account(account, roles) — returns users with given roles
   whose coverage areas include the given account; used for ambassador and
   event manager dropdown filtering on event create/edit forms
@@ -2031,5 +2062,5 @@ Implementation notes:
 
 ---
 
-*Last updated: March 10, 2026 (Phase 11 — Account Map and Territory Intelligence)*
+*Last updated: March 10, 2026 (Coverage area restructure — distributor required on all rows)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

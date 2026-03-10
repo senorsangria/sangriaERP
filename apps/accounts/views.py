@@ -40,21 +40,23 @@ def _build_enhanced_coverage_areas(user, company):
     Return a list of dicts for rendering the coverage areas table.
 
     Each dict has:
-      ca           — the UserCoverageArea object
-      display_value — human-readable value
-      display_state — state abbreviation (for county/city types only)
+      ca               — the UserCoverageArea object
+      display_value    — human-readable value
+      display_state    — state abbreviation (for county/city types only)
+      distributor_name — name of the scoping distributor (always set)
     """
     coverage_areas = (
         UserCoverageArea.objects.filter(user=user, company=company)
         .select_related('distributor', 'account')
-        .order_by('coverage_type', 'state', 'county', 'city')
+        .order_by('distributor__name', 'coverage_type', 'state', 'county', 'city')
     )
 
     enhanced = []
     for ca in coverage_areas:
         ct = ca.coverage_type
+        distributor_name = ca.distributor.name
         if ct == UserCoverageArea.CoverageType.DISTRIBUTOR:
-            display_value = ca.distributor.name if ca.distributor else '—'
+            display_value = distributor_name
             display_state = ''
         elif ct == UserCoverageArea.CoverageType.STATE:
             display_value = US_STATES_DICT.get(ca.state, ca.state)
@@ -81,6 +83,7 @@ def _build_enhanced_coverage_areas(user, company):
             'ca': ca,
             'display_value': display_value,
             'display_state': display_state,
+            'distributor_name': distributor_name,
         })
 
     return enhanced
@@ -478,30 +481,25 @@ def coverage_area_add(request, user_pk):
     if coverage_type not in valid_types:
         return JsonResponse({'error': 'Invalid coverage type.'}, status=400)
 
-    # Coverage area assignments use union logic.
-    # A user sees ALL accounts that match ANY of their coverage area entries
-    # combined. Example: if a user has Distributor X AND City "Hoboken"
-    # assigned, they see all accounts under Distributor X plus all accounts
-    # in Hoboken, regardless of distributor. Sets are combined, not intersected.
+    # Distributor is always required — every coverage area row is scoped to one.
+    distributor_id = request.POST.get('distributor_id', '').strip()
+    if not distributor_id:
+        return JsonResponse({'error': 'Please select a distributor.'}, status=400)
+    try:
+        distributor = Distributor.objects.get(pk=distributor_id, company=company, is_active=True)
+    except Distributor.DoesNotExist:
+        return JsonResponse({'error': 'Distributor not found.'}, status=400)
 
-    # Build create kwargs and check for duplicates based on type
+    # Build create kwargs and check for duplicates based on type.
+    # distributor is always included in the duplicate key.
     kwargs = {
         'user': target,
         'company': company,
         'coverage_type': coverage_type,
+        'distributor': distributor,
     }
 
     if coverage_type == UserCoverageArea.CoverageType.DISTRIBUTOR:
-        distributor_id = request.POST.get('distributor_id', '').strip()
-        if not distributor_id:
-            return JsonResponse({'error': 'Please select a distributor.'}, status=400)
-        try:
-            distributor = Distributor.objects.get(
-                pk=distributor_id, company=company, is_active=True
-            )
-        except Distributor.DoesNotExist:
-            return JsonResponse({'error': 'Distributor not found.'}, status=400)
-        kwargs['distributor'] = distributor
         exists = UserCoverageArea.objects.filter(
             user=target, company=company,
             coverage_type=coverage_type, distributor=distributor,
@@ -514,7 +512,7 @@ def coverage_area_add(request, user_pk):
         kwargs['state'] = state
         exists = UserCoverageArea.objects.filter(
             user=target, company=company,
-            coverage_type=coverage_type, state=state,
+            coverage_type=coverage_type, distributor=distributor, state=state,
         ).exists()
 
     elif coverage_type == UserCoverageArea.CoverageType.COUNTY:
@@ -528,7 +526,7 @@ def coverage_area_add(request, user_pk):
         kwargs['county'] = county
         exists = UserCoverageArea.objects.filter(
             user=target, company=company,
-            coverage_type=coverage_type, state=state, county=county,
+            coverage_type=coverage_type, distributor=distributor, state=state, county=county,
         ).exists()
 
     elif coverage_type == UserCoverageArea.CoverageType.CITY:
@@ -542,7 +540,7 @@ def coverage_area_add(request, user_pk):
         kwargs['city'] = city
         exists = UserCoverageArea.objects.filter(
             user=target, company=company,
-            coverage_type=coverage_type, state=state, city=city,
+            coverage_type=coverage_type, distributor=distributor, state=state, city=city,
         ).exists()
 
     elif coverage_type == UserCoverageArea.CoverageType.ACCOUNT:
@@ -556,7 +554,7 @@ def coverage_area_add(request, user_pk):
         kwargs['account'] = account
         exists = UserCoverageArea.objects.filter(
             user=target, company=company,
-            coverage_type=coverage_type, account=account,
+            coverage_type=coverage_type, distributor=distributor, account=account,
         ).exists()
 
     else:

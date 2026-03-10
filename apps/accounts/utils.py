@@ -6,6 +6,7 @@ These helpers are shared across event management and future phases.
 from django.db.models import Q
 
 from .models import Account, UserCoverageArea
+from apps.distribution.models import Distributor
 
 
 def get_account_associations(account):
@@ -47,9 +48,9 @@ def get_accounts_for_user(user):
     A user's coverage areas define which accounts they see. The result is the
     union of all accounts matching ANY of their coverage area entries:
       - Distributor coverage → all accounts under that distributor
-      - State coverage      → all accounts in that state
-      - County coverage     → all accounts in that county + state
-      - City coverage       → all accounts in that city + state
+      - State coverage      → all accounts in that state (under that distributor)
+      - County coverage     → all accounts in that county + state (under that distributor)
+      - City coverage       → all accounts in that city + state (under that distributor)
       - Account coverage    → that specific account directly
     """
     if user.has_role('saas_admin'):
@@ -73,11 +74,12 @@ def get_accounts_for_user(user):
     if not coverage_areas:
         return Account.active_accounts.none()
 
-    # Build union Q across all coverage areas
+    # Build union Q across all coverage areas.
+    # distributor is always set on every row (non-nullable).
     q = Q(pk__in=[])  # start with an empty match
     for ca in coverage_areas:
         ct = ca.coverage_type
-        if ct == UserCoverageArea.CoverageType.DISTRIBUTOR and ca.distributor_id:
+        if ct == UserCoverageArea.CoverageType.DISTRIBUTOR:
             q |= Q(distributor_id=ca.distributor_id)
         elif ct == UserCoverageArea.CoverageType.STATE and ca.state:
             q |= Q(state_normalized=ca.state)
@@ -89,6 +91,31 @@ def get_accounts_for_user(user):
             q |= Q(pk=ca.account_id)
 
     return Account.active_accounts.filter(company=company).filter(q)
+
+
+def get_distributors_for_user(user):
+    """
+    Return a queryset of Distributor objects the user has access to,
+    based on their coverage areas.
+
+    - SaaS Admin: all distributors for their company
+    - Supplier Admin: all distributors for their company
+    - All other roles: distinct distributors from their
+      UserCoverageArea rows
+    """
+    company = user.company
+    if not company:
+        return Distributor.objects.none()
+
+    if user.has_role('saas_admin') or user.has_role('supplier_admin'):
+        return Distributor.objects.filter(company=company, is_active=True).order_by('name')
+
+    distributor_ids = (
+        UserCoverageArea.objects.filter(user=user, company=company)
+        .values_list('distributor_id', flat=True)
+        .distinct()
+    )
+    return Distributor.objects.filter(pk__in=distributor_ids, is_active=True).order_by('name')
 
 
 def get_users_covering_account(account, roles):
