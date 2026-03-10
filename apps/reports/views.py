@@ -223,9 +223,10 @@ def account_sales_by_year(request):
     window_end = lfm_end
     last_12_label = f"{window_start.strftime('%b %Y')} \u2013 {window_end.strftime('%b %Y')}"
 
-    # ---- Complete calendar years (up to 4) ------------------------------
+    # ---- Complete calendar years (up to 4, displayed ascending) ---------
+    # Fetch the 4 most recent completed years, then sort ascending for display.
     current_year = today.year
-    years = list(
+    years = sorted(
         SalesRecord.objects
         .filter(
             account__in=accounts_qs,
@@ -236,43 +237,48 @@ def account_sales_by_year(request):
         .distinct()
         .order_by('-sale_date__year')
         [:4]
-    )
+    )  # ascending: oldest year left, newest year right
+    most_recent_year = years[-1] if years else None
 
-    # ---- Aggregate sales data -------------------------------------------
+    # ---- Base queryset: positive quantities only ------------------------
     base_qs = SalesRecord.objects.filter(
         account__in=accounts_qs,
         quantity__gt=0,
     )
 
-    # Per-year aggregation: {(account_id, item_id, year): units}
+    # ---- Apply item-name filter to base queryset -----------------------
+    if item_name_filter:
+        base_qs = base_qs.filter(item__name__in=item_name_filter)
+
+    # ---- Aggregate sales data per account (one row per account) ---------
+    # Per-year aggregation: {(account_id, year): units}
     year_data = {}
     if years:
         for row in (
             base_qs
             .filter(sale_date__year__in=years)
-            .values('account_id', 'item_id', 'sale_date__year')
+            .values('account_id', 'sale_date__year')
             .annotate(units=Sum('quantity'))
         ):
-            year_data[(row['account_id'], row['item_id'], row['sale_date__year'])] = row['units']
+            year_data[(row['account_id'], row['sale_date__year'])] = row['units']
 
-    # Last-12-months aggregation: {(account_id, item_id): units}
+    # Last-12-months aggregation: {account_id: units}
     last12_data = {}
     for row in (
         base_qs
         .filter(sale_date__gte=window_start, sale_date__lte=window_end)
-        .values('account_id', 'item_id')
+        .values('account_id')
         .annotate(units=Sum('quantity'))
     ):
-        last12_data[(row['account_id'], row['item_id'])] = row['units']
+        last12_data[row['account_id']] = row['units']
 
-    # Union of all (account_id, item_id) pairs that have any data
-    all_pairs = set()
+    # Unique account_ids that have any data
+    all_account_ids = set()
     for k in year_data:
-        all_pairs.add((k[0], k[1]))
-    for k in last12_data:
-        all_pairs.add(k)
+        all_account_ids.add(k[0])
+    all_account_ids.update(last12_data.keys())
 
-    if not all_pairs:
+    if not all_account_ids:
         return render(request, 'reports/account_sales_by_year.html', {
             'no_data': True,
             'no_data_reason': 'No sales data matches the selected filters.',
@@ -282,33 +288,20 @@ def account_sales_by_year(request):
             'current_filters': current_filters,
         })
 
-    # ---- Fetch account and item objects ---------------------------------
-    account_ids = {p[0] for p in all_pairs}
-    item_ids = {p[1] for p in all_pairs}
+    # ---- Fetch account objects ------------------------------------------
+    accounts_dict = {
+        a.pk: a for a in Account.objects.filter(pk__in=all_account_ids)
+    }
 
-    accounts_dict = {a.pk: a for a in Account.objects.filter(pk__in=account_ids)}
-    items_dict = {i.pk: i for i in Item.objects.filter(pk__in=item_ids)}
-
-    # ---- Apply item-name filter -----------------------------------------
-    if item_name_filter:
-        filtered_item_ids = {
-            pk for pk, item in items_dict.items()
-            if item.name in item_name_filter
-        }
-        all_pairs = {p for p in all_pairs if p[1] in filtered_item_ids}
-
-    # ---- Build rows -----------------------------------------------------
-    most_recent_year = years[0] if years else None
+    # ---- Build rows (one per account) -----------------------------------
     rows = []
-
-    for account_id, item_id in sorted(all_pairs):
+    for account_id in sorted(all_account_ids):
         account = accounts_dict.get(account_id)
-        item = items_dict.get(item_id)
-        if not account or not item:
+        if not account:
             continue
 
-        year_units = {y: year_data.get((account_id, item_id, y), 0) for y in years}
-        last_12_units = last12_data.get((account_id, item_id), 0)
+        year_units = {y: year_data.get((account_id, y), 0) for y in years}
+        last_12_units = last12_data.get(account_id, 0)
         most_recent_year_units = year_units.get(most_recent_year, 0) if most_recent_year else 0
         diff = last_12_units - most_recent_year_units
         diff_pct = round(diff / most_recent_year_units * 100, 1) if most_recent_year_units > 0 else None
@@ -319,14 +312,23 @@ def account_sales_by_year(request):
             'account_name': _truncate(account.name, 20),
             'city': _truncate(account.city, 15),
             'on_off': on_off,
-            'item_name': item.name,
             'year_units': year_units,
             'last_12_units': last_12_units,
             'diff': diff,
             'diff_pct': diff_pct,
         })
 
-    rows.sort(key=lambda r: (r['account_name'], r['item_name']))
+    rows.sort(key=lambda r: r['account_name'])
+
+    # ---- Calculate totals row -------------------------------------------
+    total_by_year = {y: sum(r['year_units'].get(y, 0) for r in rows) for y in years}
+    total_last_12 = sum(r['last_12_units'] for r in rows)
+    most_recent_year_total = total_by_year.get(most_recent_year, 0) if most_recent_year else 0
+    total_diff = total_last_12 - most_recent_year_total
+    total_diff_pct = (
+        round(total_diff / most_recent_year_total * 100, 1)
+        if most_recent_year_total > 0 else None
+    )
 
     return render(request, 'reports/account_sales_by_year.html', {
         'rows': rows,
@@ -337,4 +339,8 @@ def account_sales_by_year(request):
         'current_filters': current_filters,
         'selected_distributor': selected_distributor,
         'multiple_distributors': multiple_distributors,
+        'total_by_year': total_by_year,
+        'total_last_12': total_last_12,
+        'total_diff': total_diff,
+        'total_diff_pct': total_diff_pct,
     })

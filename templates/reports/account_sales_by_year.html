@@ -80,6 +80,18 @@
 
   /* On/Off icon sizing */
   .on-off-icon { font-size: 1rem; }
+
+  /* Totals row */
+  #totalsBody tr {
+    background: #e8edf2 !important;
+    font-weight: bold;
+    border-top: 2px solid #1a2d42;
+    border-bottom: 2px solid #1a2d42;
+  }
+  #totalsBody td.col-sticky-1,
+  #totalsBody td.col-sticky-2 {
+    background: #e8edf2 !important;
+  }
 </style>
 {% endblock %}
 
@@ -95,7 +107,7 @@
     <p class="text-muted mb-0 small">{{ selected_distributor.name }}</p>
     {% endif %}
     {% if last_full_month_display %}
-    <p class="text-muted mb-0 small">Data through: <strong>{{ last_full_month_display }}</strong></p>
+    <p class="text-muted mb-0 small">Data through: <strong>{{ last_full_month_display }}</strong> ({{ last_12_label }})</p>
     {% endif %}
   </div>
   {% if multiple_distributors and selected_distributor %}
@@ -130,8 +142,8 @@
 <div class="card border-0 shadow-sm mb-3">
   <div class="card-body py-2 px-3">
 
-    <!-- Toggle button — mobile only -->
-    <div class="d-lg-none mb-2">
+    <!-- Toggle button — all screen sizes -->
+    <div class="mb-2">
       <button
         id="filterToggle"
         class="btn btn-sm btn-outline-secondary"
@@ -148,8 +160,8 @@
       </button>
     </div>
 
-    <!-- Filter panel: always visible on desktop, collapsible on mobile -->
-    <div class="collapse d-lg-block" id="filterPanel">
+    <!-- Filter panel: collapsed by default on all screen sizes -->
+    <div class="collapse" id="filterPanel">
       <form method="get" id="filterForm">
         <div class="row g-2 align-items-end">
 
@@ -157,7 +169,8 @@
           {% if filter_options.items %}
           <div class="col-12 col-sm-6 col-lg-2">
             <label class="form-label small text-muted mb-1">Item Name</label>
-            <select name="item_name" class="form-select form-select-sm" multiple size="3">
+            <select name="item_name" class="form-select form-select-sm multi-filter" multiple size="3">
+              <option value="">All</option>
               {% for name in filter_options.items %}
               <option value="{{ name }}" {% if name in current_filters.item_name %}selected{% endif %}>{{ name }}</option>
               {% endfor %}
@@ -179,7 +192,8 @@
           {% if filter_options.cities %}
           <div class="col-12 col-sm-6 col-lg-2">
             <label class="form-label small text-muted mb-1">City</label>
-            <select name="city" class="form-select form-select-sm" multiple size="3">
+            <select name="city" class="form-select form-select-sm multi-filter" multiple size="3">
+              <option value="">All</option>
               {% for city in filter_options.cities %}
               <option value="{{ city }}" {% if city in current_filters.city %}selected{% endif %}>{{ city }}</option>
               {% endfor %}
@@ -191,7 +205,8 @@
           {% if filter_options.counties %}
           <div class="col-12 col-sm-6 col-lg-2">
             <label class="form-label small text-muted mb-1">County</label>
-            <select name="county" class="form-select form-select-sm" multiple size="3">
+            <select name="county" class="form-select form-select-sm multi-filter" multiple size="3">
+              <option value="">All</option>
               {% for county in filter_options.counties %}
               <option value="{{ county }}" {% if county in current_filters.county %}selected{% endif %}>{{ county }}</option>
               {% endfor %}
@@ -203,7 +218,8 @@
           {% if filter_options.classes_of_trade %}
           <div class="col-12 col-sm-6 col-lg-2">
             <label class="form-label small text-muted mb-1">Class of Trade</label>
-            <select name="class_of_trade" class="form-select form-select-sm" multiple size="3">
+            <select name="class_of_trade" class="form-select form-select-sm multi-filter" multiple size="3">
+              <option value="">All</option>
               {% for cot in filter_options.classes_of_trade %}
               <option value="{{ cot }}" {% if cot in current_filters.class_of_trade %}selected{% endif %}>{{ cot }}</option>
               {% endfor %}
@@ -215,7 +231,8 @@
           {% if filter_options.distributor_routes %}
           <div class="col-12 col-sm-6 col-lg-2">
             <label class="form-label small text-muted mb-1">Route</label>
-            <select name="distributor_route" class="form-select form-select-sm" multiple size="3">
+            <select name="distributor_route" class="form-select form-select-sm multi-filter" multiple size="3">
+              <option value="">All</option>
               {% for route in filter_options.distributor_routes %}
               <option value="{{ route }}" {% if route in current_filters.distributor_route %}selected{% endif %}>{{ route }}</option>
               {% endfor %}
@@ -254,15 +271,53 @@
             </th>
             <th class="col-sticky-2 sortable" data-col="1">Account</th>
             <th class="sortable" data-col="2">City</th>
-            <th class="sortable" data-col="3">Item</th>
             {% for year in years %}
-            <th class="sortable text-end" data-col="{{ forloop.counter|add:3 }}">{{ year }}</th>
+            <th class="sortable text-end" data-col="{{ forloop.counter|add:2 }}">{{ year }}</th>
             {% endfor %}
-            <th class="sortable text-end" data-col="{{ years|length|add:4 }}">{{ last_12_label }}</th>
-            <th class="sortable text-end" data-col="{{ years|length|add:5 }}">Diff</th>
+            <th class="sortable text-end" data-col="{{ years|length|add:3 }}">Last 12m</th>
+            <th class="sortable text-end" data-col="{{ years|length|add:4 }}">Diff</th>
           </tr>
         </thead>
-        <tbody>
+
+        <!-- Totals row (pinned, not sortable) -->
+        <tbody id="totalsBody">
+          <tr>
+            <td class="col-sticky-1 text-center">
+              <i class="bi bi-sigma on-off-icon text-muted"
+                 data-bs-toggle="tooltip" title="Totals"></i>
+              <span class="visually-hidden">TOTAL</span>
+            </td>
+            <td class="col-sticky-2">Total</td>
+            <td></td>
+            {% for year in years %}
+            <td class="text-end {% if total_by_year|get_item:year < 0 %}text-danger{% endif %}">
+              {{ total_by_year|get_item:year|default:"&mdash;" }}
+            </td>
+            {% endfor %}
+            <td class="text-end {% if total_last_12 < 0 %}text-danger{% endif %}">
+              {% if total_last_12 %}{{ total_last_12 }}{% else %}&mdash;{% endif %}
+            </td>
+            <td class="text-end
+              {% if total_diff > 0 %}diff-positive
+              {% elif total_diff < 0 %}diff-negative
+              {% else %}diff-zero{% endif %}">
+              <span>
+                {% if total_diff > 0 %}+{% endif %}{{ total_diff }}
+              </span>
+              <br>
+              <small>
+                {% if total_diff_pct is not None %}
+                  {% if total_diff > 0 %}+{% endif %}{{ total_diff_pct }}%
+                {% else %}
+                  &mdash;
+                {% endif %}
+              </small>
+            </td>
+          </tr>
+        </tbody>
+
+        <!-- Data rows (sortable) -->
+        <tbody id="dataBody">
           {% for row in rows %}
           <tr>
             <!-- On/Off -->
@@ -283,19 +338,21 @@
             <td class="col-sticky-2 fw-semibold">{{ row.account_name }}</td>
             <!-- City -->
             <td>{{ row.city }}</td>
-            <!-- Item Name -->
-            <td>{{ row.item_name }}</td>
             <!-- Year columns -->
             {% for year in years %}
             <td class="text-end">
               {% with units=row.year_units|get_item:year %}
-              {% if units %}{{ units }}{% else %}&mdash;{% endif %}
+              {% if units %}
+              <span class="{% if units < 0 %}text-danger{% endif %}">{{ units }}</span>
+              {% else %}&mdash;{% endif %}
               {% endwith %}
             </td>
             {% endfor %}
             <!-- Last 12 months -->
             <td class="text-end">
-              {% if row.last_12_units %}{{ row.last_12_units }}{% else %}&mdash;{% endif %}
+              {% if row.last_12_units %}
+              <span class="{% if row.last_12_units < 0 %}text-danger{% endif %}">{{ row.last_12_units }}</span>
+              {% else %}&mdash;{% endif %}
             </td>
             <!-- Diff -->
             <td class="text-end
@@ -317,7 +374,7 @@
           </tr>
           {% empty %}
           <tr>
-            <td colspan="{{ years|length|add:6 }}" class="text-center text-muted py-4">
+            <td colspan="{{ years|length|add:5 }}" class="text-center text-muted py-4">
               No data matches the current filters.
             </td>
           </tr>
@@ -342,12 +399,50 @@
     new bootstrap.Tooltip(el, { trigger: 'hover' });
   });
 
-  // ---- Client-side column sort ------------------------------------
+  // ---- Multi-select "All" option logic -----------------------------
+  (function () {
+    document.querySelectorAll('select.multi-filter').forEach(function (sel) {
+      const allOpt = sel.querySelector('option[value=""]');
+      if (!allOpt) return;
+
+      // On change: if "All" just selected, deselect everything else;
+      // if any real option selected, deselect "All"
+      sel.addEventListener('change', function () {
+        const opts = Array.from(sel.options);
+        const allSelected = allOpt.selected;
+        const anyRealSelected = opts.some(o => o.value !== '' && o.selected);
+
+        if (allSelected && anyRealSelected) {
+          // "All" was just clicked while real options were selected — clear real options
+          opts.forEach(o => { if (o.value !== '') o.selected = false; });
+        } else if (!allSelected && !anyRealSelected) {
+          // Nothing selected — select "All"
+          allOpt.selected = true;
+        } else if (anyRealSelected) {
+          // Real option selected — deselect "All"
+          allOpt.selected = false;
+        }
+      });
+    });
+
+    // On form submit: deselect "All" so blank value is not submitted
+    const form = document.getElementById('filterForm');
+    if (form) {
+      form.addEventListener('submit', function () {
+        document.querySelectorAll('select.multi-filter').forEach(function (sel) {
+          const allOpt = sel.querySelector('option[value=""]');
+          if (allOpt) allOpt.selected = false;
+        });
+      });
+    }
+  })();
+
+  // ---- Client-side column sort (data rows only) -------------------
   (function () {
     const table = document.getElementById('reportTable');
     if (!table) return;
 
-    const tbody = table.querySelector('tbody');
+    const tbody = document.getElementById('dataBody');
     const headers = table.querySelectorAll('thead th.sortable');
     let currentCol = -1;
     let ascending = true;
@@ -381,7 +476,7 @@
         headers.forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
         this.classList.add(ascending ? 'sort-asc' : 'sort-desc');
 
-        // Sort rows
+        // Sort data rows only
         const rows = Array.from(tbody.querySelectorAll('tr'));
         rows.sort((a, b) => {
           const aVal = parseVal(cellText(a, colIdx));

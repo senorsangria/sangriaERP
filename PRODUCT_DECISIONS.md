@@ -2070,11 +2070,11 @@ Implementation notes:
 
 ## Reports
 
-### Account Sales by Year (Phase 1)
+### Account Sales by Year (Phase 1 + tweaks)
 
-**Purpose:** Shows units sold per account+item combination across up to four complete
-calendar years plus a rolling last-12-months window, so sales managers and supplier
-admins can quickly see year-over-year trends for each account in a distributor's territory.
+**Purpose:** Shows units sold per account across up to four complete calendar years plus a
+rolling last-12-months window, so sales managers and supplier admins can quickly see
+year-over-year trends for each account in a distributor's territory.
 
 **Permission:** `can_view_report_account_sales`
 Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager.
@@ -2105,28 +2105,36 @@ Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager
   Mar 2024 – Feb 2025.
 - **Complete calendar years:** Up to the four most recent calendar years (Jan 1 – Dec 31)
   that have positive-quantity sales data for the distributor scope AND the year is fully
-  in the past (year < current year).  Shown most-recent-first.
+  in the past (year < current year).  Displayed in ascending order (oldest left, newest right).
 - **Negative quantities excluded:** SalesRecords with `quantity ≤ 0` are excluded from all
   calculations (these represent returns/adjustments).
+- **Most recent year:** The rightmost (largest) year in the years list; used as the base
+  for diff/diff_pct calculations.
 
-**Row data (one row per account+item combination):**
+**Row data (one row per account — all items for that account are summed together):**
 
 | Field | Description |
 |---|---|
 | `account_name` | Title-cased, truncated to 20 chars with `…` |
 | `city` | Title-cased, truncated to 15 chars with `…` |
 | `on_off` | `'ON'`, `'OFF'`, or `'Unknown'` |
-| `item_name` | Full item name |
-| `year_units` | Dict mapping year (int) → units sold (int) |
-| `last_12_units` | Units sold in the last-12-months window |
+| `year_units` | Dict mapping year (int) → total units sold across all items (int) |
+| `last_12_units` | Total units sold in the last-12-months window across all items |
 | `diff` | `last_12_units − most_recent_year_units` (can be negative) |
 | `diff_pct` | `round(diff / most_recent_year_units × 100, 1)` if most_recent_year_units > 0, else `None` |
+
+The `item_name` filter narrows which items contribute to the per-account totals; it does
+not split rows by item.
+
+**Totals row:** A pinned bold row at the top of the data area (separate `<tbody>`) shows
+column-level totals: sum of each year column, sum of Last 12m, and total diff/diff_pct.
+The totals row is not affected by client-side column sorting.
 
 **Filters (GET parameters):**
 
 | Parameter | Type | Maps to |
 |---|---|---|
-| `item_name` | list of item names | `item.name` |
+| `item_name` | list of item names | `item.name` (narrows which sales contribute to totals) |
 | `on_off` | `'ON'` or `'OFF'` | `account.on_off_premise` |
 | `city` | list of city names | `account.city` |
 | `county` | list of county names | `account.county` |
@@ -2134,13 +2142,23 @@ Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager
 | `distributor_route` | list of route strings | `account.distributor_route` |
 
 Filter options are populated from accounts in scope **before** applying user-selected filters.
+Every multi-select filter includes an "All" option (first choice); selecting "All" clears
+specific selections. The filter panel is collapsed by default on all screen sizes.
 
 **Template:** `templates/reports/account_sales_by_year.html`
 - Extends `base.html`; loads `rbac` and `reports_tags` template tag libraries.
-- Filter panel: collapsible on mobile (Bootstrap collapse), always visible on desktop.
+- Filter panel: collapsed by default on all screen sizes (Bootstrap collapse); toggle button
+  always visible; shows "Active" badge when any filter is applied.
+- Multi-select filters include an "All" option; vanilla JS handles mutual-exclusion logic
+  (selecting "All" deselects specific values, and vice versa). On form submit, "All" is
+  deselected so its blank value is not submitted.
+- "Data through" header line format: `Data through: <Month YYYY> (Mon YYYY – Mon YYYY)`
+- Column header for rolling window: **Last 12m** (not the full date range).
+- Year columns displayed ascending (oldest left, newest right).
+- Negative values in any year column or Last 12m column displayed in red (`text-danger`).
 - Report table: sticky header, sticky first two columns on mobile, alternating row colors,
-  client-side sortable (vanilla JS, click column header to sort asc/desc).
-- Diff column: green (`text-success`) if positive, red (`text-danger`) if negative, muted if zero.
+  client-side sortable on data rows only (vanilla JS, click column header to sort asc/desc).
+- Diff column: green (`diff-positive`) if positive, red (`diff-negative`) if negative, muted if zero.
 - On/Off column: `bi-cup-hot` icon for ON, `bi-shop` for OFF; tooltip with full text.
 - Row count shown below table.
 
@@ -2155,9 +2173,9 @@ Filter options are populated from accounts in scope **before** applying user-sel
 
 **Deferred (Phase .2):**
 - Account multi-select filter (selecting individual accounts from a searchable list).
-  Not implemented in Phase 1 due to UX complexity with potentially hundreds of accounts.
+  Not implemented due to UX complexity with potentially hundreds of accounts.
 
 ---
 
-*Last updated: March 10, 2026 (Add Account Sales by Year report — Phase 1)*
+*Last updated: March 10, 2026 (Account Sales by Year report tweaks: account grouping, totals row, column order, filter improvements)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

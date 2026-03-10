@@ -307,7 +307,7 @@ class DiffCalcTest(TestCase):
         make_sale(self.company, self.batch, self.account, self.item, date(2026, 2, 15), 30)
         row, years = self._get_row()
         # Most recent year should be 2024 with 20 units, last_12 includes 2026-02 sale too
-        if years and years[0] == 2025:
+        if years and years[-1] == 2025:
             # 2025 would have 0 units → diff_pct is None
             self.assertIsNone(row['diff_pct'])
         else:
@@ -320,7 +320,7 @@ class DiffCalcTest(TestCase):
         make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 100)
         make_sale(self.company, self.batch, self.account, self.item, date(2026, 2, 1), 150)
         row, years = self._get_row()
-        if years and years[0] == 2024:
+        if years and years[-1] == 2024:
             # most_recent_year = 2024 with 100 units
             # last_12 window ends Feb 2026, starts Mar 2025 → includes 2026-02 but not 2024-06
             # So last_12_units might be 150, diff = 150 - 100 = 50, pct = 50.0
@@ -404,8 +404,9 @@ class FilterTest(TestCase):
             {'item_name': 'Item Alpha'},
         )
         rows = response.context['rows']
+        # Only acc_on has Item Alpha sales; rows are grouped by account, no item_name key
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['item_name'], 'Item Alpha')
+        self.assertTrue(any('On Premise' in r['account_name'] for r in rows), rows)
 
     def test_county_filter(self):
         response = self.client.get(
