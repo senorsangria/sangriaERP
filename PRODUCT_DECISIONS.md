@@ -2109,7 +2109,7 @@ Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager
 - **Negative quantities excluded:** SalesRecords with `quantity ≤ 0` are excluded from all
   calculations (these represent returns/adjustments).
 - **Most recent year:** The rightmost (largest) year in the years list; used as the base
-  for diff/diff_pct calculations.
+  for diff calculations.
 
 **Row data (one row per account — all items for that account are summed together):**
 
@@ -2121,13 +2121,15 @@ Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager
 | `year_units` | Dict mapping year (int) → total units sold across all items (int) |
 | `last_12_units` | Total units sold in the last-12-months window across all items |
 | `diff` | `last_12_units − most_recent_year_units` (can be negative) |
-| `diff_pct` | `round(diff / most_recent_year_units × 100, 1)` if most_recent_year_units > 0, else `None` |
+
+Note: `diff_pct` (percentage change) was removed. The Diff column shows only the raw
+integer value going forward.
 
 The `item_name` filter narrows which items contribute to the per-account totals; it does
 not split rows by item.
 
 **Totals row:** A pinned bold row at the top of the data area (separate `<tbody>`) shows
-column-level totals: sum of each year column, sum of Last 12m, and total diff/diff_pct.
+column-level totals: sum of each year column, sum of Last 12m, and total diff.
 The totals row is not affected by client-side column sorting.
 
 **Filters (GET parameters):**
@@ -2145,20 +2147,45 @@ Filter options are populated from accounts in scope **before** applying user-sel
 Every multi-select filter includes an "All" option (first choice); selecting "All" clears
 specific selections. The filter panel is collapsed by default on all screen sizes.
 
+**CSV Export endpoint:** `/reports/export/` → `report_account_sales_csv`
+- Same permission check and distributor/account scoping as the main report view.
+- Same filter logic applied from GET parameters (filters carry through via
+  `?{{ request.GET.urlencode }}` on the Export CSV button link).
+- Columns: Account Name (full, not truncated), City, On/Off, one column per year,
+  Last 12m, Diff.
+- Includes a TOTAL row at the bottom of the CSV.
+- Sorted by account name ascending.
+
 **Template:** `templates/reports/account_sales_by_year.html`
-- Extends `base.html`; loads `rbac` and `reports_tags` template tag libraries.
+- Extends `base.html`; loads `rbac`, `reports_tags`, and `humanize` template tag libraries.
+  `django.contrib.humanize` is required in `INSTALLED_APPS`.
+- All numeric values (year columns, Last 12m, Diff) are formatted with `|intcomma` for
+  display. Comparisons for color always use the raw Python integer, never the formatted string.
+- Every numeric `<td>` carries a `data-value="{{ raw_integer }}"` attribute used by the
+  client-side sort so negative numbers, zero, and comma-formatted values all sort correctly.
 - Filter panel: collapsed by default on all screen sizes (Bootstrap collapse); toggle button
   always visible; shows "Active" badge when any filter is applied.
 - Multi-select filters include an "All" option; vanilla JS handles mutual-exclusion logic
   (selecting "All" deselects specific values, and vice versa). On form submit, "All" is
   deselected so its blank value is not submitted.
+- **Export CSV button** in the filter actions row links to the CSV export endpoint with
+  current GET params forwarded; styled as `btn-outline-secondary` with `bi-download` icon.
 - "Data through" header line format: `Data through: <Month YYYY> (Mon YYYY – Mon YYYY)`
 - Column header for rolling window: **Last 12m** (not the full date range).
 - Year columns displayed ascending (oldest left, newest right).
-- Negative values in any year column or Last 12m column displayed in red (`text-danger`).
+- Negative values in any numeric column displayed in red (`text-danger`) based on the raw
+  numeric value, not the formatted display string.
+- **On/Off column hidden on mobile:** Both the `<th>` and every `<td>` in the On/Off column
+  carry `d-none d-md-table-cell` — hidden on screens smaller than md (768px), visible on md+.
+- **City column width:** `style="width:100px;"` on `<th>` and `max-width:100px; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap;` on `<td>` to prevent excess whitespace.
 - Report table: sticky header, sticky first two columns on mobile, alternating row colors,
   client-side sortable on data rows only (vanilla JS, click column header to sort asc/desc).
-- Diff column: green (`diff-positive`) if positive, red (`diff-negative`) if negative, muted if zero.
+- **Sort uses `data-value` attributes** for all numeric columns so that negative numbers
+  (-50) sort below zero which sorts below positive numbers (100). Text columns fall back
+  to the `.visually-hidden` span (On/Off) or cell text content (Account, City).
+- Diff column shows raw integer only (no percentage). Green (`diff-positive`) if positive,
+  red (`diff-negative`) if negative, muted if zero.
 - On/Off column: `bi-cup-hot` icon for ON, `bi-shop` for OFF; tooltip with full text.
 - Row count shown below table.
 
@@ -2177,5 +2204,5 @@ specific selections. The filter panel is collapsed by default on all screen size
 
 ---
 
-*Last updated: March 10, 2026 (Account Sales by Year report tweaks: account grouping, totals row, column order, filter improvements)*
+*Last updated: March 10, 2026 (Account Sales by Year: diff cleanup, CSV export, sort fix, mobile improvements)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

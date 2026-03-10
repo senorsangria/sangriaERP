@@ -1,12 +1,14 @@
 """
 Reports views: Account Sales by Year report.
 """
+import csv
 from calendar import monthrange
 from datetime import date
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Max, Sum
+from django.http import HttpResponse
 from django.shortcuts import redirect, render
 
 from apps.accounts.models import Account
@@ -304,7 +306,6 @@ def account_sales_by_year(request):
         last_12_units = last12_data.get(account_id, 0)
         most_recent_year_units = year_units.get(most_recent_year, 0) if most_recent_year else 0
         diff = last_12_units - most_recent_year_units
-        diff_pct = round(diff / most_recent_year_units * 100, 1) if most_recent_year_units > 0 else None
 
         on_off = account.on_off_premise if account.on_off_premise in ('ON', 'OFF') else 'Unknown'
 
@@ -315,7 +316,6 @@ def account_sales_by_year(request):
             'year_units': year_units,
             'last_12_units': last_12_units,
             'diff': diff,
-            'diff_pct': diff_pct,
         })
 
     rows.sort(key=lambda r: r['account_name'])
@@ -325,10 +325,6 @@ def account_sales_by_year(request):
     total_last_12 = sum(r['last_12_units'] for r in rows)
     most_recent_year_total = total_by_year.get(most_recent_year, 0) if most_recent_year else 0
     total_diff = total_last_12 - most_recent_year_total
-    total_diff_pct = (
-        round(total_diff / most_recent_year_total * 100, 1)
-        if most_recent_year_total > 0 else None
-    )
 
     return render(request, 'reports/account_sales_by_year.html', {
         'rows': rows,
@@ -342,5 +338,205 @@ def account_sales_by_year(request):
         'total_by_year': total_by_year,
         'total_last_12': total_last_12,
         'total_diff': total_diff,
-        'total_diff_pct': total_diff_pct,
     })
+
+
+# ---------------------------------------------------------------------------
+# CSV export
+# ---------------------------------------------------------------------------
+
+@login_required
+def account_sales_by_year_csv(request):
+    """CSV export of Account Sales by Year report with current filters applied."""
+    user = request.user
+
+    if not user.has_permission('can_view_report_account_sales'):
+        messages.error(request, 'You do not have permission to view this report.')
+        return redirect('dashboard')
+
+    distributors = get_distributors_for_user(user)
+    multiple_distributors = distributors.count() > 1
+
+    if not distributors.exists():
+        return redirect('dashboard')
+
+    # ---- Resolve selected distributor -----------------------------------
+    selected_distributor = None
+
+    if multiple_distributors:
+        dist_pk = request.GET.get('distributor') or request.session.get('report_distributor_pk')
+        if dist_pk:
+            try:
+                selected_distributor = distributors.get(pk=int(dist_pk))
+            except Exception:
+                pass
+        if not selected_distributor:
+            return redirect('report_account_sales_distributor_select')
+    else:
+        selected_distributor = distributors.first()
+
+    # ---- Account scoping ------------------------------------------------
+    if user.has_role('supplier_admin'):
+        accounts_qs = Account.active_accounts.filter(
+            company=user.company,
+            distributor=selected_distributor,
+        )
+    else:
+        accounts_qs = get_accounts_for_user(user).filter(
+            distributor=selected_distributor,
+        )
+
+    # ---- Parse GET filters ----------------------------------------------
+    item_name_filter = request.GET.getlist('item_name')
+    on_off_filter = request.GET.get('on_off', '')
+    city_filter = request.GET.getlist('city')
+    county_filter = request.GET.getlist('county')
+    class_of_trade_filter = request.GET.getlist('class_of_trade')
+    distributor_route_filter = request.GET.getlist('distributor_route')
+
+    # ---- Apply account-level filters ------------------------------------
+    if on_off_filter in ('ON', 'OFF'):
+        accounts_qs = accounts_qs.filter(on_off_premise=on_off_filter)
+    if city_filter:
+        accounts_qs = accounts_qs.filter(city__in=city_filter)
+    if county_filter:
+        accounts_qs = accounts_qs.filter(county__in=county_filter)
+    if class_of_trade_filter:
+        accounts_qs = accounts_qs.filter(account_type__in=class_of_trade_filter)
+    if distributor_route_filter:
+        accounts_qs = accounts_qs.filter(distributor_route__in=distributor_route_filter)
+
+    # ---- Determine last full month --------------------------------------
+    today = date.today()
+    current_month_start = today.replace(day=1)
+
+    max_past_sale = (
+        SalesRecord.objects
+        .filter(
+            account__in=accounts_qs,
+            quantity__gt=0,
+            sale_date__lt=current_month_start,
+        )
+        .aggregate(Max('sale_date'))['sale_date__max']
+    )
+
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = 'attachment; filename="account_sales_by_year.csv"'
+
+    if max_past_sale is None:
+        return response
+
+    lfm_year = max_past_sale.year
+    lfm_month = max_past_sale.month
+    lfm_end = date(lfm_year, lfm_month, _last_day(lfm_year, lfm_month))
+
+    # ---- Last 12 months window ------------------------------------------
+    w_year, w_month = _month_add(lfm_year, lfm_month, -11)
+    window_start = date(w_year, w_month, 1)
+    window_end = lfm_end
+
+    # ---- Complete calendar years (up to 4) ------------------------------
+    current_year = today.year
+    years = sorted(
+        SalesRecord.objects
+        .filter(
+            account__in=accounts_qs,
+            quantity__gt=0,
+            sale_date__year__lt=current_year,
+        )
+        .values_list('sale_date__year', flat=True)
+        .distinct()
+        .order_by('-sale_date__year')
+        [:4]
+    )
+    most_recent_year = years[-1] if years else None
+
+    # ---- Base queryset --------------------------------------------------
+    base_qs = SalesRecord.objects.filter(
+        account__in=accounts_qs,
+        quantity__gt=0,
+    )
+
+    if item_name_filter:
+        base_qs = base_qs.filter(item__name__in=item_name_filter)
+
+    # ---- Per-year aggregation -------------------------------------------
+    year_data = {}
+    if years:
+        for row in (
+            base_qs
+            .filter(sale_date__year__in=years)
+            .values('account_id', 'sale_date__year')
+            .annotate(units=Sum('quantity'))
+        ):
+            year_data[(row['account_id'], row['sale_date__year'])] = row['units']
+
+    # ---- Last-12 aggregation --------------------------------------------
+    last12_data = {}
+    for row in (
+        base_qs
+        .filter(sale_date__gte=window_start, sale_date__lte=window_end)
+        .values('account_id')
+        .annotate(units=Sum('quantity'))
+    ):
+        last12_data[row['account_id']] = row['units']
+
+    all_account_ids = set()
+    for k in year_data:
+        all_account_ids.add(k[0])
+    all_account_ids.update(last12_data.keys())
+
+    if not all_account_ids:
+        return response
+
+    accounts_dict = {
+        a.pk: a for a in Account.objects.filter(pk__in=all_account_ids)
+    }
+
+    # ---- Build rows -----------------------------------------------------
+    csv_rows = []
+    for account_id in all_account_ids:
+        account = accounts_dict.get(account_id)
+        if not account:
+            continue
+
+        year_units = {y: year_data.get((account_id, y), 0) for y in years}
+        last_12_units = last12_data.get(account_id, 0)
+        most_recent_year_units = year_units.get(most_recent_year, 0) if most_recent_year else 0
+        diff = last_12_units - most_recent_year_units
+        on_off = account.on_off_premise if account.on_off_premise in ('ON', 'OFF') else 'Unknown'
+
+        csv_rows.append({
+            'account_name': (account.name or '').strip(),
+            'city': (account.city or '').strip(),
+            'on_off': on_off,
+            'year_units': year_units,
+            'last_12_units': last_12_units,
+            'diff': diff,
+        })
+
+    csv_rows.sort(key=lambda r: r['account_name'].lower())
+
+    # ---- Totals ---------------------------------------------------------
+    total_by_year = {y: sum(r['year_units'].get(y, 0) for r in csv_rows) for y in years}
+    total_last_12 = sum(r['last_12_units'] for r in csv_rows)
+    most_recent_year_total = total_by_year.get(most_recent_year, 0) if most_recent_year else 0
+    total_diff = total_last_12 - most_recent_year_total
+
+    # ---- Write CSV ------------------------------------------------------
+    writer = csv.writer(response)
+    header = ['Account Name', 'City', 'On/Off'] + [str(y) for y in years] + ['Last 12m', 'Diff']
+    writer.writerow(header)
+
+    for row in csv_rows:
+        data_row = [row['account_name'], row['city'], row['on_off']]
+        data_row += [row['year_units'].get(y, 0) for y in years]
+        data_row += [row['last_12_units'], row['diff']]
+        writer.writerow(data_row)
+
+    totals_row = ['TOTAL', '', '']
+    totals_row += [total_by_year.get(y, 0) for y in years]
+    totals_row += [total_last_12, total_diff]
+    writer.writerow(totals_row)
+
+    return response

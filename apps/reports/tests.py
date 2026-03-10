@@ -260,11 +260,11 @@ class LastFullMonthTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Diff and diff_pct calculations
+# Diff calculations
 # ---------------------------------------------------------------------------
 
 class DiffCalcTest(TestCase):
-    """Diff and diff_pct are calculated correctly."""
+    """Diff is calculated correctly."""
 
     def setUp(self):
         self.company = make_company()
@@ -283,49 +283,18 @@ class DiffCalcTest(TestCase):
         self.assertEqual(len(rows), 1, f'Expected 1 row, got {len(rows)}')
         return rows[0], response.context['years']
 
-    def test_diff_positive(self):
-        """diff = last_12_units - most_recent_year_units; positive when L12 > year."""
-        # 2024 full year: 100 units
+    def test_diff_is_integer(self):
+        """diff = last_12_units - most_recent_year_units; always an int."""
         make_sale(self.company, self.batch, self.account, self.item, date(2024, 1, 15), 100)
-        # Last 12 months (ending in the most recent past month before today):
-        # Add a sale in 2024 that also falls within a 12-month window
         make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 15), 50)
         row, years = self._get_row()
-        # diff = last_12_units - year_2024_units; we just verify it's an int
         self.assertIsInstance(row['diff'], int)
 
-    def test_diff_pct_none_when_most_recent_year_zero(self):
-        """diff_pct is None when most_recent_year_units == 0."""
-        # Sale only in the last-12-months window (no sale in the most recent full year)
-        # Today is 2026-03-10, so current year is 2026, most recent full year is 2025.
-        # Put sales only in 2024 (will be a completed year) and also in last-12 window.
-        # But make sure 2025 has zero sales so diff_pct becomes None.
-        make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 20)
-        # Also add a sale in the trailing-12 window (which won't overlap 2025)
-        # The window ends at the last full month; for 2026-03 context that's 2026-02.
-        # Add sale in 2026-02 — this is in last-12 but not in any complete year.
-        make_sale(self.company, self.batch, self.account, self.item, date(2026, 2, 15), 30)
-        row, years = self._get_row()
-        # Most recent year should be 2024 with 20 units, last_12 includes 2026-02 sale too
-        if years and years[-1] == 2025:
-            # 2025 would have 0 units → diff_pct is None
-            self.assertIsNone(row['diff_pct'])
-        else:
-            # If 2024 is most recent year (20 units > 0), diff_pct is computed
-            self.assertIsNotNone(row['diff_pct'])
-
-    def test_diff_pct_calculated_correctly(self):
-        """diff_pct = round(diff / most_recent_year_units * 100, 1)."""
-        # 2024: 100 units; last-12 includes 2026-02: 150 units; diff = 50, pct = 50.0
+    def test_diff_pct_not_in_row(self):
+        """diff_pct has been removed from the row dict."""
         make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 100)
-        make_sale(self.company, self.batch, self.account, self.item, date(2026, 2, 1), 150)
         row, years = self._get_row()
-        if years and years[-1] == 2024:
-            # most_recent_year = 2024 with 100 units
-            # last_12 window ends Feb 2026, starts Mar 2025 → includes 2026-02 but not 2024-06
-            # So last_12_units might be 150, diff = 150 - 100 = 50, pct = 50.0
-            # OR last_12 might not include 2024-06 at all depending on window
-            self.assertIsNotNone(row['diff_pct'])
+        self.assertNotIn('diff_pct', row)
 
     def test_negative_quantities_excluded(self):
         """Negative (return) sales records are excluded from all calculations."""
@@ -338,6 +307,71 @@ class DiffCalcTest(TestCase):
         year_units = rows[0]['year_units']
         if 2024 in year_units:
             self.assertEqual(year_units[2024], 100)
+
+
+# ---------------------------------------------------------------------------
+# CSV export tests
+# ---------------------------------------------------------------------------
+
+class CsvExportTest(TestCase):
+    """CSV export view returns correct response and respects filters."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.distributor = make_distributor(self.company)
+        self.item_a = make_item(self.company, name='Item Alpha', item_code='IALPHA')
+        self.item_b = make_item(self.company, name='Item Beta', item_code='IBETA')
+        self.batch = make_batch(self.company, self.distributor)
+
+        self.acc_on = make_account(
+            self.company, self.distributor, name='On Premise Bar',
+            on_off='ON', city='Newark', county='Essex',
+        )
+        self.acc_off = make_account(
+            self.company, self.distributor, name='Off Premise Store',
+            on_off='OFF', city='Trenton', county='Mercer',
+        )
+
+        make_sale(self.company, self.batch, self.acc_on, self.item_a, date(2024, 6, 1), 10)
+        make_sale(self.company, self.batch, self.acc_off, self.item_b, date(2024, 7, 1), 20)
+
+        self.user = make_user(self.company, 'supplier_admin', username='sa1')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_csv_export_returns_200_and_content_disposition(self):
+        """CSV export returns 200 with correct Content-Disposition header."""
+        response = self.client.get(reverse('report_account_sales_csv'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/csv')
+        self.assertIn('attachment', response['Content-Disposition'])
+        self.assertIn('account_sales_by_year.csv', response['Content-Disposition'])
+
+    def test_csv_export_denied_without_permission(self):
+        """Ambassador role is redirected from CSV export."""
+        user = make_user(self.company, 'ambassador', username='amb1')
+        self.client.force_login(user)
+        response = self.client.get(reverse('report_account_sales_csv'))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('dashboard'))
+
+    def test_csv_export_respects_on_off_filter(self):
+        """CSV export with on_off=ON only includes ON-premise accounts."""
+        response = self.client.get(
+            reverse('report_account_sales_csv'),
+            {'on_off': 'ON'},
+        )
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode('utf-8')
+        self.assertIn('On Premise Bar', content)
+        self.assertNotIn('Off Premise Store', content)
+
+    def test_csv_export_contains_totals_row(self):
+        """CSV export includes a TOTAL row at the bottom."""
+        response = self.client.get(reverse('report_account_sales_csv'))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode('utf-8')
+        self.assertIn('TOTAL', content)
 
 
 # ---------------------------------------------------------------------------
