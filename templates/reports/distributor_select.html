@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}Select Distributor{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <h2 class="h5 fw-bold mb-1">Account Sales by Year</h2>
+        <p class="text-muted small mb-4">Select a distributor to view the report.</p>
+
+        <form method="post">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label for="dist-select" class="form-label fw-semibold">Distributor</label>
+            <select id="dist-select" name="distributor_pk" class="form-select" required>
+              <option value="">— Choose a distributor —</option>
+              {% for dist in distributors %}
+              <option value="{{ dist.pk }}" {% if current_pk == dist.pk %}selected{% endif %}>
+                {{ dist.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary w-100">
+            <i class="bi bi-bar-chart-line me-1"></i>View Report
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

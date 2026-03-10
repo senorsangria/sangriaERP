@@ -184,6 +184,10 @@
           <li class="nav-item"><a class="nav-link" href="{% url 'event_list' %}"><i class="bi bi-calendar-check me-1"></i>My Events</a></li>
           {% endif %}
 
+          {% if user|has_perm:'can_view_report_account_sales' %}
+          <li class="nav-item"><a class="nav-link" href="{% url 'report_account_sales_by_year' %}"><i class="bi bi-bar-chart-line me-1"></i>Account Sales by Year</a></li>
+          {% endif %}
+
           {% if user.is_distributor_contact %}
           <li class="nav-item"><a class="nav-link text-white-50" href="#"><i class="bi bi-graph-up me-1"></i>Reports <small>(soon)</small></a></li>
           {% endif %}
@@ -350,6 +354,12 @@
             <i class="bi bi-clock-history me-2"></i>Import History
           </a>
         </li>
+        <li class="nav-section">Reports</li>
+        <li class="nav-item">
+          <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
+            <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
+          </a>
+        </li>
 
         {% elif user.is_sales_manager %}
         <!-- ---- Sales Manager ---- -->
@@ -367,6 +377,12 @@
         <li class="nav-item">
           <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
             <i class="bi bi-calendar-event me-2"></i>Events
+          </a>
+        </li>
+        <li class="nav-section">Reports</li>
+        <li class="nav-item">
+          <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
+            <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
           </a>
         </li>
 
@@ -388,6 +404,12 @@
             <i class="bi bi-calendar-event me-2"></i>Events
           </a>
         </li>
+        <li class="nav-section">Reports</li>
+        <li class="nav-item">
+          <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
+            <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
+          </a>
+        </li>
 
         {% elif user.is_ambassador_manager %}
         <!-- ---- Ambassador Manager ---- -->
@@ -405,6 +427,12 @@
         <li class="nav-item">
           <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
             <i class="bi bi-calendar-event me-2"></i>Events
+          </a>
+        </li>
+        <li class="nav-section">Reports</li>
+        <li class="nav-item">
+          <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
+            <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
           </a>
         </li>
 

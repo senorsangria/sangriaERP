@@ -2066,5 +2066,98 @@ Implementation notes:
 
 ---
 
-*Last updated: March 10, 2026 (Coverage area restructure — distributor required on all rows)*
+---
+
+## Reports
+
+### Account Sales by Year (Phase 1)
+
+**Purpose:** Shows units sold per account+item combination across up to four complete
+calendar years plus a rolling last-12-months window, so sales managers and supplier
+admins can quickly see year-over-year trends for each account in a distributor's territory.
+
+**Permission:** `can_view_report_account_sales`
+Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager.
+
+**URL:** `/reports/` → `report_account_sales_by_year`
+**Distributor selector URL:** `/reports/distributor-select/` → `report_account_sales_distributor_select`
+
+**App:** `apps.reports` (new Django app)
+
+**Access rules:**
+- Redirect to dashboard with error message if user lacks permission.
+- Distributor resolution:
+  - Call `get_distributors_for_user(user)` to determine accessible distributors.
+  - 0 distributors → show friendly "no data available" message.
+  - 1 distributor → proceed directly to report rendering.
+  - 2+ distributors → redirect to distributor selector page; store selected
+    `distributor_pk` in the session; subsequent loads read from session first.
+  - A "Change Distributor" link appears when the user has access to multiple.
+- Account scoping:
+  - Supplier Admin: all active accounts for the selected distributor (company-scoped).
+  - All other roles: `get_accounts_for_user(user)` filtered to selected distributor.
+
+**Data definitions:**
+- **Last full month:** Most recent month where at least one positive-quantity SalesRecord
+  exists for the distributor scope AND the month is fully in the past (not the current month).
+- **Last 12 months window:** From the first day of (last full month − 11 months) through
+  the last day of the last full month.  Example: if last full month is Feb 2025, window is
+  Mar 2024 – Feb 2025.
+- **Complete calendar years:** Up to the four most recent calendar years (Jan 1 – Dec 31)
+  that have positive-quantity sales data for the distributor scope AND the year is fully
+  in the past (year < current year).  Shown most-recent-first.
+- **Negative quantities excluded:** SalesRecords with `quantity ≤ 0` are excluded from all
+  calculations (these represent returns/adjustments).
+
+**Row data (one row per account+item combination):**
+
+| Field | Description |
+|---|---|
+| `account_name` | Title-cased, truncated to 20 chars with `…` |
+| `city` | Title-cased, truncated to 15 chars with `…` |
+| `on_off` | `'ON'`, `'OFF'`, or `'Unknown'` |
+| `item_name` | Full item name |
+| `year_units` | Dict mapping year (int) → units sold (int) |
+| `last_12_units` | Units sold in the last-12-months window |
+| `diff` | `last_12_units − most_recent_year_units` (can be negative) |
+| `diff_pct` | `round(diff / most_recent_year_units × 100, 1)` if most_recent_year_units > 0, else `None` |
+
+**Filters (GET parameters):**
+
+| Parameter | Type | Maps to |
+|---|---|---|
+| `item_name` | list of item names | `item.name` |
+| `on_off` | `'ON'` or `'OFF'` | `account.on_off_premise` |
+| `city` | list of city names | `account.city` |
+| `county` | list of county names | `account.county` |
+| `class_of_trade` | list of values | `account.account_type` |
+| `distributor_route` | list of route strings | `account.distributor_route` |
+
+Filter options are populated from accounts in scope **before** applying user-selected filters.
+
+**Template:** `templates/reports/account_sales_by_year.html`
+- Extends `base.html`; loads `rbac` and `reports_tags` template tag libraries.
+- Filter panel: collapsible on mobile (Bootstrap collapse), always visible on desktop.
+- Report table: sticky header, sticky first two columns on mobile, alternating row colors,
+  client-side sortable (vanilla JS, click column header to sort asc/desc).
+- Diff column: green (`text-success`) if positive, red (`text-danger`) if negative, muted if zero.
+- On/Off column: `bi-cup-hot` icon for ON, `bi-shop` for OFF; tooltip with full text.
+- Row count shown below table.
+
+**Custom template tag:** `apps/reports/templatetags/reports_tags.py`
+- `get_item` filter: `{{ dict|get_item:key }}` — used for dynamic dict key access in year_units column.
+
+**Sidebar navigation:**
+- Reports section added to Supplier Admin, Sales Manager, Territory Manager,
+  and Ambassador Manager sidebars.
+- Mobile nav: "Account Sales by Year" link shown for any user with
+  `can_view_report_account_sales` permission.
+
+**Deferred (Phase .2):**
+- Account multi-select filter (selecting individual accounts from a searchable list).
+  Not implemented in Phase 1 due to UX complexity with potentially hundreds of accounts.
+
+---
+
+*Last updated: March 10, 2026 (Add Account Sales by Year report — Phase 1)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
