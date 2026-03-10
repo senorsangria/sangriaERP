@@ -1946,5 +1946,79 @@ event manager on the event.
 
 ---
 
-*Last updated: March 8, 2026 (Draft event visibility rules update)*
+## Phase 11 — Account Map & Territory Intelligence (Planned)
+
+A territory planning and sales intelligence feature that allows users
+to visualize accounts on a map, filter by attributes and sales
+performance, and save named account lists for future reference.
+
+### Technology Decisions
+- Map display: Google Maps JavaScript API
+- Geocoding: Google Geocoding API (called during account import)
+- API key environment variable: GOOGLE_MAPS_API_KEY
+- Both APIs must be enabled in Google Cloud Console
+
+### Access
+All roles except Ambassador can access this feature. Coverage area
+scoping applies per role — same rules as the account list view.
+
+### Phase A — Foundation
+New fields on Account model:
+- latitude: DecimalField(9,6), nullable
+- longitude: DecimalField(9,6), nullable
+- geocoded_at: DateTimeField, nullable
+
+Geocoding behavior:
+- Addresses are geocoded automatically during account import using
+  the Google Geocoding API
+- Coordinates stored on the account record at import time
+- geocoded_at records when the account was last geocoded
+- Accounts without coordinates do not appear on the map
+
+New models:
+- AccountList: name, created_by (FK User), company (FK Company),
+  is_shared (BooleanField), created_at
+- AccountListMembership: account (FK), account_list (FK)
+  — M2M through table, accounts can belong to multiple lists
+
+### Phase B — Map View
+- Account map page displaying accounts as markers on Google Maps
+- Attribute filters: distributor, county, on/off premise, account type
+- Coverage area scoping per role
+- Save current filtered results to a named list
+- View, manage, and delete saved lists
+- Lists can be private (creator only) or shared (visible to all
+  company users)
+
+### Phase C — Sales Intelligence Filters
+Period selector: 30 days, 60 days, 90 days, last 12 months
+
+Comparison logic: selected period vs equivalent prior period
+(e.g. last 30 days vs the 30 days before that)
+
+Sales intelligence filters:
+- New Account: has sales in selected period, zero in prior period
+- Pop: volume in selected period > prior period
+- Drop: volume in selected period < prior period
+- No Change: volume within ±5% between periods
+- Non-Buy: had sales before selected period, zero in selected period
+
+Implementation notes:
+- Negative quantity SalesRecords (returns/adjustments) are excluded
+  from all volume calculations
+- SalesRecord model already has indexes on (account, sale_date) and
+  (item, sale_date) — these support period comparison queries
+  efficiently
+- One SalesRecord per CSV row with actual sale_date — no aggregation
+  — makes date range filtering precise and straightforward
+
+### Open Design Questions (resolve before building)
+- When viewing a saved list, should it show accounts as a snapshot
+  (exactly as saved) or re-evaluate against current data?
+- Confirm Google Maps API key is set up and billing enabled before
+  starting Phase A
+
+---
+
+*Last updated: March 10, 2026 (Phase 11 — Account Map and Territory Intelligence)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
