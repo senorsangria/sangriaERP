@@ -317,13 +317,19 @@ Searchable list for one-off or exception assignments
 ### User Roles UI
 - The role field on user create and edit forms is a checkbox list
   supporting multiple role assignments
-- All roles from the Role model are available with no restrictions
-  on assignment — any user with can_manage_users permission can
-  assign any role to any user
 - At least one role must be selected (enforced client and server side)
 - CREATABLE_ROLES has been removed — available roles are pulled
   directly from the Role model in the database, making new roles
   automatically available in the UI without code changes
+- **SaaS Admin role visibility:** The SaaS Admin role checkbox is
+  only shown and editable in user create/edit forms when the
+  requesting user has the saas_admin role. For non-SaaS-Admin
+  users: if the target user does not have the SaaS Admin role, the
+  checkbox is hidden entirely; if the target user already has the
+  SaaS Admin role, the checkbox is shown as disabled/read-only with
+  a lock icon so it is visible but cannot be changed. On the user
+  create form the SaaS Admin role simply does not appear for
+  non-SaaS-Admin users (a new user cannot already have it).
 
 ### Access Control
 - All pages require authentication
@@ -1212,6 +1218,11 @@ Admin:
 - Ambassador Manager and Ambassador roles redirect to /events/ after login
 - Direct navigation to /dashboard/ also redirects these roles to /events/
 - All other roles use the standard dashboard redirect
+- Both roles have the `can_redirect_to_events_on_login` permission; the
+  redirect logic checks `has_permission('can_redirect_to_events_on_login')`
+  (no view code changes needed to add new roles — just grant the permission)
+- Ambassador Manager was missing this permission in the initial data seed;
+  it was added via migration 0006_ambassador_manager_redirect_permission
 
 ### Navigation
 - Events link added to sidebar and mobile nav for: Supplier Admin, Sales Manager,

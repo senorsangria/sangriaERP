@@ -194,14 +194,14 @@ def user_create(request):
         return render(request, '403.html', status=403)
 
     if request.method == 'POST':
-        form = UserCreateForm(request.POST, creator=request.user)
+        form = UserCreateForm(request.POST, creator=request.user, requesting_user=request.user)
         if form.is_valid():
             user = form.save()
             name = user.get_full_name() or user.username
             messages.success(request, f'{name} has been created successfully.')
             return redirect('user_list')
     else:
-        form = UserCreateForm(creator=request.user)
+        form = UserCreateForm(creator=request.user, requesting_user=request.user)
 
     return render(request, 'core/user_create.html', {'form': form})
 
@@ -217,14 +217,14 @@ def user_edit(request, pk):
         return render(request, '403.html', status=403)
 
     if request.method == 'POST':
-        form = UserEditForm(request.POST, instance=target, editor=request.user)
+        form = UserEditForm(request.POST, instance=target, editor=request.user, requesting_user=request.user)
         if form.is_valid():
             form.save()
             name = target.get_full_name() or target.username
             messages.success(request, f'{name} has been updated.')
             return redirect('user_edit', pk=pk)
     else:
-        form = UserEditForm(instance=target, editor=request.user)
+        form = UserEditForm(instance=target, editor=request.user, requesting_user=request.user)
 
     # Coverage Areas tab — visible to Supplier Admins only
     show_coverage_tab = request.user.is_supplier_admin
@@ -241,6 +241,9 @@ def user_edit(request, pk):
             ).order_by('name')
         )
 
+    # Show read-only SaaS Admin indicator when target has it but requester doesn't
+    target_has_saas_admin = target.has_role('saas_admin')
+
     return render(request, 'core/user_edit.html', {
         'form': form,
         'target': target,
@@ -248,6 +251,8 @@ def user_edit(request, pk):
         'enhanced_coverage_areas': enhanced_coverage_areas,
         'distributors': distributors,
         'us_states': US_STATES,
+        'target_has_saas_admin': target_has_saas_admin,
+        'requester_is_saas_admin': request.user.is_saas_admin,
     })
 
 

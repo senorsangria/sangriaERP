@@ -59,9 +59,18 @@ class UserCreateForm(forms.ModelForm):
             'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
 
-    def __init__(self, *args, creator=None, **kwargs):
+    def __init__(self, *args, creator=None, requesting_user=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.creator = creator
+
+        # Resolve requesting_user: prefer explicit param, fall back to creator
+        effective_requester = requesting_user if requesting_user is not None else creator
+
+        # Only SaaS Admins can see/assign the SaaS Admin role
+        if effective_requester and not effective_requester.is_saas_admin:
+            self.fields['roles'].queryset = Role.objects.exclude(
+                codename='saas_admin'
+            ).order_by('name')
 
         if creator and creator.is_saas_admin:
             from apps.core.models import Company
@@ -132,8 +141,19 @@ class UserEditForm(forms.ModelForm):
             'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
 
-    def __init__(self, *args, editor=None, **kwargs):
+    def __init__(self, *args, editor=None, requesting_user=None, **kwargs):
         super().__init__(*args, **kwargs)
+
+        # Resolve requesting_user: prefer explicit param, fall back to editor
+        effective_requester = requesting_user if requesting_user is not None else editor
+
+        # Only SaaS Admins can see/assign the SaaS Admin role;
+        # non-SaaS-Admins get a queryset without it (the template handles
+        # displaying a read-only indicator if the target already has that role).
+        if effective_requester and not effective_requester.is_saas_admin:
+            self.fields['roles'].queryset = Role.objects.exclude(
+                codename='saas_admin'
+            ).order_by('name')
 
         if self.instance and self.instance.pk:
             self.fields['roles'].initial = self.instance.roles.all()

@@ -154,6 +154,14 @@
                   <label class="form-check-label" for="{{ checkbox.id_for_label }}">{{ checkbox.choice_label }}</label>
                 </div>
                 {% endfor %}
+                {% if not requester_is_saas_admin and target_has_saas_admin %}
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" checked disabled id="saas-admin-readonly">
+                  <label class="form-check-label text-muted" for="saas-admin-readonly">
+                    SaaS Admin <span class="small"><i class="bi bi-lock me-1"></i>(read-only)</span>
+                  </label>
+                </div>
+                {% endif %}
               </div>
               {% if form.roles.errors %}
               <div class="text-danger small mt-1">{{ form.roles.errors.0 }}</div>
