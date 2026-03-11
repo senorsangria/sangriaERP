@@ -296,17 +296,17 @@ class DiffCalcTest(TestCase):
         row, years = self._get_row()
         self.assertNotIn('diff_pct', row)
 
-    def test_negative_quantities_excluded(self):
-        """Negative (return) sales records are excluded from all calculations."""
+    def test_negative_quantities_included(self):
+        """Negative (return) sales records reduce totals — all quantities included."""
         make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 100)
         make_sale(self.company, self.batch, self.account, self.item, date(2024, 7, 1), -30)
         response = self.client.get(reverse('report_account_sales_by_year'))
         rows = response.context['rows']
         self.assertEqual(len(rows), 1)
-        # Year 2024 units should be 100, not 70
+        # Year 2024 units should be 70 (100 sale minus 30 return)
         year_units = rows[0]['year_units']
         if 2024 in year_units:
-            self.assertEqual(year_units[2024], 100)
+            self.assertEqual(year_units[2024], 70)
 
 
 # ---------------------------------------------------------------------------

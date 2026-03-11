@@ -197,7 +197,6 @@ def account_sales_by_year(request):
         SalesRecord.objects
         .filter(
             account__in=accounts_qs,
-            quantity__gt=0,
             sale_date__lt=current_month_start,
         )
         .aggregate(Max('sale_date'))['sale_date__max']
@@ -232,7 +231,6 @@ def account_sales_by_year(request):
         SalesRecord.objects
         .filter(
             account__in=accounts_qs,
-            quantity__gt=0,
             sale_date__year__lt=current_year,
         )
         .values_list('sale_date__year', flat=True)
@@ -242,10 +240,9 @@ def account_sales_by_year(request):
     )  # ascending: oldest year left, newest year right
     most_recent_year = years[-1] if years else None
 
-    # ---- Base queryset: positive quantities only ------------------------
+    # ---- Base queryset --------------------------------------------------
     base_qs = SalesRecord.objects.filter(
         account__in=accounts_qs,
-        quantity__gt=0,
     )
 
     # ---- Apply item-name filter to base queryset -----------------------
@@ -414,7 +411,6 @@ def account_sales_by_year_csv(request):
         SalesRecord.objects
         .filter(
             account__in=accounts_qs,
-            quantity__gt=0,
             sale_date__lt=current_month_start,
         )
         .aggregate(Max('sale_date'))['sale_date__max']
@@ -441,7 +437,6 @@ def account_sales_by_year_csv(request):
         SalesRecord.objects
         .filter(
             account__in=accounts_qs,
-            quantity__gt=0,
             sale_date__year__lt=current_year,
         )
         .values_list('sale_date__year', flat=True)
@@ -454,7 +449,6 @@ def account_sales_by_year_csv(request):
     # ---- Base queryset --------------------------------------------------
     base_qs = SalesRecord.objects.filter(
         account__in=accounts_qs,
-        quantity__gt=0,
     )
 
     if item_name_filter:

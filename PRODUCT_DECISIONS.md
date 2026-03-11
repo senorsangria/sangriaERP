@@ -2098,16 +2098,18 @@ Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager
   - All other roles: `get_accounts_for_user(user)` filtered to selected distributor.
 
 **Data definitions:**
-- **Last full month:** Most recent month where at least one positive-quantity SalesRecord
-  exists for the distributor scope AND the month is fully in the past (not the current month).
+- **Last full month:** Most recent month where at least one SalesRecord exists for the
+  distributor scope AND the month is fully in the past (not the current month).
 - **Last 12 months window:** From the first day of (last full month − 11 months) through
   the last day of the last full month.  Example: if last full month is Feb 2025, window is
   Mar 2024 – Feb 2025.
 - **Complete calendar years:** Up to the four most recent calendar years (Jan 1 – Dec 31)
-  that have positive-quantity sales data for the distributor scope AND the year is fully
-  in the past (year < current year).  Displayed in ascending order (oldest left, newest right).
-- **Negative quantities excluded:** SalesRecords with `quantity ≤ 0` are excluded from all
-  calculations (these represent returns/adjustments).
+  that have sales data for the distributor scope AND the year is fully in the past
+  (year < current year).  Displayed in ascending order (oldest left, newest right).
+- **Negative quantities included:** All SalesRecords are included in calculations regardless
+  of quantity sign. Negative quantities represent returns/adjustments and correctly reduce
+  totals. If a record exists for a month — positive or negative — that month has data, and
+  returns reduce totals correctly.
 - **Most recent year:** The rightmost (largest) year in the years list; used as the base
   for diff calculations.
 
