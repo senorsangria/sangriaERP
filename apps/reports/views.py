@@ -8,7 +8,7 @@ from datetime import date
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Max, Sum
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import redirect, render
 
 from apps.accounts.models import Account
@@ -307,6 +307,7 @@ def account_sales_by_year(request):
         on_off = account.on_off_premise if account.on_off_premise in ('ON', 'OFF') else 'Unknown'
 
         rows.append({
+            'account_id': account_id,
             'account_name': _truncate(account.name, 20),
             'city': _truncate(account.city, 15),
             'on_off': on_off,
@@ -534,3 +535,200 @@ def account_sales_by_year_csv(request):
     writer.writerow(totals_row)
 
     return response
+
+
+# ---------------------------------------------------------------------------
+# Account Detail Sales view
+# ---------------------------------------------------------------------------
+
+@login_required
+def account_detail_sales(request, account_id):
+    """Monthly sales breakdown per item for a single account, with trend projection."""
+    user = request.user
+
+    if not user.has_permission('can_view_report_account_sales'):
+        messages.error(request, 'You do not have permission to view this report.')
+        return redirect('dashboard')
+
+    try:
+        account = Account.objects.get(pk=account_id, company=user.company)
+    except Account.DoesNotExist:
+        raise Http404
+
+    if not user.has_role('supplier_admin'):
+        if not get_accounts_for_user(user).filter(pk=account_id).exists():
+            return HttpResponseForbidden()
+
+    # ---- Date setup -------------------------------------------------------
+    today = date.today()
+    current_year = today.year
+    current_month_start = today.replace(day=1)
+
+    max_past_sale = (
+        SalesRecord.objects
+        .filter(account=account, sale_date__lt=current_month_start)
+        .aggregate(Max('sale_date'))['sale_date__max']
+    )
+
+    if max_past_sale is None:
+        return render(request, 'reports/account_detail_sales.html', {
+            'account': account,
+            'no_data': True,
+        })
+
+    lfm_year = max_past_sale.year
+    lfm_month = max_past_sale.month
+    lfm_end = date(lfm_year, lfm_month, _last_day(lfm_year, lfm_month))
+    last_full_month_display = date(lfm_year, lfm_month, 1).strftime('%B %Y')
+
+    last_full_year = current_year - 1
+
+    if lfm_year == current_year:
+        actual_months = list(range(1, lfm_month + 1))
+        projected_months = list(range(lfm_month + 1, 13))
+    else:
+        actual_months = []
+        projected_months = list(range(1, 13))
+
+    # Last 12 months window (same as main report)
+    w_year, w_month = _month_add(lfm_year, lfm_month, -11)
+    window_start = date(w_year, w_month, 1)
+    window_end = lfm_end
+
+    # ---- Items with sales for this account --------------------------------
+    items = (
+        Item.objects
+        .filter(sales_records__account=account)
+        .distinct()
+        .select_related('brand')
+        .order_by('brand__name', 'sort_order', 'name')
+    )
+
+    # ---- Aggregate queries ------------------------------------------------
+    # Last full year: sum per (item, month)
+    lfy_data = {}
+    for row in (
+        SalesRecord.objects
+        .filter(account=account, sale_date__year=last_full_year)
+        .values('item_id', 'sale_date__month')
+        .annotate(units=Sum('quantity'))
+    ):
+        lfy_data[(row['item_id'], row['sale_date__month'])] = row['units']
+
+    # Current year actuals: sum per (item, month)
+    actual_data = {}
+    if actual_months:
+        for row in (
+            SalesRecord.objects
+            .filter(
+                account=account,
+                sale_date__year=current_year,
+                sale_date__month__in=actual_months,
+            )
+            .values('item_id', 'sale_date__month')
+            .annotate(units=Sum('quantity'))
+        ):
+            actual_data[(row['item_id'], row['sale_date__month'])] = row['units']
+
+    # Last 12 months: sum per item
+    last12_data = {}
+    for row in (
+        SalesRecord.objects
+        .filter(account=account, sale_date__gte=window_start, sale_date__lte=window_end)
+        .values('item_id')
+        .annotate(units=Sum('quantity'))
+    ):
+        last12_data[row['item_id']] = row['units']
+
+    # ---- Build per-item rows ---------------------------------------------
+    all_months = list(range(1, 13))
+    last_6_actual_months = actual_months[-6:] if len(actual_months) >= 6 else actual_months
+
+    rows = []
+    for item in items:
+        item_id = item.pk
+
+        last_full_year_by_month = {m: lfy_data.get((item_id, m), 0) for m in all_months}
+        current_actual_by_month = {m: actual_data.get((item_id, m), 0) for m in actual_months}
+
+        lfy_has_data = any(v != 0 for v in last_full_year_by_month.values())
+
+        # Trend multiplier: only when LFY has data and 6+ actual months exist
+        if lfy_has_data and len(actual_months) >= 6:
+            actual_6 = sum(current_actual_by_month.get(m, 0) for m in last_6_actual_months)
+            prior_6 = sum(last_full_year_by_month.get(m, 0) for m in last_6_actual_months)
+            multiplier = (actual_6 / prior_6) if prior_6 > 0 else 1.0
+        else:
+            multiplier = 1.0
+
+        current_projected_by_month = {}
+        for m in projected_months:
+            if lfy_has_data:
+                base = last_full_year_by_month[m]
+                current_projected_by_month[m] = max(0, round(base * multiplier))
+            else:
+                if len(actual_months) < 6:
+                    current_projected_by_month[m] = None
+                else:
+                    avg = sum(current_actual_by_month.get(am, 0) for am in last_6_actual_months) / 6
+                    current_projected_by_month[m] = max(0, round(avg))
+
+        last_full_year_total = sum(last_full_year_by_month.values())
+        current_actual_total = sum(current_actual_by_month.values())
+        current_projected_total = sum(
+            v for v in current_projected_by_month.values() if v is not None
+        )
+        current_combined_total = current_actual_total + current_projected_total
+        last_12_units = last12_data.get(item_id, 0)
+
+        rows.append({
+            'item_name': item.name,
+            'brand_name': item.brand.name,
+            'last_full_year_by_month': last_full_year_by_month,
+            'current_actual_by_month': current_actual_by_month,
+            'current_projected_by_month': current_projected_by_month,
+            'last_full_year_total': last_full_year_total,
+            'current_actual_total': current_actual_total,
+            'current_projected_total': current_projected_total,
+            'current_combined_total': current_combined_total,
+            'last_12_units': last_12_units,
+            'diff_last_12_vs_last_year': last_12_units - last_full_year_total,
+            'diff_current_vs_last_year': current_combined_total - last_full_year_total,
+        })
+
+    # ---- Totals -----------------------------------------------------------
+    totals = {
+        'last_full_year_by_month': {
+            m: sum(r['last_full_year_by_month'][m] for r in rows) for m in all_months
+        },
+        'current_actual_by_month': {
+            m: sum(r['current_actual_by_month'].get(m, 0) for r in rows) for m in actual_months
+        },
+        'current_projected_by_month': {
+            m: sum((r['current_projected_by_month'].get(m) or 0) for r in rows)
+            for m in projected_months
+        },
+        'last_full_year_total': sum(r['last_full_year_total'] for r in rows),
+        'current_actual_total': sum(r['current_actual_total'] for r in rows),
+        'current_projected_total': sum(r['current_projected_total'] for r in rows),
+        'current_combined_total': sum(r['current_combined_total'] for r in rows),
+        'last_12_total': sum(r['last_12_units'] for r in rows),
+        'diff_last_12_vs_last_year': sum(r['diff_last_12_vs_last_year'] for r in rows),
+        'diff_current_vs_last_year': sum(r['diff_current_vs_last_year'] for r in rows),
+    }
+
+    month_names = {i: date(2000, i, 1).strftime('%b') for i in all_months}
+
+    return render(request, 'reports/account_detail_sales.html', {
+        'account': account,
+        'rows': rows,
+        'last_full_year': last_full_year,
+        'current_year': current_year,
+        'all_months': all_months,
+        'actual_months': actual_months,
+        'projected_months': projected_months,
+        'last_full_month_display': last_full_month_display,
+        'month_names': month_names,
+        'totals': totals,
+        'current_year_colspan': len(actual_months) + len(projected_months),
+    })

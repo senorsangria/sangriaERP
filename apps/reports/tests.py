@@ -465,3 +465,231 @@ class FilterTest(TestCase):
         )
         rows = response.context['rows']
         self.assertEqual(len(rows), 1)
+
+
+# ---------------------------------------------------------------------------
+# Account Detail Sales view tests
+# ---------------------------------------------------------------------------
+
+class AccountDetailTest(TestCase):
+    """Tests for account_detail_sales view."""
+
+    def setUp(self):
+        from datetime import date as real_date
+        self.company = make_company()
+        self.distributor = make_distributor(self.company)
+
+        brand = make_brand(self.company, name='Alpha Brand')
+        self.item_a = Item.objects.get_or_create(
+            brand=brand, item_code='ITMA',
+            defaults={'name': 'Item A', 'sort_order': 1},
+        )[0]
+        self.item_b = Item.objects.get_or_create(
+            brand=brand, item_code='ITMB',
+            defaults={'name': 'Item B', 'sort_order': 2},
+        )[0]
+
+        self.account = make_account(self.company, self.distributor, name='Detail Liquors')
+        self.other_account = make_account(self.company, self.distributor, name='Other Liquors')
+        self.batch = make_batch(self.company, self.distributor)
+
+        # Sales in last_full_year (2025) — months 3, 6, 9, 12
+        for month in (3, 6, 9, 12):
+            make_sale(self.company, self.batch, self.account, self.item_a,
+                      real_date(2025, month, 15), 10)
+            make_sale(self.company, self.batch, self.account, self.item_b,
+                      real_date(2025, month, 15), 5)
+
+        # Sales in current year (2026) — Jan and Feb (actual months as of March 2026)
+        make_sale(self.company, self.batch, self.account, self.item_a,
+                  real_date(2026, 1, 15), 8)
+        make_sale(self.company, self.batch, self.account, self.item_a,
+                  real_date(2026, 2, 15), 12)
+
+        self.admin_user = make_user(self.company, 'supplier_admin', username='sa_detail')
+        self.client = Client()
+        self.client.force_login(self.admin_user)
+
+    def _url(self, account=None):
+        acc = account or self.account
+        return reverse('report_account_detail', kwargs={'account_id': acc.pk})
+
+    # ------------------------------------------------------------------
+
+    def test_account_detail_requires_permission(self):
+        """User without can_view_report_account_sales is redirected to dashboard."""
+        user = make_user(self.company, 'ambassador', username='amb_detail')
+        self.client.force_login(user)
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('dashboard'))
+
+    def test_account_detail_403_for_out_of_scope_account(self):
+        """Scoped user (Sales Manager) cannot access an account outside their coverage."""
+        other_company = make_company(name='Other Co')
+        other_dist = make_distributor(other_company, name='Other Dist')
+        out_of_scope = make_account(other_company, other_dist, name='Out Of Scope')
+        make_sale(other_company, make_batch(other_company, other_dist),
+                  out_of_scope, make_item(other_company, item_code='OOS001'),
+                  date(2025, 6, 1), 10)
+
+        scoped_user = make_user(self.company, 'sales_manager', username='sm_detail')
+        make_coverage(
+            self.company, scoped_user, self.distributor,
+            coverage_type=UserCoverageArea.CoverageType.ACCOUNT,
+            account=self.account,
+        )
+        self.client.force_login(scoped_user)
+        # Account belongs to other_company — get_object_or_404 raises 404
+        response = self.client.get(self._url(account=out_of_scope))
+        self.assertEqual(response.status_code, 404)
+
+    def test_account_detail_403_for_in_company_out_of_coverage(self):
+        """Scoped Sales Manager gets 403 for an in-company account outside their coverage."""
+        scoped_user = make_user(self.company, 'sales_manager', username='sm_detail2')
+        make_coverage(
+            self.company, scoped_user, self.distributor,
+            coverage_type=UserCoverageArea.CoverageType.ACCOUNT,
+            account=self.account,
+        )
+        self.client.force_login(scoped_user)
+        # other_account is in same company but not in coverage
+        response = self.client.get(self._url(account=self.other_account))
+        self.assertEqual(response.status_code, 403)
+
+    def test_account_detail_last_full_year_totals(self):
+        """Per-item monthly totals for last_full_year are correct."""
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        self.assertEqual(len(rows), 2)
+
+        row_a = next(r for r in rows if r['item_name'] == 'Item A')
+        # item_a has 10 units in months 3, 6, 9, 12 of 2025
+        lfy = row_a['last_full_year_by_month']
+        self.assertEqual(lfy[3], 10)
+        self.assertEqual(lfy[6], 10)
+        self.assertEqual(lfy[9], 10)
+        self.assertEqual(lfy[12], 10)
+        self.assertEqual(lfy[1], 0)
+        self.assertEqual(row_a['last_full_year_total'], 40)
+
+        row_b = next(r for r in rows if r['item_name'] == 'Item B')
+        self.assertEqual(row_b['last_full_year_total'], 20)
+
+    def test_account_detail_projection_with_multiplier(self):
+        """Projected values use trend multiplier when 6+ actual months exist."""
+        from unittest.mock import patch
+        from datetime import date as real_date
+        from apps.catalog.models import Brand
+
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+        # Dedicated item with fully controlled LFY and actual data
+        proj_item = Item.objects.create(
+            brand=brand, item_code='PROJTEST', name='Proj Test Item', sort_order=99,
+        )
+        # LFY (2025): months 2–7 each = 5; month 9 = 20
+        for m in range(2, 8):
+            make_sale(self.company, self.batch, self.account, proj_item,
+                      real_date(2025, m, 15), 5)
+        make_sale(self.company, self.batch, self.account, proj_item,
+                  real_date(2025, 9, 15), 20)
+        # 2026 Jan–Jul: 10 each
+        for m in range(1, 8):
+            make_sale(self.company, self.batch, self.account, proj_item,
+                      real_date(2026, m, 15), 10)
+
+        # Mock today = Aug 1 2026 → 7 actual months [1..7]
+        with patch('apps.reports.views.date') as MockDate:
+            MockDate.today.return_value = real_date(2026, 8, 1)
+            MockDate.side_effect = lambda *a, **kw: real_date(*a, **kw)
+            response = self.client.get(self._url())
+
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        row = next(r for r in rows if r['item_name'] == 'Proj Test Item')
+
+        # last_6_actual_months = [2,3,4,5,6,7]
+        # actual_6 = 10*6 = 60; prior_6 = 5*6 = 30; multiplier = 2.0
+        # projected month 9: lfy[9]=20, projected = round(20*2.0) = 40
+        proj = row['current_projected_by_month']
+        self.assertIn(9, proj)
+        self.assertEqual(proj[9], 40)
+
+    def test_account_detail_projection_fallback_no_prior_year(self):
+        """Trailing 6-month average used when item has no prior year data."""
+        from unittest.mock import patch
+        from datetime import date as real_date
+        from apps.catalog.models import Brand
+
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+        new_item = Item.objects.create(
+            brand=brand, item_code='NEWITEM', name='New Item', sort_order=10,
+        )
+        # new_item has NO 2025 data — fallback to trailing average
+        # Create 7 actual months in 2026 (mocked to Aug 1)
+        for m in range(1, 8):
+            make_sale(self.company, self.batch, self.account, new_item,
+                      real_date(2026, m, 15), 6)
+
+        with patch('apps.reports.views.date') as MockDate:
+            MockDate.today.return_value = real_date(2026, 8, 1)
+            MockDate.side_effect = lambda *a, **kw: real_date(*a, **kw)
+            response = self.client.get(self._url())
+
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        row_new = next((r for r in rows if r['item_name'] == 'New Item'), None)
+        self.assertIsNotNone(row_new, 'New Item row not found')
+
+        # Trailing 6-month average of last_6 actual months (Feb-Jul each = 6) = 6.0
+        # projected = round(6.0) = 6
+        proj = row_new['current_projected_by_month']
+        for m in proj:
+            self.assertEqual(proj[m], 6, f'Expected 6 for projected month {m}, got {proj[m]}')
+
+    def test_account_detail_diff_calculations(self):
+        """Both diff columns calculate correctly."""
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        row_a = next(r for r in rows if r['item_name'] == 'Item A')
+
+        # diff_last_12_vs_last_year = last_12_units - last_full_year_total
+        self.assertEqual(
+            row_a['diff_last_12_vs_last_year'],
+            row_a['last_12_units'] - row_a['last_full_year_total'],
+        )
+        # diff_current_vs_last_year = current_combined_total - last_full_year_total
+        self.assertEqual(
+            row_a['diff_current_vs_last_year'],
+            row_a['current_combined_total'] - row_a['last_full_year_total'],
+        )
+
+    def test_account_detail_item_sort_order(self):
+        """Items are ordered by brand__name, sort_order, name."""
+        from apps.catalog.models import Brand
+        brand_b = make_brand(self.company, name='Zebra Brand')
+        item_z = Item.objects.get_or_create(
+            brand=brand_b, item_code='ZZZ',
+            defaults={'name': 'Zebra Item', 'sort_order': 0},
+        )[0]
+        make_sale(self.company, self.batch, self.account, item_z,
+                  date(2025, 6, 1), 3)
+
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        names = [r['item_name'] for r in rows]
+        brand_names = [r['brand_name'] for r in rows]
+
+        # Alpha Brand items should come before Zebra Brand
+        alpha_indices = [i for i, b in enumerate(brand_names) if b == 'Alpha Brand']
+        zebra_indices = [i for i, b in enumerate(brand_names) if b == 'Zebra Brand']
+        self.assertTrue(max(alpha_indices) < min(zebra_indices),
+                        f'Alpha Brand rows {alpha_indices} should precede Zebra Brand {zebra_indices}')
+
+        # Within Alpha Brand: Item A (sort_order=1) before Item B (sort_order=2)
+        idx_a = names.index('Item A')
+        idx_b = names.index('Item B')
+        self.assertLess(idx_a, idx_b)

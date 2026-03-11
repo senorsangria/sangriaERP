@@ -340,7 +340,9 @@
               <span class="visually-hidden">{{ row.on_off }}</span>
             </td>
             <!-- Account Name -->
-            <td class="col-sticky-2 fw-semibold">{{ row.account_name }}</td>
+            <td class="col-sticky-2 fw-semibold">
+              <a href="{% url 'report_account_detail' account_id=row.account_id %}" class="text-reset text-decoration-none">{{ row.account_name }}</a>
+            </td>
             <!-- City -->
             <td style="max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ row.city }}</td>
             <!-- Year columns -->

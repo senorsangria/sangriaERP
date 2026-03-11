@@ -2211,5 +2211,91 @@ specific selections. The filter panel is collapsed by default on all screen size
 
 ---
 
-*Last updated: March 11, 2026 (Account Sales by Year: JS-based negative coloring, On/Off mobile column via media query)*
+### Account Detail Sales View
+
+**Purpose:** Monthly per-item sales breakdown for a single account, covering the last full
+calendar year month-by-month, a last-12m total, and a current-year view with actuals and
+trend-based projections for remaining months.
+
+**Permission:** `can_view_report_account_sales` (same as main report).
+Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager.
+
+**URL:** `/reports/account/<account_id>/` → `report_account_detail`
+
+**Access rules:**
+- Redirect to dashboard with error if user lacks permission.
+- Account is fetched scoped to `user.company`; returns 404 if not found.
+- Non-Supplier-Admin roles: 403 if account is not within `get_accounts_for_user(user)`.
+
+**Account header fields (compact card):**
+- Account name (h5, bold)
+- Street, city, county (one line)
+- On/Off Premise | Class of Trade (one line)
+- "Data through: [last_full_month_display]" (muted small)
+- Back link to `report_account_sales_by_year`
+
+**Date definitions:**
+- **last_full_year:** `current_year - 1` (always the prior complete calendar year).
+- **actual_months:** months in `current_year` from Jan through `last_full_month` (inclusive).
+  Empty list if `last_full_month` is in a prior year.
+- **projected_months:** remaining months in `current_year` after `last_full_month`.
+  All 12 months if `last_full_month` is in a prior year.
+
+**Table structure (horizontally scrollable, sticky header + sticky first column):**
+
+Column order:
+1. Item Name (sticky left column; shows brand name in small muted text below)
+2. Last full year Jan–Dec (12 monthly columns)
+3. Last full year Total (bold)
+4. Last 12m (rolling window, same as main report)
+5. Diff: Last 12m vs Last Year (color-coded)
+6. Current year actual months (normal styling)
+7. Current year projected months (italic, text-muted, `proj-cell` class with `bg-light` tint)
+8. Current year Total (italic/muted if any projected months exist)
+9. Diff: Current Year vs Last Year (color-coded)
+
+**Column headers:**
+- Two header rows. Row 1 uses colspan for `last_full_year` (12) and `current_year`
+  (actual + projected count). Columns without sub-headers use `rowspan=2`.
+- Row 2: month abbreviations (Jan–Dec for LFY; month abbr for actual months;
+  `(proj)` noted in header for projected month columns).
+
+**Projection logic per item per projected month M:**
+
+1. **Base:** `last_full_year_by_month[M]` (same calendar month in last full year).
+   - If the item has **no data in last_full_year at all** (all 12 months = 0):
+     use trailing 6-month average of current actuals as base.
+     If fewer than 6 actual months exist → `projected = None` (shown as —).
+
+2. **Trend multiplier** (applied only when base comes from last_full_year and ≥ 6 actual months exist):
+   - `last_6_actual_months` = last 6 months in `actual_months`
+   - `actual_6` = sum of current actuals for those 6 months
+   - `prior_6` = sum of last_full_year for those same 6 calendar months
+   - `multiplier = actual_6 / prior_6` if `prior_6 > 0`, else `1.0`
+   - If fewer than 6 actual months: `multiplier = 1.0` (no trend adjustment)
+
+3. **Projected value:** `max(0, round(base × multiplier))`
+   If base is `None` (insufficient data): `projected = None`.
+
+**Item sort order:** `brand__name`, then `sort_order`, then `name` (matches `Item.Meta.ordering`
+plus explicit `brand__name` prefix).
+
+**Totals row:** Pinned separate `<tbody>` above data rows. Shows column-level sums.
+For projected month totals, `None` values are treated as 0 in the sum.
+
+**Diff columns:**
+- *Diff (L12m vs Last Year)*: `last_12_units − last_full_year_total`
+- *Diff (Current vs Last Year)*: `current_combined_total − last_full_year_total`
+
+**Negative value coloring:** Same JS `applyNegativeColors()` approach as the main report.
+All numeric `<td>` elements carry `data-value="{{ raw_integer }}"`. Both Diff columns carry
+`diff-col` class for three-way green/red/muted coloring. Django template conditionals are
+NOT used for coloring.
+
+**Main report link:** Account Name column in `account_sales_by_year.html` is now a link
+to `report_account_detail`. Each row dict in `account_sales_by_year` includes `account_id`.
+
+---
+
+*Last updated: March 11, 2026 (Add Account Detail Sales View with monthly breakdown and trend projection)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
