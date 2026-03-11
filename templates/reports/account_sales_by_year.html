@@ -18,7 +18,7 @@
     border-bottom: 2px solid #0d1a26;
   }
 
-  /* Sticky first two columns on mobile */
+  /* Sticky first two columns on tablet/mobile (< 992px) */
   @media (max-width: 991.98px) {
     .report-table td.col-sticky-1,
     .report-table th.col-sticky-1 {
@@ -34,7 +34,7 @@
       z-index: 3;
       background: inherit;
     }
-    /* Re-apply dark header bg for sticky header cells on mobile */
+    /* Re-apply dark header bg for sticky header cells */
     .report-table thead th.col-sticky-1,
     .report-table thead th.col-sticky-2 {
       background: #1a2d42;
@@ -51,6 +51,18 @@
     /* Smaller font on mobile for density */
     .report-table {
       font-size: .82rem;
+    }
+  }
+
+  /* On mobile (< 768px): hide On/Off column entirely; Account Name sticky at left 0 */
+  @media (max-width: 767.98px) {
+    .report-table td.col-sticky-1,
+    .report-table th.col-sticky-1 {
+      display: none;
+    }
+    .report-table td.col-sticky-2,
+    .report-table th.col-sticky-2 {
+      left: 0;
     }
   }
 
@@ -270,7 +282,7 @@
       <table class="table table-striped table-hover table-sm mb-0 report-table" id="reportTable">
         <thead>
           <tr>
-            <th class="col-sticky-1 sortable text-center d-none d-md-table-cell" style="width:40px;" data-col="0" title="On/Off Premise">
+            <th class="col-sticky-1 sortable text-center" style="width:40px;" data-col="0" title="On/Off Premise">
               <i class="bi bi-shop" title="On/Off"></i>
             </th>
             <th class="col-sticky-2 sortable" data-col="1">Account</th>
@@ -286,7 +298,7 @@
         <!-- Totals row (pinned, not sortable) -->
         <tbody id="totalsBody">
           <tr>
-            <td class="col-sticky-1 text-center d-none d-md-table-cell">
+            <td class="col-sticky-1 text-center">
               <i class="bi bi-sigma on-off-icon text-muted"
                  data-bs-toggle="tooltip" title="Totals"></i>
               <span class="visually-hidden">TOTAL</span>
@@ -295,18 +307,15 @@
             <td></td>
             {% for year in years %}
             {% with val=total_by_year|get_item:year %}
-            <td class="text-end {% if val < 0 %}text-danger{% endif %}" data-value="{{ val }}">
+            <td class="text-end" data-value="{{ val }}">
               {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
             </td>
             {% endwith %}
             {% endfor %}
-            <td class="text-end {% if total_last_12 < 0 %}text-danger{% endif %}" data-value="{{ total_last_12 }}">
+            <td class="text-end" data-value="{{ total_last_12 }}">
               {% if total_last_12 %}{{ total_last_12|intcomma }}{% else %}&mdash;{% endif %}
             </td>
-            <td class="text-end
-              {% if total_diff > 0 %}diff-positive
-              {% elif total_diff < 0 %}diff-negative
-              {% else %}diff-zero{% endif %}" data-value="{{ total_diff }}">
+            <td class="text-end diff-col" data-value="{{ total_diff }}">
               {% if total_diff > 0 %}+{% endif %}{{ total_diff|intcomma }}
             </td>
           </tr>
@@ -317,7 +326,7 @@
           {% for row in rows %}
           <tr>
             <!-- On/Off -->
-            <td class="col-sticky-1 text-center d-none d-md-table-cell">
+            <td class="col-sticky-1 text-center">
               {% if row.on_off == 'ON' %}
               <i class="bi bi-cup-hot on-off-icon text-success"
                  data-bs-toggle="tooltip" title="On Premise"></i>
@@ -337,20 +346,17 @@
             <!-- Year columns -->
             {% for year in years %}
             {% with units=row.year_units|get_item:year %}
-            <td class="text-end {% if units < 0 %}text-danger{% endif %}" data-value="{{ units|default:0 }}">
+            <td class="text-end" data-value="{{ units|default:0 }}">
               {% if units %}{{ units|intcomma }}{% else %}&mdash;{% endif %}
             </td>
             {% endwith %}
             {% endfor %}
             <!-- Last 12 months -->
-            <td class="text-end {% if row.last_12_units < 0 %}text-danger{% endif %}" data-value="{{ row.last_12_units }}">
+            <td class="text-end" data-value="{{ row.last_12_units }}">
               {% if row.last_12_units %}{{ row.last_12_units|intcomma }}{% else %}&mdash;{% endif %}
             </td>
             <!-- Diff -->
-            <td class="text-end
-              {% if row.diff > 0 %}diff-positive
-              {% elif row.diff < 0 %}diff-negative
-              {% else %}diff-zero{% endif %}" data-value="{{ row.diff }}">
+            <td class="text-end diff-col" data-value="{{ row.diff }}">
               {% if row.diff > 0 %}+{% endif %}{{ row.diff|intcomma }}
             </td>
           </tr>
@@ -376,6 +382,27 @@
 
 {% block extra_js %}
 <script>
+  // ---- Negative value red coloring (applied via JS from data-value) ---
+  function applyNegativeColors() {
+    document.querySelectorAll('td[data-value]').forEach(td => {
+      const val = parseInt(td.getAttribute('data-value'), 10);
+      if (isNaN(val)) return;
+      if (val < 0) {
+        td.classList.add('text-danger');
+      }
+    });
+    // Diff column also gets positive green and zero muted
+    document.querySelectorAll('.diff-col').forEach(td => {
+      const val = parseInt(td.getAttribute('data-value'), 10);
+      if (isNaN(val)) return;
+      td.classList.remove('diff-positive', 'diff-negative', 'diff-zero');
+      if (val > 0) td.classList.add('diff-positive');
+      else if (val < 0) td.classList.add('diff-negative');
+      else td.classList.add('diff-zero');
+    });
+  }
+  document.addEventListener('DOMContentLoaded', applyNegativeColors);
+
   // ---- Bootstrap tooltips ------------------------------------------
   document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
     new bootstrap.Tooltip(el, { trigger: 'hover' });

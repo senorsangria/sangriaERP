@@ -2175,10 +2175,15 @@ specific selections. The filter panel is collapsed by default on all screen size
 - "Data through" header line format: `Data through: <Month YYYY> (Mon YYYY – Mon YYYY)`
 - Column header for rolling window: **Last 12m** (not the full date range).
 - Year columns displayed ascending (oldest left, newest right).
-- Negative values in any numeric column displayed in red (`text-danger`) based on the raw
-  numeric value, not the formatted display string.
-- **On/Off column hidden on mobile:** Both the `<th>` and every `<td>` in the On/Off column
-  carry `d-none d-md-table-cell` — hidden on screens smaller than md (768px), visible on md+.
+- **Negative value coloring applied via JavaScript:** All numeric `<td>` elements carry
+  `data-value="{{ raw_integer }}"`. After DOM load, `applyNegativeColors()` reads
+  `data-value` and adds `text-danger` to any cell with a negative value. The Diff column
+  (`diff-col` class) additionally gets `diff-positive`, `diff-negative`, or `diff-zero`.
+  Django template conditionals are NOT used for coloring — JS is the sole mechanism.
+- **On/Off column fully hidden on mobile via CSS media query:** A `@media (max-width: 767.98px)`
+  rule sets `display: none` on all `.col-sticky-1` `<th>` and `<td>` elements (the On/Off
+  column), and overrides `.col-sticky-2` `left` to `0px` so Account Name becomes the first
+  sticky column with no gap. Bootstrap `d-none` classes are NOT used for this column.
 - **City column width:** `style="width:100px;"` on `<th>` and `max-width:100px; overflow:hidden;
   text-overflow:ellipsis; white-space:nowrap;` on `<td>` to prevent excess whitespace.
 - Report table: sticky header, sticky first two columns on mobile, alternating row colors,
@@ -2206,5 +2211,5 @@ specific selections. The filter panel is collapsed by default on all screen size
 
 ---
 
-*Last updated: March 10, 2026 (Account Sales by Year: diff cleanup, CSV export, sort fix, mobile improvements)*
+*Last updated: March 11, 2026 (Account Sales by Year: JS-based negative coloring, On/Off mobile column via media query)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
