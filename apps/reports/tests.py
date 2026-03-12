@@ -599,7 +599,7 @@ class AccountDetailTest(TestCase):
         self.assertEqual(pt['change_total'], 20)
 
     def test_account_detail_projection_with_multiplier(self):
-        """Projected values use trend multiplier when 6+ actual months exist."""
+        """Projected values use multiplier = last_12m / last_full_year_total."""
         from unittest.mock import patch
         from datetime import date as real_date
         from apps.catalog.models import Brand
@@ -609,18 +609,24 @@ class AccountDetailTest(TestCase):
         proj_item = Item.objects.create(
             brand=brand, item_code='PROJTEST', name='Proj Test Item', sort_order=99,
         )
-        # LFY (2025): months 2–7 each = 5; month 9 = 20
+        # LFY (2025): months 2–7 each = 5 (total 30); month 9 = 20 → last_full_year_total = 50
         for m in range(2, 8):
             make_sale(self.company, self.batch, self.account, proj_item,
                       real_date(2025, m, 15), 5)
         make_sale(self.company, self.batch, self.account, proj_item,
                   real_date(2025, 9, 15), 20)
-        # 2026 Jan–Jul: 10 each
+        # 2026 Jan–Jul: 10 each → contributes to last_12m window (Aug 2025–Jul 2026)
         for m in range(1, 8):
             make_sale(self.company, self.batch, self.account, proj_item,
                       real_date(2026, m, 15), 10)
 
-        # Mock today = Aug 1 2026 → 7 actual months [1..7]
+        # Mock today = Aug 1 2026 → lfm = Jul 2026, actual_months = [1..7], projected = [8..12]
+        # distributor-scoped max_past_sale = Jul 2026 (from proj_item sales)
+        # window: Aug 2025 – Jul 2026
+        # last_12m for proj_item: Sep 2025 (20) + Jan-Jul 2026 (10*7=70) = 90
+        #   (Sep 2025 is within the Aug 2025–Jul 2026 window)
+        # multiplier = 90 / 50 = 1.8
+        # projected month 9: lfy[9]=20, projected = round(20 * 1.8) = round(36) = 36
         with patch('apps.reports.views.date') as MockDate:
             MockDate.today.return_value = real_date(2026, 8, 1)
             MockDate.side_effect = lambda *a, **kw: real_date(*a, **kw)
@@ -630,15 +636,12 @@ class AccountDetailTest(TestCase):
         rows = response.context['rows']
         row = next(r for r in rows if r['item_name'] == 'Proj Test Item')
 
-        # last_6_actual_months = [2,3,4,5,6,7]
-        # actual_6 = 10*6 = 60; prior_6 = 5*6 = 30; multiplier = 2.0
-        # projected month 9: lfy[9]=20, projected = round(20*2.0) = 40
         proj = row['current_projected_by_month']
         self.assertIn(9, proj)
-        self.assertEqual(proj[9], 40)
+        self.assertEqual(proj[9], 36)
 
     def test_account_detail_projection_fallback_no_prior_year(self):
-        """Trailing 6-month average used when item has no prior year data."""
+        """New item (last_full_year_total == 0): all projected months are None."""
         from unittest.mock import patch
         from datetime import date as real_date
         from apps.catalog.models import Brand
@@ -647,7 +650,7 @@ class AccountDetailTest(TestCase):
         new_item = Item.objects.create(
             brand=brand, item_code='NEWITEM', name='New Item', sort_order=10,
         )
-        # new_item has NO 2025 data — fallback to trailing average
+        # new_item has NO 2025 data — last_full_year_total = 0 → no projection
         # Create 7 actual months in 2026 (mocked to Aug 1)
         for m in range(1, 8):
             make_sale(self.company, self.batch, self.account, new_item,
@@ -663,11 +666,37 @@ class AccountDetailTest(TestCase):
         row_new = next((r for r in rows if r['item_name'] == 'New Item'), None)
         self.assertIsNotNone(row_new, 'New Item row not found')
 
-        # Trailing 6-month average of last_6 actual months (Feb-Jul each = 6) = 6.0
-        # projected = round(6.0) = 6
+        # last_full_year_total == 0 → multiplier = None → all projected months = None
         proj = row_new['current_projected_by_month']
-        for m in proj:
-            self.assertEqual(proj[m], 6, f'Expected 6 for projected month {m}, got {proj[m]}')
+        for m, val in proj.items():
+            self.assertIsNone(val, f'Expected None for projected month {m}, got {val}')
+
+    def test_projection_non_buy(self):
+        """Non-buy item (last_full_year_total > 0, last_12_units == 0) gets multiplier 0.0
+        and all projected months equal 0."""
+        from apps.catalog.models import Brand
+
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+        nb_item = Item.objects.create(
+            brand=brand, item_code='NBPROJ', name='Non Buy Proj Item', sort_order=88,
+        )
+        # Sale only in Jan 2025 (in LFY but before the 12m window Mar 2025–Feb 2026)
+        make_sale(self.company, self.batch, self.account, nb_item, date(2025, 1, 15), 10)
+        # last_full_year_total = 10, last_12_units = 0
+        # multiplier = 0 / 10 = 0.0 → all projected months = 0
+
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        row = next((r for r in rows if r['item_name'] == 'Non Buy Proj Item'), None)
+        self.assertIsNotNone(row, 'Non Buy Proj Item row not found')
+        self.assertEqual(row['last_full_year_total'], 10)
+        self.assertEqual(row['last_12_units'], 0)
+        self.assertEqual(row['status'], 'non_buy')
+
+        proj = row['current_projected_by_month']
+        for m, val in proj.items():
+            self.assertEqual(val, 0, f'Expected 0 for projected month {m}, got {val}')
 
     def test_account_detail_diff_calculations(self):
         """Both diff columns calculate correctly."""

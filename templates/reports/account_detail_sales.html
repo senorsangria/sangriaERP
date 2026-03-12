@@ -150,14 +150,6 @@
 </div>
 
 <!-- ================================================================
-     SECTION 2: Status Summary Bar
-     ================================================================ -->
-<div class="mb-3 d-flex flex-wrap gap-2">
-  {% if status_counts.non_buy %}<span class="badge bg-dark text-white">⚫ {{ status_counts.non_buy }} Non-buy</span>{% endif %}
-  {% if status_counts.declining %}<span class="badge bg-danger text-white">🔴 {{ status_counts.declining }} Declining</span>{% endif %}
-</div>
-
-<!-- ================================================================
      SECTION 3: Portfolio Status Card
      ================================================================ -->
 <div class="card border-0 shadow-sm mb-3">
@@ -168,8 +160,8 @@
         <thead class="table-dark">
           <tr>
             <th>Item Code</th>
-            <th class="text-end">Last 12m</th>
             <th class="text-end">{{ last_full_year }}</th>
+            <th class="text-end">Last 12m</th>
             <th class="text-end">Change</th>
             <th>Status</th>
           </tr>
@@ -177,8 +169,8 @@
         <tbody class="fw-bold table-active">
           <tr>
             <td>TOTAL</td>
-            <td class="text-end" data-value="{{ portfolio_totals.last_12_total }}">{{ portfolio_totals.last_12_total|intcomma }}</td>
             <td class="text-end" data-value="{{ portfolio_totals.prior_year_total }}">{{ portfolio_totals.prior_year_total|intcomma }}</td>
+            <td class="text-end" data-value="{{ portfolio_totals.last_12_total }}">{{ portfolio_totals.last_12_total|intcomma }}</td>
             <td class="text-end diff-col" data-value="{{ portfolio_totals.change_total }}">
               {% if portfolio_totals.change_total > 0 %}+{% endif %}{{ portfolio_totals.change_total|intcomma }}
             </td>
@@ -189,8 +181,8 @@
           {% for row in rows %}
           <tr{% if row.first_in_group and not forloop.first %} class="portfolio-group-divider"{% endif %}>
             <td>{{ row.item_code }}</td>
-            <td class="text-end" data-value="{{ row.last_12_units }}">{{ row.last_12_units|intcomma }}</td>
             <td class="text-end" data-value="{{ row.last_full_year_total }}">{{ row.last_full_year_total|intcomma }}</td>
+            <td class="text-end" data-value="{{ row.last_12_units }}">{{ row.last_12_units|intcomma }}</td>
             <td class="text-end diff-col" data-value="{{ row.diff_last_12_vs_last_year }}">
               {% if row.diff_last_12_vs_last_year > 0 %}+{% endif %}{{ row.diff_last_12_vs_last_year|intcomma }}
             </td>
@@ -233,28 +225,21 @@
             <tr>
               <th class="sticky-col" rowspan="2">Item</th>
               <th class="text-center lfy-header" colspan="12">{{ last_full_year }}</th>
-              <th rowspan="2" class="text-end">Total</th>
-              <th rowspan="2" class="text-end">Last 12m</th>
-              <th rowspan="2" class="text-end">Diff</th>
               {% if current_year_colspan > 0 %}
               <th class="text-center cy-header" colspan="{{ current_year_colspan }}">{{ current_year }}</th>
               {% endif %}
-              <th rowspan="2" class="text-end">Total</th>
-              <th rowspan="2" class="text-end">Diff</th>
             </tr>
             <!-- Row 2: Month abbreviations -->
             <tr>
               {% for m in all_months %}
               <th class="text-end">{{ month_names|get_item:m }}</th>
               {% endfor %}
-              {# Total / Last 12m / Diff have rowspan=2 — no cells here #}
               {% for m in actual_months %}
               <th class="text-end">{{ month_names|get_item:m }}</th>
               {% endfor %}
               {% for m in projected_months %}
               <th class="text-end proj-month-header">{{ month_names|get_item:m }}<br><small>(proj)</small></th>
               {% endfor %}
-              {# Current Total / Diff have rowspan=2 — no cells here #}
             </tr>
           </thead>
 
@@ -264,40 +249,19 @@
               <td class="sticky-col fw-bold">Total</td>
               {% for m in all_months %}
               {% with val=totals.last_full_year_by_month|get_item:m %}
-              <td class="text-end" data-value="{{ val|default:0 }}">
-                {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
-              </td>
+              <td class="text-end" data-value="{{ val|default:0 }}">{{ val|default:0|intcomma }}</td>
               {% endwith %}
               {% endfor %}
-              <td class="text-end" data-value="{{ totals.last_full_year_total }}">
-                {{ totals.last_full_year_total|intcomma }}
-              </td>
-              <td class="text-end" data-value="{{ totals.last_12_total }}">
-                {{ totals.last_12_total|intcomma }}
-              </td>
-              <td class="text-end diff-col" data-value="{{ totals.diff_last_12_vs_last_year }}">
-                {% if totals.diff_last_12_vs_last_year > 0 %}+{% endif %}{{ totals.diff_last_12_vs_last_year|intcomma }}
-              </td>
               {% for m in actual_months %}
               {% with val=totals.current_actual_by_month|get_item:m %}
-              <td class="text-end" data-value="{{ val|default:0 }}">
-                {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
-              </td>
+              <td class="text-end" data-value="{{ val|default:0 }}">{{ val|default:0|intcomma }}</td>
               {% endwith %}
               {% endfor %}
               {% for m in projected_months %}
               {% with val=totals.current_projected_by_month|get_item:m %}
-              <td class="text-end proj-cell" data-value="{{ val|default:0 }}">
-                {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
-              </td>
+              <td class="text-end proj-cell" data-value="{{ val|default:0 }}">{{ val|default:0|intcomma }}</td>
               {% endwith %}
               {% endfor %}
-              <td class="text-end{% if projected_months %} fst-italic text-muted{% endif %}" data-value="{{ totals.current_combined_total }}">
-                {{ totals.current_combined_total|intcomma }}
-              </td>
-              <td class="text-end diff-col" data-value="{{ totals.diff_current_vs_last_year }}">
-                {% if totals.diff_current_vs_last_year > 0 %}+{% endif %}{{ totals.diff_current_vs_last_year|intcomma }}
-              </td>
             </tr>
           </tbody>
 
@@ -309,39 +273,24 @@
               {% for m in all_months %}
               {% with val=row.last_full_year_by_month|get_item:m %}
               <td class="text-end" data-value="{{ val|default:0 }}">
-                {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
+                {% if val %}{{ val|intcomma }}{% endif %}
               </td>
               {% endwith %}
               {% endfor %}
-              <td class="text-end" data-value="{{ row.last_full_year_total }}">
-                {{ row.last_full_year_total|intcomma }}
-              </td>
-              <td class="text-end" data-value="{{ row.last_12_units }}">
-                {% if row.last_12_units %}{{ row.last_12_units|intcomma }}{% else %}&mdash;{% endif %}
-              </td>
-              <td class="text-end diff-col" data-value="{{ row.diff_last_12_vs_last_year }}">
-                {% if row.diff_last_12_vs_last_year > 0 %}+{% endif %}{{ row.diff_last_12_vs_last_year|intcomma }}
-              </td>
               {% for m in actual_months %}
               {% with val=row.current_actual_by_month|get_item:m %}
               <td class="text-end" data-value="{{ val|default:0 }}">
-                {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
+                {% if val %}{{ val|intcomma }}{% endif %}
               </td>
               {% endwith %}
               {% endfor %}
               {% for m in projected_months %}
               {% with val=row.current_projected_by_month|get_item:m %}
               <td class="text-end proj-cell" data-value="{{ val|default:0 }}">
-                {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
+                {% if val %}{{ val|intcomma }}{% endif %}
               </td>
               {% endwith %}
               {% endfor %}
-              <td class="text-end{% if projected_months %} fst-italic text-muted{% endif %}" data-value="{{ row.current_combined_total }}">
-                {{ row.current_combined_total|intcomma }}
-              </td>
-              <td class="text-end diff-col" data-value="{{ row.diff_current_vs_last_year }}">
-                {% if row.diff_current_vs_last_year > 0 %}+{% endif %}{{ row.diff_current_vs_last_year|intcomma }}
-              </td>
             </tr>
             {% empty %}
             <tr>

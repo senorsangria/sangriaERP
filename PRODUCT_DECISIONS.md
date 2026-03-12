@@ -2237,17 +2237,14 @@ Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager
 - Back link to `report_account_sales_by_year`
 
 **Section 2 — Status Summary Bar:**
-Badge-style counters showing only Non-buy and Declining. Only shown if count ≥ 1.
-Color coding: Non-buy = dark, Declining = danger.
-Steady, Growing, and New are intentionally omitted from the summary bar (they appear in
-the Portfolio Status table only).
+Removed. Users read status directly from the Status column in the Portfolio Status table.
 
 **Section 3 — Portfolio Status Card:**
-Table with columns: Item Code | Last 12m | [prior year] | Change | Status.
+Table with columns: Item Code | [prior year] | Last 12m | Change | Status.
 The prior year column header shows the dynamic year value (e.g., 2025) rather than "Prior Year".
-Column order: Item Code, Last 12m, prior year total, Change, Status.
+Column order: Item Code, prior year total, Last 12m, Change, Status.
 A pinned totals row (separate `<tbody>`, bold, `table-active` background) appears above
-the data rows showing portfolio-level sums for Last 12m, prior year, and Change.
+the data rows showing portfolio-level sums for prior year, Last 12m, and Change.
 Rows sorted by `status_priority` first, then `brand__name`, `sort_order`, `name`.
 A visual divider separates each status group. The Change column shows
 `last_12_units − last_full_year_total` with `+` prefix and color coding via `applyNegativeColors()`.
@@ -2294,43 +2291,37 @@ distributor. Query filters: `account__distributor=distributor, account__company=
 Column order:
 1. Item Code (sticky left column; item code only, no brand name sub-text)
 2. Last full year Jan–Dec (12 monthly columns)
-3. Last full year Total (bold)
-4. Last 12m (rolling window, same as main report)
-5. Diff: Last 12m vs Last Year (color-coded)
-6. Current year actual months (normal styling)
-7. Current year projected months (italic, text-muted, `proj-cell` class with `bg-light` tint)
-8. Current year Total (italic/muted if any projected months exist)
-9. Diff: Current Year vs Last Year (color-coded)
+3. Current year actual months (normal styling)
+4. Current year projected months (italic, text-muted, `proj-cell` class with `bg-light` tint)
+
+Removed columns: Last full year Total, Last 12m, Diff (L12m vs Last Year), Current year Total,
+Diff (Current Year vs Last Year). The Full Sales History table is now a pure monthly grid.
 
 **Column headers:**
 - Two header rows. Row 1 uses colspan for `last_full_year` (12) and `current_year`
-  (actual + projected count). Columns without sub-headers use `rowspan=2`.
+  (actual + projected count, omitted if 0). No rowspan columns remain.
 - Row 2: month abbreviations (Jan–Dec for LFY; month abbr for actual months;
   `(proj)` noted in header for projected month columns).
 
+**Zero value display:**
+- Data rows: zero values show as empty cells (no dash, no "0").
+- Totals row: zero values show as "0" (intcomma with no conditional).
+
 **Projection logic per item per projected month M:**
 
-1. **Base:** `last_full_year_by_month[M]` (same calendar month in last full year).
-   - If the item has **no data in last_full_year at all** (all 12 months = 0):
-     use trailing 6-month average of current actuals as base.
-     If fewer than 6 actual months exist → `projected = None` (shown as —).
+Multiplier = `last_12_units / last_full_year_total`
 
-2. **Trend multiplier** (applied only when base comes from last_full_year and ≥ 6 actual months exist):
-   - `last_6_actual_months` = last 6 months in `actual_months`
-   - `actual_6` = sum of current actuals for those 6 months
-   - `prior_6` = sum of last_full_year for those same 6 calendar months
-   - `multiplier = actual_6 / prior_6` if `prior_6 > 0`, else `1.0`
-   - If fewer than 6 actual months: `multiplier = 1.0` (no trend adjustment)
+- **New item** (`last_full_year_total == 0`): `multiplier = None` → all projected months = `None`
+  (no projection possible; no prior year baseline).
+- **Non-buy** (`last_full_year_total > 0`, `last_12_units == 0`): `multiplier = 0.0`
+  → all projected months = 0 (the item is inactive; projection reflects that).
+- **All other items** (`last_full_year_total > 0`): `multiplier = last_12_units / last_full_year_total`.
 
-3. **Projected value:** `max(0, round(base × multiplier))`
-   If base is `None` (insufficient data): `projected = None`.
+Projected value for month M: `max(0, round(last_full_year_by_month[M] × multiplier))`
+If `multiplier is None`: projected = `None`.
 
 **Totals row:** Pinned separate `<tbody>` above data rows. Shows column-level sums.
-For projected month totals, `None` values are treated as 0 in the sum.
-
-**Diff columns:**
-- *Diff (L12m vs Last Year)*: `last_12_units − last_full_year_total`
-- *Diff (Current vs Last Year)*: `current_combined_total − last_full_year_total`
+`None` projected values are treated as 0 in the totals sum.
 
 **Negative value coloring:** Same JS `applyNegativeColors()` approach as the main report.
 All numeric `<td>` elements carry `data-value="{{ raw_integer }}"`. Both Diff columns carry
@@ -2342,5 +2333,5 @@ to `report_account_detail`. Each row dict in `account_sales_by_year` includes `a
 
 ---
 
-*Last updated: March 12, 2026 (Fix last_full_month scope to distributor; item code display; column order; portfolio totals row)*
+*Last updated: March 12, 2026 (Fix projection multiplier to last_12m/LFY; remove status bar; reorder portfolio columns; strip Full Sales History to monthly grid only)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

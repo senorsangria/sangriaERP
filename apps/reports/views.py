@@ -648,7 +648,6 @@ def account_detail_sales(request, account_id):
 
     # ---- Build per-item rows ---------------------------------------------
     all_months = list(range(1, 13))
-    last_6_actual_months = actual_months[-6:] if len(actual_months) >= 6 else actual_months
 
     rows = []
     for item in items:
@@ -657,35 +656,30 @@ def account_detail_sales(request, account_id):
         last_full_year_by_month = {m: lfy_data.get((item_id, m), 0) for m in all_months}
         current_actual_by_month = {m: actual_data.get((item_id, m), 0) for m in actual_months}
 
-        lfy_has_data = any(v != 0 for v in last_full_year_by_month.values())
+        last_full_year_total = sum(last_full_year_by_month.values())
+        last_12_units = last12_data.get(item_id, 0)
 
-        # Trend multiplier: only when LFY has data and 6+ actual months exist
-        if lfy_has_data and len(actual_months) >= 6:
-            actual_6 = sum(current_actual_by_month.get(m, 0) for m in last_6_actual_months)
-            prior_6 = sum(last_full_year_by_month.get(m, 0) for m in last_6_actual_months)
-            multiplier = (actual_6 / prior_6) if prior_6 > 0 else 1.0
+        # Projection multiplier = last_12m / last_full_year_total
+        # New item (last_full_year_total == 0): no projection, all projected months = None
+        # Non-buy (last_full_year_total > 0, last_12_units == 0): multiplier = 0.0, all = 0
+        if last_full_year_total == 0:
+            multiplier = None
         else:
-            multiplier = 1.0
+            multiplier = last_12_units / last_full_year_total
 
         current_projected_by_month = {}
         for m in projected_months:
-            if lfy_has_data:
+            if multiplier is None:
+                current_projected_by_month[m] = None
+            else:
                 base = last_full_year_by_month[m]
                 current_projected_by_month[m] = max(0, round(base * multiplier))
-            else:
-                if len(actual_months) < 6:
-                    current_projected_by_month[m] = None
-                else:
-                    avg = sum(current_actual_by_month.get(am, 0) for am in last_6_actual_months) / 6
-                    current_projected_by_month[m] = max(0, round(avg))
 
-        last_full_year_total = sum(last_full_year_by_month.values())
         current_actual_total = sum(current_actual_by_month.values())
         current_projected_total = sum(
             v for v in current_projected_by_month.values() if v is not None
         )
         current_combined_total = current_actual_total + current_projected_total
-        last_12_units = last12_data.get(item_id, 0)
 
         # Exclude items with no activity in either period
         if last_full_year_total == 0 and last_12_units == 0:
