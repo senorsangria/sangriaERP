@@ -681,9 +681,31 @@ def account_detail_sales(request, account_id):
         current_combined_total = current_actual_total + current_projected_total
         last_12_units = last12_data.get(item_id, 0)
 
+        # Exclude items with no activity in either period
+        if last_full_year_total == 0 and last_12_units == 0:
+            continue
+
+        # Determine portfolio status
+        if last_full_year_total > 0 and last_12_units == 0:
+            status = 'non_buy'
+            status_priority = 1
+        elif last_12_units < last_full_year_total:
+            status = 'declining'
+            status_priority = 2
+        elif last_12_units == last_full_year_total:
+            status = 'steady'
+            status_priority = 3
+        elif last_full_year_total == 0 and last_12_units > 0:
+            status = 'new'
+            status_priority = 5
+        else:
+            status = 'growing'
+            status_priority = 4
+
         rows.append({
             'item_name': item.name,
             'brand_name': item.brand.name,
+            'sort_order': item.sort_order,
             'last_full_year_by_month': last_full_year_by_month,
             'current_actual_by_month': current_actual_by_month,
             'current_projected_by_month': current_projected_by_month,
@@ -694,7 +716,27 @@ def account_detail_sales(request, account_id):
             'last_12_units': last_12_units,
             'diff_last_12_vs_last_year': last_12_units - last_full_year_total,
             'diff_current_vs_last_year': current_combined_total - last_full_year_total,
+            'status': status,
+            'status_priority': status_priority,
         })
+
+    # Sort by status_priority, then brand_name, sort_order, item_name
+    rows.sort(key=lambda r: (r['status_priority'], r['brand_name'], r['sort_order'], r['item_name']))
+
+    # Mark the first row of each status group for visual dividers in the template
+    prev_priority = None
+    for row in rows:
+        row['first_in_group'] = (row['status_priority'] != prev_priority)
+        prev_priority = row['status_priority']
+
+    # Status counts for summary bar
+    status_counts = {
+        'non_buy': sum(1 for r in rows if r['status'] == 'non_buy'),
+        'declining': sum(1 for r in rows if r['status'] == 'declining'),
+        'steady': sum(1 for r in rows if r['status'] == 'steady'),
+        'growing': sum(1 for r in rows if r['status'] == 'growing'),
+        'new': sum(1 for r in rows if r['status'] == 'new'),
+    }
 
     # ---- Totals -----------------------------------------------------------
     totals = {
@@ -728,7 +770,9 @@ def account_detail_sales(request, account_id):
         'actual_months': actual_months,
         'projected_months': projected_months,
         'last_full_month_display': last_full_month_display,
+        'last_reported': last_full_month_display,
         'month_names': month_names,
         'totals': totals,
         'current_year_colspan': len(actual_months) + len(projected_months),
+        'status_counts': status_counts,
     })

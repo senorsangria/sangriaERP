@@ -1,11 +1,16 @@
 {% extends "base.html" %}
 {% load rbac reports_tags humanize %}
 
-{% block title %}{{ account.name }} — Sales Detail{% endblock %}
+{% block title %}{{ account.name }} — Visit Prep{% endblock %}
 
 {% block extra_css %}
 <style>
-  /* ---- Table base ---------------------------------------------------- */
+  /* ---- Portfolio status table ----------------------------------------- */
+  .portfolio-group-divider {
+    border-top: 2px solid #adb5bd !important;
+  }
+
+  /* ---- Full Sales History table --------------------------------------- */
   .detail-table {
     white-space: nowrap;
   }
@@ -122,7 +127,7 @@
 {% else %}
 
 <!-- ================================================================
-     Account header
+     SECTION 1: Account Header
      ================================================================ -->
 <div class="card border-0 shadow-sm mb-3">
   <div class="card-body py-2 px-3">
@@ -135,7 +140,7 @@
         <p class="text-muted mb-0 small">
           {{ account.on_off_premise|default:"Unknown" }} Premise{% if account.account_type %} | {{ account.account_type }}{% endif %}
         </p>
-        <p class="text-muted mb-0 small">Data through: <strong>{{ last_full_month_display }}</strong></p>
+        <p class="text-muted mb-0 small">Last Reported: <strong>{{ last_reported }}</strong></p>
       </div>
       <a href="{% url 'report_account_sales_by_year' %}" class="btn btn-sm btn-outline-secondary flex-shrink-0">
         <i class="bi bi-arrow-left me-1"></i>Back
@@ -145,143 +150,210 @@
 </div>
 
 <!-- ================================================================
-     Report table
+     SECTION 2: Status Summary Bar
      ================================================================ -->
-<div class="card border-0 shadow-sm">
+<div class="mb-3 d-flex flex-wrap gap-2">
+  {% if status_counts.non_buy %}<span class="badge bg-dark text-white">⚫ {{ status_counts.non_buy }} Non-buy</span>{% endif %}
+  {% if status_counts.declining %}<span class="badge bg-danger text-white">🔴 {{ status_counts.declining }} Declining</span>{% endif %}
+  {% if status_counts.steady %}<span class="badge bg-secondary text-white">⚪ {{ status_counts.steady }} Steady</span>{% endif %}
+  {% if status_counts.growing %}<span class="badge bg-success text-white">🟢 {{ status_counts.growing }} Growing</span>{% endif %}
+  {% if status_counts.new %}<span class="badge bg-warning text-dark">🟡 {{ status_counts.new }} New</span>{% endif %}
+</div>
+
+<!-- ================================================================
+     SECTION 3: Portfolio Status Card
+     ================================================================ -->
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header fw-semibold py-2">Portfolio Status</div>
   <div class="card-body p-0">
     <div class="table-responsive">
-      <table class="table table-striped table-hover table-sm mb-0 detail-table" id="detailTable">
-
-        <thead>
-          <!-- Row 1: Year group spans -->
+      <table class="table table-sm table-hover mb-0" id="portfolioTable">
+        <thead class="table-dark">
           <tr>
-            <th class="sticky-col" rowspan="2">Item</th>
-            <th class="text-center lfy-header" colspan="12">{{ last_full_year }}</th>
-            <th rowspan="2" class="text-end">Total</th>
-            <th rowspan="2" class="text-end">Last 12m</th>
-            <th rowspan="2" class="text-end">Diff</th>
-            {% if current_year_colspan > 0 %}
-            <th class="text-center cy-header" colspan="{{ current_year_colspan }}">{{ current_year }}</th>
-            {% endif %}
-            <th rowspan="2" class="text-end">Total</th>
-            <th rowspan="2" class="text-end">Diff</th>
-          </tr>
-          <!-- Row 2: Month abbreviations -->
-          <tr>
-            {% for m in all_months %}
-            <th class="text-end">{{ month_names|get_item:m }}</th>
-            {% endfor %}
-            {# Total / Last 12m / Diff have rowspan=2 — no cells here #}
-            {% for m in actual_months %}
-            <th class="text-end">{{ month_names|get_item:m }}</th>
-            {% endfor %}
-            {% for m in projected_months %}
-            <th class="text-end proj-month-header">{{ month_names|get_item:m }}<br><small>(proj)</small></th>
-            {% endfor %}
-            {# Current Total / Diff have rowspan=2 — no cells here #}
+            <th>Item</th>
+            <th class="text-end">Last 12m</th>
+            <th class="text-end">Prior Year</th>
+            <th class="text-end">Change</th>
+            <th>Status</th>
           </tr>
         </thead>
-
-        <!-- Totals row (pinned) -->
-        <tbody id="detailTotalsBody">
-          <tr>
-            <td class="sticky-col fw-bold">Total</td>
-            {% for m in all_months %}
-            {% with val=totals.last_full_year_by_month|get_item:m %}
-            <td class="text-end" data-value="{{ val|default:0 }}">
-              {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
-            </td>
-            {% endwith %}
-            {% endfor %}
-            <td class="text-end" data-value="{{ totals.last_full_year_total }}">
-              {{ totals.last_full_year_total|intcomma }}
-            </td>
-            <td class="text-end" data-value="{{ totals.last_12_total }}">
-              {{ totals.last_12_total|intcomma }}
-            </td>
-            <td class="text-end diff-col" data-value="{{ totals.diff_last_12_vs_last_year }}">
-              {% if totals.diff_last_12_vs_last_year > 0 %}+{% endif %}{{ totals.diff_last_12_vs_last_year|intcomma }}
-            </td>
-            {% for m in actual_months %}
-            {% with val=totals.current_actual_by_month|get_item:m %}
-            <td class="text-end" data-value="{{ val|default:0 }}">
-              {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
-            </td>
-            {% endwith %}
-            {% endfor %}
-            {% for m in projected_months %}
-            {% with val=totals.current_projected_by_month|get_item:m %}
-            <td class="text-end proj-cell" data-value="{{ val|default:0 }}">
-              {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
-            </td>
-            {% endwith %}
-            {% endfor %}
-            <td class="text-end{% if projected_months %} fst-italic text-muted{% endif %}" data-value="{{ totals.current_combined_total }}">
-              {{ totals.current_combined_total|intcomma }}
-            </td>
-            <td class="text-end diff-col" data-value="{{ totals.diff_current_vs_last_year }}">
-              {% if totals.diff_current_vs_last_year > 0 %}+{% endif %}{{ totals.diff_current_vs_last_year|intcomma }}
-            </td>
-          </tr>
-        </tbody>
-
-        <!-- Data rows -->
-        <tbody id="detailDataBody">
+        <tbody>
           {% for row in rows %}
-          <tr>
-            <td class="sticky-col">
+          <tr{% if row.first_in_group and not forloop.first %} class="portfolio-group-divider"{% endif %}>
+            <td>
               <span class="fw-semibold">{{ row.item_name }}</span>
               <br><span class="text-muted small">{{ row.brand_name }}</span>
             </td>
-            {% for m in all_months %}
-            {% with val=row.last_full_year_by_month|get_item:m %}
-            <td class="text-end" data-value="{{ val|default:0 }}">
-              {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
-            </td>
-            {% endwith %}
-            {% endfor %}
-            <td class="text-end" data-value="{{ row.last_full_year_total }}">
-              {{ row.last_full_year_total|intcomma }}
-            </td>
-            <td class="text-end" data-value="{{ row.last_12_units }}">
-              {% if row.last_12_units %}{{ row.last_12_units|intcomma }}{% else %}&mdash;{% endif %}
-            </td>
+            <td class="text-end" data-value="{{ row.last_12_units }}">{{ row.last_12_units|intcomma }}</td>
+            <td class="text-end" data-value="{{ row.last_full_year_total }}">{{ row.last_full_year_total|intcomma }}</td>
             <td class="text-end diff-col" data-value="{{ row.diff_last_12_vs_last_year }}">
               {% if row.diff_last_12_vs_last_year > 0 %}+{% endif %}{{ row.diff_last_12_vs_last_year|intcomma }}
             </td>
-            {% for m in actual_months %}
-            {% with val=row.current_actual_by_month|get_item:m %}
-            <td class="text-end" data-value="{{ val|default:0 }}">
-              {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
-            </td>
-            {% endwith %}
-            {% endfor %}
-            {% for m in projected_months %}
-            {% with val=row.current_projected_by_month|get_item:m %}
-            <td class="text-end proj-cell" data-value="{{ val|default:0 }}">
-              {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
-            </td>
-            {% endwith %}
-            {% endfor %}
-            <td class="text-end{% if projected_months %} fst-italic text-muted{% endif %}" data-value="{{ row.current_combined_total }}">
-              {{ row.current_combined_total|intcomma }}
-            </td>
-            <td class="text-end diff-col" data-value="{{ row.diff_current_vs_last_year }}">
-              {% if row.diff_current_vs_last_year > 0 %}+{% endif %}{{ row.diff_current_vs_last_year|intcomma }}
+            <td>
+              {% if row.status == 'non_buy' %}<span class="badge bg-dark text-white">⚫ Non-buy</span>
+              {% elif row.status == 'declining' %}<span class="badge bg-danger text-white">🔴 Declining</span>
+              {% elif row.status == 'steady' %}<span class="badge bg-secondary text-white">⚪ Steady</span>
+              {% elif row.status == 'growing' %}<span class="badge bg-success text-white">🟢 Growing</span>
+              {% elif row.status == 'new' %}<span class="badge bg-warning text-dark">🟡 New</span>{% endif %}
             </td>
           </tr>
           {% empty %}
-          <tr>
-            <td colspan="100" class="text-center text-muted py-4">No sales data found.</td>
-          </tr>
+          <tr><td colspan="5" class="text-center text-muted py-4">No items to display.</td></tr>
           {% endfor %}
         </tbody>
-
       </table>
     </div>
   </div>
-  <div class="card-footer text-muted small py-2 px-3">
-    {{ rows|length }} item{{ rows|length|pluralize }}
+</div>
+
+<!-- ================================================================
+     SECTION 4: Full Sales History (collapsed by default)
+     ================================================================ -->
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header py-2 d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">Full Sales History</span>
+    <button class="btn btn-sm btn-outline-secondary" type="button"
+            data-bs-toggle="collapse" data-bs-target="#salesHistoryCollapse"
+            aria-expanded="false" aria-controls="salesHistoryCollapse">
+      <i class="bi bi-chevron-down" id="salesHistoryChevron"></i>
+    </button>
+  </div>
+  <div class="collapse" id="salesHistoryCollapse">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-striped table-hover table-sm mb-0 detail-table" id="detailTable">
+
+          <thead>
+            <!-- Row 1: Year group spans -->
+            <tr>
+              <th class="sticky-col" rowspan="2">Item</th>
+              <th class="text-center lfy-header" colspan="12">{{ last_full_year }}</th>
+              <th rowspan="2" class="text-end">Total</th>
+              <th rowspan="2" class="text-end">Last 12m</th>
+              <th rowspan="2" class="text-end">Diff</th>
+              {% if current_year_colspan > 0 %}
+              <th class="text-center cy-header" colspan="{{ current_year_colspan }}">{{ current_year }}</th>
+              {% endif %}
+              <th rowspan="2" class="text-end">Total</th>
+              <th rowspan="2" class="text-end">Diff</th>
+            </tr>
+            <!-- Row 2: Month abbreviations -->
+            <tr>
+              {% for m in all_months %}
+              <th class="text-end">{{ month_names|get_item:m }}</th>
+              {% endfor %}
+              {# Total / Last 12m / Diff have rowspan=2 — no cells here #}
+              {% for m in actual_months %}
+              <th class="text-end">{{ month_names|get_item:m }}</th>
+              {% endfor %}
+              {% for m in projected_months %}
+              <th class="text-end proj-month-header">{{ month_names|get_item:m }}<br><small>(proj)</small></th>
+              {% endfor %}
+              {# Current Total / Diff have rowspan=2 — no cells here #}
+            </tr>
+          </thead>
+
+          <!-- Totals row (pinned) -->
+          <tbody id="detailTotalsBody">
+            <tr>
+              <td class="sticky-col fw-bold">Total</td>
+              {% for m in all_months %}
+              {% with val=totals.last_full_year_by_month|get_item:m %}
+              <td class="text-end" data-value="{{ val|default:0 }}">
+                {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+              <td class="text-end" data-value="{{ totals.last_full_year_total }}">
+                {{ totals.last_full_year_total|intcomma }}
+              </td>
+              <td class="text-end" data-value="{{ totals.last_12_total }}">
+                {{ totals.last_12_total|intcomma }}
+              </td>
+              <td class="text-end diff-col" data-value="{{ totals.diff_last_12_vs_last_year }}">
+                {% if totals.diff_last_12_vs_last_year > 0 %}+{% endif %}{{ totals.diff_last_12_vs_last_year|intcomma }}
+              </td>
+              {% for m in actual_months %}
+              {% with val=totals.current_actual_by_month|get_item:m %}
+              <td class="text-end" data-value="{{ val|default:0 }}">
+                {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+              {% for m in projected_months %}
+              {% with val=totals.current_projected_by_month|get_item:m %}
+              <td class="text-end proj-cell" data-value="{{ val|default:0 }}">
+                {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+              <td class="text-end{% if projected_months %} fst-italic text-muted{% endif %}" data-value="{{ totals.current_combined_total }}">
+                {{ totals.current_combined_total|intcomma }}
+              </td>
+              <td class="text-end diff-col" data-value="{{ totals.diff_current_vs_last_year }}">
+                {% if totals.diff_current_vs_last_year > 0 %}+{% endif %}{{ totals.diff_current_vs_last_year|intcomma }}
+              </td>
+            </tr>
+          </tbody>
+
+          <!-- Data rows -->
+          <tbody id="detailDataBody">
+            {% for row in rows %}
+            <tr>
+              <td class="sticky-col">
+                <span class="fw-semibold">{{ row.item_name }}</span>
+                <br><span class="text-muted small">{{ row.brand_name }}</span>
+              </td>
+              {% for m in all_months %}
+              {% with val=row.last_full_year_by_month|get_item:m %}
+              <td class="text-end" data-value="{{ val|default:0 }}">
+                {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+              <td class="text-end" data-value="{{ row.last_full_year_total }}">
+                {{ row.last_full_year_total|intcomma }}
+              </td>
+              <td class="text-end" data-value="{{ row.last_12_units }}">
+                {% if row.last_12_units %}{{ row.last_12_units|intcomma }}{% else %}&mdash;{% endif %}
+              </td>
+              <td class="text-end diff-col" data-value="{{ row.diff_last_12_vs_last_year }}">
+                {% if row.diff_last_12_vs_last_year > 0 %}+{% endif %}{{ row.diff_last_12_vs_last_year|intcomma }}
+              </td>
+              {% for m in actual_months %}
+              {% with val=row.current_actual_by_month|get_item:m %}
+              <td class="text-end" data-value="{{ val|default:0 }}">
+                {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+              {% for m in projected_months %}
+              {% with val=row.current_projected_by_month|get_item:m %}
+              <td class="text-end proj-cell" data-value="{{ val|default:0 }}">
+                {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+              <td class="text-end{% if projected_months %} fst-italic text-muted{% endif %}" data-value="{{ row.current_combined_total }}">
+                {{ row.current_combined_total|intcomma }}
+              </td>
+              <td class="text-end diff-col" data-value="{{ row.diff_current_vs_last_year }}">
+                {% if row.diff_current_vs_last_year > 0 %}+{% endif %}{{ row.diff_current_vs_last_year|intcomma }}
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="100" class="text-center text-muted py-4">No sales data found.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+
+        </table>
+      </div>
+    </div>
+    <div class="card-footer text-muted small py-2 px-3">
+      {{ rows|length }} item{{ rows|length|pluralize }}
+    </div>
   </div>
 </div>
 
@@ -311,9 +383,16 @@
   }
   document.addEventListener('DOMContentLoaded', applyNegativeColors);
 
-  // ---- Bootstrap tooltips ----------------------------------------------
-  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
-    new bootstrap.Tooltip(el, { trigger: 'hover' });
-  });
+  // ---- Rotate chevron when Full Sales History is expanded/collapsed ----
+  const salesCollapse = document.getElementById('salesHistoryCollapse');
+  const salesChevron = document.getElementById('salesHistoryChevron');
+  if (salesCollapse && salesChevron) {
+    salesCollapse.addEventListener('show.bs.collapse', () => {
+      salesChevron.classList.replace('bi-chevron-down', 'bi-chevron-up');
+    });
+    salesCollapse.addEventListener('hide.bs.collapse', () => {
+      salesChevron.classList.replace('bi-chevron-up', 'bi-chevron-down');
+    });
+  }
 </script>
 {% endblock %}

@@ -2213,9 +2213,9 @@ specific selections. The filter panel is collapsed by default on all screen size
 
 ### Account Detail Sales View
 
-**Purpose:** Monthly per-item sales breakdown for a single account, covering the last full
-calendar year month-by-month, a last-12m total, and a current-year view with actuals and
-trend-based projections for remaining months.
+**Purpose:** Mobile-first visit prep tool for field reps. Shows a portfolio status summary
+and actionable cards at the top, with the full monthly breakdown table available in a
+collapsed section below.
 
 **Permission:** `can_view_report_account_sales` (same as main report).
 Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager.
@@ -2227,12 +2227,45 @@ Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager
 - Account is fetched scoped to `user.company`; returns 404 if not found.
 - Non-Supplier-Admin roles: 403 if account is not within `get_accounts_for_user(user)`.
 
-**Account header fields (compact card):**
+**Page layout — four sections:**
+
+**Section 1 — Account Header (compact card):**
 - Account name (h5, bold)
-- Street, city, county (one line)
-- On/Off Premise | Class of Trade (one line)
-- "Data through: [last_full_month_display]" (muted small)
+- Street, city, county (one line, muted small)
+- On/Off Premise | Class of Trade (one line, muted small)
+- "Last Reported: [last_reported]" (muted small)
 - Back link to `report_account_sales_by_year`
+
+**Section 2 — Status Summary Bar:**
+Badge-style counters showing the portfolio breakdown. Only statuses with ≥ 1 item shown.
+Color coding: Non-buy = dark, Declining = danger, Steady = secondary, Growing = success, New = warning.
+
+**Section 3 — Portfolio Status Card:**
+Table with columns: Item | Last 12m | Prior Year | Change | Status.
+Rows sorted by `status_priority` first, then `brand__name`, `sort_order`, `name`.
+A visual divider separates each status group. The Change column shows
+`last_12_units − last_full_year_total` with `+` prefix and color coding via `applyNegativeColors()`.
+
+**Section 4 — Full Sales History (collapsed by default):**
+Bootstrap collapse containing the full monthly breakdown table (same structure as before,
+described below). Collapsed by default on all screen sizes.
+
+**Portfolio status definitions:**
+
+| Status | Condition | Priority |
+|--------|-----------|----------|
+| Non-buy | `last_full_year_total > 0` and `last_12_units == 0` | 1 |
+| Declining | `last_12_units < last_full_year_total` (and not non-buy) | 2 |
+| Steady | `last_12_units == last_full_year_total` | 3 |
+| Growing | `last_12_units > last_full_year_total` (and not new) | 4 |
+| New | `last_full_year_total == 0` and `last_12_units > 0` | 5 |
+| *Excluded* | `last_full_year_total == 0` and `last_12_units == 0` — not included in rows | — |
+
+**Context variables added:**
+- `last_reported` — human-readable string (e.g., "February 2025") derived from
+  `last_full_month`, the most recent month the distributor reported sales data.
+- `status_counts` — dict with keys `non_buy`, `declining`, `steady`, `growing`, `new`,
+  each holding the count of items in that status. Used to drive the summary bar badges.
 
 **Date definitions:**
 - **last_full_year:** `current_year - 1` (always the prior complete calendar year).
@@ -2241,7 +2274,7 @@ Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager
 - **projected_months:** remaining months in `current_year` after `last_full_month`.
   All 12 months if `last_full_month` is in a prior year.
 
-**Table structure (horizontally scrollable, sticky header + sticky first column):**
+**Full Sales History table structure (horizontally scrollable, sticky header + sticky first column):**
 
 Column order:
 1. Item Name (sticky left column; shows brand name in small muted text below)
@@ -2277,9 +2310,6 @@ Column order:
 3. **Projected value:** `max(0, round(base × multiplier))`
    If base is `None` (insufficient data): `projected = None`.
 
-**Item sort order:** `brand__name`, then `sort_order`, then `name` (matches `Item.Meta.ordering`
-plus explicit `brand__name` prefix).
-
 **Totals row:** Pinned separate `<tbody>` above data rows. Shows column-level sums.
 For projected month totals, `None` values are treated as 0 in the sum.
 
@@ -2297,5 +2327,5 @@ to `report_account_detail`. Each row dict in `account_sales_by_year` includes `a
 
 ---
 
-*Last updated: March 11, 2026 (Add Account Detail Sales View with monthly breakdown and trend projection)*
+*Last updated: March 12, 2026 (Redesign Account Detail as mobile-first visit prep tool)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

@@ -564,6 +564,15 @@ class AccountDetailTest(TestCase):
         rows = response.context['rows']
         self.assertEqual(len(rows), 2)
 
+        # Status field present on each row
+        for row in rows:
+            self.assertIn('status', row, 'Each row must have a status key')
+            self.assertIn('status_priority', row, 'Each row must have a status_priority key')
+
+        # Context keys for new features
+        self.assertIn('status_counts', response.context)
+        self.assertIn('last_reported', response.context)
+
         row_a = next(r for r in rows if r['item_name'] == 'Item A')
         # item_a has 10 units in months 3, 6, 9, 12 of 2025
         lfy = row_a['last_full_year_by_month']
@@ -667,8 +676,9 @@ class AccountDetailTest(TestCase):
         )
 
     def test_account_detail_item_sort_order(self):
-        """Items are ordered by brand__name, sort_order, name."""
+        """Items are ordered by status_priority first, then brand__name, sort_order, name."""
         from apps.catalog.models import Brand
+        from itertools import groupby
         brand_b = make_brand(self.company, name='Zebra Brand')
         item_z = Item.objects.get_or_create(
             brand=brand_b, item_code='ZZZ',
@@ -680,16 +690,157 @@ class AccountDetailTest(TestCase):
         response = self.client.get(self._url())
         self.assertEqual(response.status_code, 200)
         rows = response.context['rows']
+
+        # status_priority must be non-decreasing across all rows
+        priorities = [r['status_priority'] for r in rows]
+        self.assertEqual(priorities, sorted(priorities),
+                         'Rows must be sorted by status_priority ascending')
+
+        # Within each status group, brand_name must be sorted alphabetically
+        for priority, group in groupby(rows, key=lambda r: r['status_priority']):
+            group_rows = list(group)
+            brand_names = [r['brand_name'] for r in group_rows]
+            self.assertEqual(brand_names, sorted(brand_names),
+                             f'Brand names must be sorted within status_priority {priority}')
+
+    # ------------------------------------------------------------------
+    # Status classification tests
+    # ------------------------------------------------------------------
+    # The 12m window for the default setUp data (last sale Feb 2026) is
+    # Mar 2025 – Feb 2026.  last_full_year = 2025.
+
+    def _get_item_row(self, item_name):
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        return next((r for r in rows if r['item_name'] == item_name), None)
+
+    def test_non_buy_status(self):
+        """Item with prior year > 0 and last 12m = 0 gets Non-buy status and priority 1."""
+        from apps.catalog.models import Brand
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+        item = Item.objects.create(
+            brand=brand, item_code='NONBUY', name='Non Buy Item', sort_order=99,
+        )
+        # Sale only in Jan 2025 — in LFY but before the 12m window (Mar 2025)
+        make_sale(self.company, self.batch, self.account, item, date(2025, 1, 15), 10)
+
+        row = self._get_item_row('Non Buy Item')
+        self.assertIsNotNone(row)
+        self.assertEqual(row['status'], 'non_buy')
+        self.assertEqual(row['status_priority'], 1)
+
+    def test_declining_status(self):
+        """Item with last 12m < prior year gets Declining status and priority 2."""
+        from apps.catalog.models import Brand
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+        item = Item.objects.create(
+            brand=brand, item_code='DECLINING', name='Declining Item', sort_order=97,
+        )
+        # High sale in Jan 2025 (LFY only), small sale in Apr 2025 (LFY + window)
+        make_sale(self.company, self.batch, self.account, item, date(2025, 1, 15), 100)
+        make_sale(self.company, self.batch, self.account, item, date(2025, 4, 15), 5)
+        # last_full_year_total=105, last_12_units=5 → declining
+
+        row = self._get_item_row('Declining Item')
+        self.assertIsNotNone(row)
+        self.assertEqual(row['status'], 'declining')
+        self.assertEqual(row['status_priority'], 2)
+
+    def test_steady_status(self):
+        """Item with last 12m == prior year gets Steady status and priority 3."""
+        from apps.catalog.models import Brand
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+        item = Item.objects.create(
+            brand=brand, item_code='STEADY', name='Steady Item', sort_order=96,
+        )
+        # Sale only in Apr 2025 — falls in both LFY (2025) and the 12m window
+        make_sale(self.company, self.batch, self.account, item, date(2025, 4, 15), 15)
+        # last_full_year_total=15, last_12_units=15 → steady
+
+        row = self._get_item_row('Steady Item')
+        self.assertIsNotNone(row)
+        self.assertEqual(row['status'], 'steady')
+        self.assertEqual(row['status_priority'], 3)
+
+    def test_growing_status(self):
+        """Item with last 12m > prior year gets Growing status and priority 4."""
+        from apps.catalog.models import Brand
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+        item = Item.objects.create(
+            brand=brand, item_code='GROWING', name='Growing Item', sort_order=98,
+        )
+        # Small sale in LFY, larger sale in the window (Jan 2026 not in LFY)
+        make_sale(self.company, self.batch, self.account, item, date(2025, 6, 15), 5)
+        make_sale(self.company, self.batch, self.account, item, date(2026, 1, 15), 10)
+        # last_full_year_total=5, last_12_units=15 → growing
+
+        row = self._get_item_row('Growing Item')
+        self.assertIsNotNone(row)
+        self.assertEqual(row['status'], 'growing')
+        self.assertEqual(row['status_priority'], 4)
+
+    def test_new_status(self):
+        """Item with prior year == 0 and last 12m > 0 gets New status and priority 5."""
+        from apps.catalog.models import Brand
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+        item = Item.objects.create(
+            brand=brand, item_code='NEWSTATUS', name='New Status Item', sort_order=95,
+        )
+        # Sale only in Jan 2026 — in window but not in LFY (2025)
+        make_sale(self.company, self.batch, self.account, item, date(2026, 1, 15), 20)
+        # last_full_year_total=0, last_12_units=20 → new
+
+        row = self._get_item_row('New Status Item')
+        self.assertIsNotNone(row)
+        self.assertEqual(row['status'], 'new')
+        self.assertEqual(row['status_priority'], 5)
+
+    def test_excluded_items(self):
+        """Item with both prior year == 0 and last 12m == 0 is excluded from rows."""
+        from apps.catalog.models import Brand
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+        item = Item.objects.create(
+            brand=brand, item_code='EXCLUDED', name='Excluded Item', sort_order=94,
+        )
+        # Sale only in 2023 — outside both LFY (2025) and the 12m window
+        make_sale(self.company, self.batch, self.account, item, date(2023, 6, 15), 10)
+
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        item_names = [r['item_name'] for r in response.context['rows']]
+        self.assertNotIn('Excluded Item', item_names)
+
+    def test_sort_order(self):
+        """Non-buy appears before Declining, Declining before Steady, etc."""
+        from apps.catalog.models import Brand
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+
+        # Non-buy: sale only in Jan 2025 (LFY, before 12m window)
+        nb = Item.objects.create(brand=brand, item_code='SOTNB', name='ZZ Nonbuy', sort_order=91)
+        make_sale(self.company, self.batch, self.account, nb, date(2025, 1, 15), 10)
+
+        # Declining: high in Jan 2025 (LFY only), tiny in Apr 2025 (window)
+        dec = Item.objects.create(brand=brand, item_code='SOTDEC', name='ZZ Declining', sort_order=92)
+        make_sale(self.company, self.batch, self.account, dec, date(2025, 1, 15), 100)
+        make_sale(self.company, self.batch, self.account, dec, date(2025, 4, 15), 5)
+
+        # Steady: sale only in Apr 2025 (in both LFY and window)
+        st = Item.objects.create(brand=brand, item_code='SOTST', name='ZZ Steady', sort_order=93)
+        make_sale(self.company, self.batch, self.account, st, date(2025, 4, 15), 10)
+
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
         names = [r['item_name'] for r in rows]
-        brand_names = [r['brand_name'] for r in rows]
 
-        # Alpha Brand items should come before Zebra Brand
-        alpha_indices = [i for i, b in enumerate(brand_names) if b == 'Alpha Brand']
-        zebra_indices = [i for i, b in enumerate(brand_names) if b == 'Zebra Brand']
-        self.assertTrue(max(alpha_indices) < min(zebra_indices),
-                        f'Alpha Brand rows {alpha_indices} should precede Zebra Brand {zebra_indices}')
+        self.assertIn('ZZ Nonbuy', names)
+        self.assertIn('ZZ Declining', names)
+        self.assertIn('ZZ Steady', names)
 
-        # Within Alpha Brand: Item A (sort_order=1) before Item B (sort_order=2)
-        idx_a = names.index('Item A')
-        idx_b = names.index('Item B')
-        self.assertLess(idx_a, idx_b)
+        idx_nb = names.index('ZZ Nonbuy')
+        idx_dec = names.index('ZZ Declining')
+        idx_st = names.index('ZZ Steady')
+
+        self.assertLess(idx_nb, idx_dec, 'Non-buy should appear before Declining')
+        self.assertLess(idx_dec, idx_st, 'Declining should appear before Steady')
