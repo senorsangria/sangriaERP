@@ -568,12 +568,15 @@ class AccountDetailTest(TestCase):
         for row in rows:
             self.assertIn('status', row, 'Each row must have a status key')
             self.assertIn('status_priority', row, 'Each row must have a status_priority key')
+            self.assertIn('item_code', row, 'Each row must have an item_code key')
 
-        # Context keys for new features
+        # Context keys
         self.assertIn('status_counts', response.context)
         self.assertIn('last_reported', response.context)
+        self.assertIn('portfolio_totals', response.context)
 
         row_a = next(r for r in rows if r['item_name'] == 'Item A')
+        self.assertEqual(row_a['item_code'], 'ITMA')
         # item_a has 10 units in months 3, 6, 9, 12 of 2025
         lfy = row_a['last_full_year_by_month']
         self.assertEqual(lfy[3], 10)
@@ -584,7 +587,16 @@ class AccountDetailTest(TestCase):
         self.assertEqual(row_a['last_full_year_total'], 40)
 
         row_b = next(r for r in rows if r['item_name'] == 'Item B')
+        self.assertEqual(row_b['item_code'], 'ITMB')
         self.assertEqual(row_b['last_full_year_total'], 20)
+
+        # portfolio_totals: last_12_window is Mar 2025 – Feb 2026 (distributor-scoped)
+        # item_a last_12_units = months 3,6,9,12 of 2025 (40) + Jan (8) + Feb 2026 (12) = 60
+        # item_b last_12_units = months 3,6,9,12 of 2025 = 20
+        pt = response.context['portfolio_totals']
+        self.assertEqual(pt['last_12_total'], 80)
+        self.assertEqual(pt['prior_year_total'], 60)
+        self.assertEqual(pt['change_total'], 20)
 
     def test_account_detail_projection_with_multiplier(self):
         """Projected values use trend multiplier when 6+ actual months exist."""
@@ -706,8 +718,10 @@ class AccountDetailTest(TestCase):
     # ------------------------------------------------------------------
     # Status classification tests
     # ------------------------------------------------------------------
-    # The 12m window for the default setUp data (last sale Feb 2026) is
-    # Mar 2025 – Feb 2026.  last_full_year = 2025.
+    # last_full_month is now scoped to the distributor (not the single account).
+    # setUp: self.account has sales through Feb 2026; self.other_account has none.
+    # Distributor-scoped max_past_sale = Feb 2026 → window Mar 2025 – Feb 2026.
+    # last_full_year = 2025.
 
     def _get_item_row(self, item_name):
         response = self.client.get(self._url())
@@ -844,3 +858,49 @@ class AccountDetailTest(TestCase):
 
         self.assertLess(idx_nb, idx_dec, 'Non-buy should appear before Declining')
         self.assertLess(idx_dec, idx_st, 'Declining should appear before Steady')
+
+    def test_last_full_month_uses_distributor_scope(self):
+        """
+        last_full_month is derived from the most recent sale across ALL accounts
+        for the distributor, not just the account being viewed.
+
+        Account A has a more recent sale (Dec 2025) than Account B (Jun 2025).
+        Viewing Account B's detail page should show last_full_month = December 2025.
+        """
+        from apps.catalog.models import Brand
+        company = make_company(name='Scope Test Co')
+        distributor = make_distributor(company, name='Scope Dist')
+        brand = make_brand(company, name='Scope Brand')
+        item = Item.objects.get_or_create(
+            brand=brand, item_code='SCPITM',
+            defaults={'name': 'Scope Item', 'sort_order': 1},
+        )[0]
+        batch = make_batch(company, distributor)
+
+        account_a = make_account(company, distributor, name='Account A Scope')
+        account_b = make_account(company, distributor, name='Account B Scope')
+
+        # Account A has a sale in December 2025 (more recent)
+        make_sale(company, batch, account_a, item, date(2025, 12, 15), 10)
+        # Account B has a sale only in June 2025 (older)
+        make_sale(company, batch, account_b, item, date(2025, 6, 15), 5)
+
+        admin = make_user(company, 'supplier_admin', username='sa_scope_test')
+        client = self.__class__._get_client_for(admin)
+
+        url = reverse('report_account_detail', kwargs={'account_id': account_b.pk})
+        response = client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        # Distributor-scoped: last_full_month should reflect account_a's December 2025
+        self.assertEqual(
+            response.context['last_full_month_display'],
+            'December 2025',
+            'last_full_month should use the distributor-wide most recent sale, not just account B',
+        )
+
+    @classmethod
+    def _get_client_for(cls, user):
+        c = Client()
+        c.force_login(user)
+        return c

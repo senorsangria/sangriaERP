@@ -155,9 +155,6 @@
 <div class="mb-3 d-flex flex-wrap gap-2">
   {% if status_counts.non_buy %}<span class="badge bg-dark text-white">⚫ {{ status_counts.non_buy }} Non-buy</span>{% endif %}
   {% if status_counts.declining %}<span class="badge bg-danger text-white">🔴 {{ status_counts.declining }} Declining</span>{% endif %}
-  {% if status_counts.steady %}<span class="badge bg-secondary text-white">⚪ {{ status_counts.steady }} Steady</span>{% endif %}
-  {% if status_counts.growing %}<span class="badge bg-success text-white">🟢 {{ status_counts.growing }} Growing</span>{% endif %}
-  {% if status_counts.new %}<span class="badge bg-warning text-dark">🟡 {{ status_counts.new }} New</span>{% endif %}
 </div>
 
 <!-- ================================================================
@@ -170,20 +167,28 @@
       <table class="table table-sm table-hover mb-0" id="portfolioTable">
         <thead class="table-dark">
           <tr>
-            <th>Item</th>
+            <th>Item Code</th>
             <th class="text-end">Last 12m</th>
-            <th class="text-end">Prior Year</th>
+            <th class="text-end">{{ last_full_year }}</th>
             <th class="text-end">Change</th>
             <th>Status</th>
           </tr>
         </thead>
+        <tbody class="fw-bold table-active">
+          <tr>
+            <td>TOTAL</td>
+            <td class="text-end" data-value="{{ portfolio_totals.last_12_total }}">{{ portfolio_totals.last_12_total|intcomma }}</td>
+            <td class="text-end" data-value="{{ portfolio_totals.prior_year_total }}">{{ portfolio_totals.prior_year_total|intcomma }}</td>
+            <td class="text-end diff-col" data-value="{{ portfolio_totals.change_total }}">
+              {% if portfolio_totals.change_total > 0 %}+{% endif %}{{ portfolio_totals.change_total|intcomma }}
+            </td>
+            <td></td>
+          </tr>
+        </tbody>
         <tbody>
           {% for row in rows %}
           <tr{% if row.first_in_group and not forloop.first %} class="portfolio-group-divider"{% endif %}>
-            <td>
-              <span class="fw-semibold">{{ row.item_name }}</span>
-              <br><span class="text-muted small">{{ row.brand_name }}</span>
-            </td>
+            <td>{{ row.item_code }}</td>
             <td class="text-end" data-value="{{ row.last_12_units }}">{{ row.last_12_units|intcomma }}</td>
             <td class="text-end" data-value="{{ row.last_full_year_total }}">{{ row.last_full_year_total|intcomma }}</td>
             <td class="text-end diff-col" data-value="{{ row.diff_last_12_vs_last_year }}">
@@ -300,10 +305,7 @@
           <tbody id="detailDataBody">
             {% for row in rows %}
             <tr>
-              <td class="sticky-col">
-                <span class="fw-semibold">{{ row.item_name }}</span>
-                <br><span class="text-muted small">{{ row.brand_name }}</span>
-              </td>
+              <td class="sticky-col">{{ row.item_code }}</td>
               {% for m in all_months %}
               {% with val=row.last_full_year_by_month|get_item:m %}
               <td class="text-end" data-value="{{ val|default:0 }}">

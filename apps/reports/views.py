@@ -564,9 +564,15 @@ def account_detail_sales(request, account_id):
     current_year = today.year
     current_month_start = today.replace(day=1)
 
+    distributor = account.distributor
+
     max_past_sale = (
         SalesRecord.objects
-        .filter(account=account, sale_date__lt=current_month_start)
+        .filter(
+            account__distributor=distributor,
+            account__company=account.company,
+            sale_date__lt=current_month_start,
+        )
         .aggregate(Max('sale_date'))['sale_date__max']
     )
 
@@ -704,6 +710,7 @@ def account_detail_sales(request, account_id):
 
         rows.append({
             'item_name': item.name,
+            'item_code': item.item_code,
             'brand_name': item.brand.name,
             'sort_order': item.sort_order,
             'last_full_year_by_month': last_full_year_by_month,
@@ -736,6 +743,14 @@ def account_detail_sales(request, account_id):
         'steady': sum(1 for r in rows if r['status'] == 'steady'),
         'growing': sum(1 for r in rows if r['status'] == 'growing'),
         'new': sum(1 for r in rows if r['status'] == 'new'),
+    }
+
+    _p_last12 = sum(r['last_12_units'] for r in rows)
+    _p_prior = sum(r['last_full_year_total'] for r in rows)
+    portfolio_totals = {
+        'last_12_total': _p_last12,
+        'prior_year_total': _p_prior,
+        'change_total': _p_last12 - _p_prior,
     }
 
     # ---- Totals -----------------------------------------------------------
@@ -775,4 +790,5 @@ def account_detail_sales(request, account_id):
         'totals': totals,
         'current_year_colspan': len(actual_months) + len(projected_months),
         'status_counts': status_counts,
+        'portfolio_totals': portfolio_totals,
     })

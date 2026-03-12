@@ -2237,14 +2237,21 @@ Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager
 - Back link to `report_account_sales_by_year`
 
 **Section 2 — Status Summary Bar:**
-Badge-style counters showing the portfolio breakdown. Only statuses with ≥ 1 item shown.
-Color coding: Non-buy = dark, Declining = danger, Steady = secondary, Growing = success, New = warning.
+Badge-style counters showing only Non-buy and Declining. Only shown if count ≥ 1.
+Color coding: Non-buy = dark, Declining = danger.
+Steady, Growing, and New are intentionally omitted from the summary bar (they appear in
+the Portfolio Status table only).
 
 **Section 3 — Portfolio Status Card:**
-Table with columns: Item | Last 12m | Prior Year | Change | Status.
+Table with columns: Item Code | Last 12m | [prior year] | Change | Status.
+The prior year column header shows the dynamic year value (e.g., 2025) rather than "Prior Year".
+Column order: Item Code, Last 12m, prior year total, Change, Status.
+A pinned totals row (separate `<tbody>`, bold, `table-active` background) appears above
+the data rows showing portfolio-level sums for Last 12m, prior year, and Change.
 Rows sorted by `status_priority` first, then `brand__name`, `sort_order`, `name`.
 A visual divider separates each status group. The Change column shows
 `last_12_units − last_full_year_total` with `+` prefix and color coding via `applyNegativeColors()`.
+Item Code (not item name) is displayed in the Item Code column; brand name is not shown.
 
 **Section 4 — Full Sales History (collapsed by default):**
 Bootstrap collapse containing the full monthly breakdown table (same structure as before,
@@ -2266,6 +2273,14 @@ described below). Collapsed by default on all screen sizes.
   `last_full_month`, the most recent month the distributor reported sales data.
 - `status_counts` — dict with keys `non_buy`, `declining`, `steady`, `growing`, `new`,
   each holding the count of items in that status. Used to drive the summary bar badges.
+- `portfolio_totals` — dict with keys `last_12_total`, `prior_year_total`, `change_total`;
+  column-level sums for the Portfolio Status totals row.
+
+**last_full_month scoping:**
+`last_full_month` is derived from the most recent sale date across **all accounts for the
+account's distributor** (not just the single account being viewed). This ensures the Last 12m
+window is consistent with the main Account Sales by Year report, which is also scoped to the
+distributor. Query filters: `account__distributor=distributor, account__company=account.company`.
 
 **Date definitions:**
 - **last_full_year:** `current_year - 1` (always the prior complete calendar year).
@@ -2277,7 +2292,7 @@ described below). Collapsed by default on all screen sizes.
 **Full Sales History table structure (horizontally scrollable, sticky header + sticky first column):**
 
 Column order:
-1. Item Name (sticky left column; shows brand name in small muted text below)
+1. Item Code (sticky left column; item code only, no brand name sub-text)
 2. Last full year Jan–Dec (12 monthly columns)
 3. Last full year Total (bold)
 4. Last 12m (rolling window, same as main report)
@@ -2327,5 +2342,5 @@ to `report_account_detail`. Each row dict in `account_sales_by_year` includes `a
 
 ---
 
-*Last updated: March 12, 2026 (Redesign Account Detail as mobile-first visit prep tool)*
+*Last updated: March 12, 2026 (Fix last_full_month scope to distributor; item code display; column order; portfolio totals row)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
