@@ -171,8 +171,15 @@
             <td>TOTAL</td>
             <td class="text-end" data-value="{{ portfolio_totals.prior_year_total }}">{{ portfolio_totals.prior_year_total|intcomma }}</td>
             <td class="text-end" data-value="{{ portfolio_totals.last_12_total }}">{{ portfolio_totals.last_12_total|intcomma }}</td>
-            <td class="text-end diff-col" data-value="{{ portfolio_totals.change_total }}">
-              {% if portfolio_totals.change_total > 0 %}+{% endif %}{{ portfolio_totals.change_total|intcomma }}
+            <td class="text-end" data-value="{{ portfolio_totals.change_total }}">
+              <span class="{% if portfolio_totals.change_total > 0 %}text-success{% elif portfolio_totals.change_total < 0 %}text-danger{% else %}text-muted{% endif %}">
+                {% if portfolio_totals.change_total > 0 %}+{% endif %}{{ portfolio_totals.change_total|intcomma }}
+              </span>
+              {% if portfolio_totals.total_change_pct is not None %}
+              <span class="small ms-1 {% if portfolio_totals.total_change_pct > 0 %}text-success{% elif portfolio_totals.total_change_pct < 0 %}text-danger{% else %}text-muted{% endif %}">
+                {% if portfolio_totals.total_change_pct > 0 %}+{% endif %}{{ portfolio_totals.total_change_pct }}%
+              </span>
+              {% endif %}
             </td>
             <td></td>
           </tr>
@@ -183,8 +190,16 @@
             <td>{{ row.item_code }}</td>
             <td class="text-end" data-value="{{ row.last_full_year_total }}">{{ row.last_full_year_total|intcomma }}</td>
             <td class="text-end" data-value="{{ row.last_12_units }}">{{ row.last_12_units|intcomma }}</td>
-            <td class="text-end diff-col" data-value="{{ row.diff_last_12_vs_last_year }}">
-              {% if row.diff_last_12_vs_last_year > 0 %}+{% endif %}{{ row.diff_last_12_vs_last_year|intcomma }}
+            <td class="text-end" data-value="{{ row.diff_last_12_vs_last_year }}">
+              <span class="{% if row.diff_last_12_vs_last_year > 0 %}text-success{% elif row.diff_last_12_vs_last_year < 0 %}text-danger{% else %}text-muted{% endif %}">
+                {% if row.diff_last_12_vs_last_year > 0 %}+{% endif %}{{ row.diff_last_12_vs_last_year|intcomma }}
+              </span>
+              {% if row.change_pct is not None %}
+              <span class="small ms-1 {% if row.change_pct > 0 %}text-success{% elif row.change_pct < 0 %}text-danger{% else %}text-muted{% endif %}">
+                {% if row.change_pct > 0 %}+{% endif %}{{ row.change_pct }}%
+              </span>
+              {% endif %}
+              <span class="ms-1">{{ row.status_icon }}</span>
             </td>
             <td>
               {% if row.status == 'non_buy' %}<span class="badge bg-dark text-white">⚫ Non-buy</span>

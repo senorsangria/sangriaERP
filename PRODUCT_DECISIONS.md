@@ -2246,9 +2246,26 @@ Column order: Item Code, prior year total, Last 12m, Change, Status.
 A pinned totals row (separate `<tbody>`, bold, `table-active` background) appears above
 the data rows showing portfolio-level sums for prior year, Last 12m, and Change.
 Rows sorted by `status_priority` first, then `brand__name`, `sort_order`, `name`.
-A visual divider separates each status group. The Change column shows
-`last_12_units − last_full_year_total` with `+` prefix and color coding via `applyNegativeColors()`.
+A visual divider separates each status group.
 Item Code (not item name) is displayed in the Item Code column; brand name is not shown.
+
+**Change column layout (three elements in one cell):**
+`[raw change number]  [percentage]  [status icon]`
+- Raw change = `last_12_units − last_full_year_total` with `+` prefix for positives.
+- Percentage = `change_pct` formatted as e.g. `+50.0%`; omitted (`None`) for new items
+  (no prior year baseline). Shown for non-buy items (will be `−100.0%`).
+- Status icon: ⚫ Non-buy, 🔴 Declining, ⚪ Steady, 🟢 Growing, 🟡 New.
+- Color: green (`text-success`) for positive, red (`text-danger`) for negative, muted for zero.
+  Applied via Django template conditionals (not JS) to both the raw number and the percentage.
+- Totals row shows raw change + total_change_pct (no icon).
+
+**Row dict keys added:**
+- `change_pct` — `round((last_12_units − lfy_total) / lfy_total × 100, 1)` if `lfy_total > 0`, else `None`.
+- `status_icon` — emoji string for the item's status.
+
+**portfolio_totals keys added:**
+- `total_change_pct` — `round((last_12_total − prior_year_total) / prior_year_total × 100, 1)`
+  if `prior_year_total > 0`, else `None`.
 
 **Section 4 — Full Sales History (collapsed by default):**
 Bootstrap collapse containing the full monthly breakdown table (same structure as before,
@@ -2323,15 +2340,15 @@ If `multiplier is None`: projected = `None`.
 **Totals row:** Pinned separate `<tbody>` above data rows. Shows column-level sums.
 `None` projected values are treated as 0 in the totals sum.
 
-**Negative value coloring:** Same JS `applyNegativeColors()` approach as the main report.
-All numeric `<td>` elements carry `data-value="{{ raw_integer }}"`. Both Diff columns carry
-`diff-col` class for three-way green/red/muted coloring. Django template conditionals are
-NOT used for coloring.
+**Negative value coloring:** The Full Sales History table uses JS `applyNegativeColors()` for
+negative highlighting on monthly cells. The Portfolio Status Change column uses Django template
+conditionals (not JS) for three-way green/red/muted coloring on both the raw number and percentage.
+`diff-col` class is NOT used on the Portfolio Status Change column.
 
 **Main report link:** Account Name column in `account_sales_by_year.html` is now a link
 to `report_account_detail`. Each row dict in `account_sales_by_year` includes `account_id`.
 
 ---
 
-*Last updated: March 12, 2026 (Fix projection multiplier to last_12m/LFY; remove status bar; reorder portfolio columns; strip Full Sales History to monthly grid only)*
+*Last updated: March 12, 2026 (Add percentage change and status icon to Change column in Portfolio Status table)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

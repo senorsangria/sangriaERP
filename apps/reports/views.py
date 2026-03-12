@@ -702,6 +702,19 @@ def account_detail_sales(request, account_id):
             status = 'growing'
             status_priority = 4
 
+        change_pct = (
+            round((last_12_units - last_full_year_total) / last_full_year_total * 100, 1)
+            if last_full_year_total > 0
+            else None
+        )
+        status_icon = {
+            'non_buy': '⚫',
+            'declining': '🔴',
+            'steady': '⚪',
+            'growing': '🟢',
+            'new': '🟡',
+        }[status]
+
         rows.append({
             'item_name': item.name,
             'item_code': item.item_code,
@@ -719,6 +732,8 @@ def account_detail_sales(request, account_id):
             'diff_current_vs_last_year': current_combined_total - last_full_year_total,
             'status': status,
             'status_priority': status_priority,
+            'change_pct': change_pct,
+            'status_icon': status_icon,
         })
 
     # Sort by status_priority, then brand_name, sort_order, item_name
@@ -745,6 +760,11 @@ def account_detail_sales(request, account_id):
         'last_12_total': _p_last12,
         'prior_year_total': _p_prior,
         'change_total': _p_last12 - _p_prior,
+        'total_change_pct': (
+            round((_p_last12 - _p_prior) / _p_prior * 100, 1)
+            if _p_prior > 0
+            else None
+        ),
     }
 
     # ---- Totals -----------------------------------------------------------

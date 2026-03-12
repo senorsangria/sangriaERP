@@ -928,6 +928,81 @@ class AccountDetailTest(TestCase):
             'last_full_month should use the distributor-wide most recent sale, not just account B',
         )
 
+    def test_change_pct_calculated_correctly(self):
+        """change_pct = round((last_12 - lfy_total) / lfy_total * 100, 1)."""
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        # item_a: last_full_year_total=40, last_12_units=60 → change_pct=50.0
+        row_a = next(r for r in rows if r['item_name'] == 'Item A')
+        self.assertEqual(row_a['last_full_year_total'], 40)
+        self.assertEqual(row_a['last_12_units'], 60)
+        self.assertEqual(row_a['change_pct'], 50.0)
+
+    def test_change_pct_none_for_new_item(self):
+        """change_pct is None when last_full_year_total == 0 (new item)."""
+        from apps.catalog.models import Brand
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+        item = Item.objects.create(
+            brand=brand, item_code='NEWPCT', name='New Pct Item', sort_order=87,
+        )
+        # Sale only in Jan 2026 — in window but not in LFY → last_full_year_total = 0
+        make_sale(self.company, self.batch, self.account, item, date(2026, 1, 15), 15)
+
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        row = next((r for r in rows if r['item_name'] == 'New Pct Item'), None)
+        self.assertIsNotNone(row)
+        self.assertEqual(row['last_full_year_total'], 0)
+        self.assertIsNone(row['change_pct'])
+
+    def test_status_icon_in_row(self):
+        """status_icon key present and correct for each status type."""
+        from apps.catalog.models import Brand
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+
+        # Non-buy: sale only in Jan 2025 (before window)
+        nb = Item.objects.create(brand=brand, item_code='ICNB', name='Icon Nonbuy', sort_order=86)
+        make_sale(self.company, self.batch, self.account, nb, date(2025, 1, 15), 10)
+
+        # New: sale only in Jan 2026 (window, no LFY)
+        nw = Item.objects.create(brand=brand, item_code='ICNW', name='Icon New', sort_order=85)
+        make_sale(self.company, self.batch, self.account, nw, date(2026, 1, 15), 5)
+
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+
+        # All rows must have status_icon
+        for row in rows:
+            self.assertIn('status_icon', row, f'Row {row["item_name"]} missing status_icon')
+
+        # Check specific icons by status
+        expected = {
+            'non_buy': '⚫',
+            'declining': '🔴',
+            'steady': '⚪',
+            'growing': '🟢',
+            'new': '🟡',
+        }
+        for row in rows:
+            self.assertEqual(
+                row['status_icon'],
+                expected[row['status']],
+                f'Wrong icon for status {row["status"]}',
+            )
+
+    def test_total_change_pct_in_portfolio_totals(self):
+        """portfolio_totals.total_change_pct = round((last_12_total - prior) / prior * 100, 1)."""
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        pt = response.context['portfolio_totals']
+        # prior_year_total=60, last_12_total=80 → (80-60)/60*100 = 33.3...
+        self.assertEqual(pt['prior_year_total'], 60)
+        self.assertEqual(pt['last_12_total'], 80)
+        self.assertEqual(pt['total_change_pct'], 33.3)
+
     @classmethod
     def _get_client_for(cls, user):
         c = Client()
