@@ -2398,18 +2398,46 @@ This suffix is stripped from the account name before fuzzy comparison
 using `re.sub(r' [A-Z]$', '', name)`. Applied to account names only —
 never to CSV location names.
 
+**Apostrophe stripping (Improvement 1):** `normalize_for_match()` strips
+apostrophes as part of its punctuation removal step (pattern `[.,'\-]`).
+This ensures "McCaffrey's" normalizes to "MCCAFFREYS", matching the
+typical database form which omits the apostrophe.
+
+**Abbreviation expansion (Improvement 2):** CSV location names often use
+shorthand that differs from the full form in the database (e.g. "W&L" vs
+"WINE AND LIQUOR"). After normalization, `_expand_abbreviations()` expands
+a curated map of abbreviations in the CSV location name only — never in
+account names. Expansions: `W&L`→WINE AND LIQUOR, `W&S`→WINE AND SPIRITS,
+`B&W`→BEER AND WINE, `LIQ`→LIQUOR, `MKT`→MARKET, `SQ`→SQUARE,
+`STS`→SPIRITS.
+
+**City name stripping (Improvement 3):** City names frequently appear as a
+prefix or suffix in both CSV location names ("Bourbon Street Asbury") and
+database account names ("PRINCETON MCCAFFREYS"). `_strip_city()` removes
+the normalized city from the start or end of a name before name comparison.
+Applied to both the CSV location name and the candidate account name.
+Example: "PRINCETON MCCAFFREYS" with city "Princeton" → "MCCAFFREYS";
+"BOURBON ST WINE SPIRITS ASBURY" with city "Asbury" → "BOURBON ST WINE SPIRITS".
+
+**Name comparison pipeline (CSV location):**
+normalize → expand abbreviations → strip city → fuzzy compare
+
+**Name comparison pipeline (account name):**
+normalize → strip trailing single letter → strip city → fuzzy compare
+
 Confidence thresholds:
-- **≥ 80** → `high` — auto-accepted, no user action needed
-  (lowered from 85: the street number boost of +10 means genuinely correct
-  matches that share a street number score 90+, while wrong matches that
-  don't share a number stay below 80)
-- **50–79** → `review` — user selects correct account or "No Match"
+- **≥ 75** → `high` — auto-accepted, no user action needed
+  (lowered from 80: the street number boost of +10 means genuinely correct
+  matches that share a street number score 85+, while wrong matches that
+  don't share a number stay below 75)
+- **50–74** → `review` — user selects correct account or "No Match"
 - **< 50** → `none` — skipped
 
 Distributor normalization: `strip()` + `.title()` before lookup.
 `normalize_for_match()` used for all field comparison: uppercase, strip,
-remove `.,'-`, collapse spaces. Does NOT expand street abbreviations
-(deliberate — abbreviation expansion hurts name matching).
+remove `.,'-` and apostrophes, collapse spaces. Address fields use
+normalization only (no abbreviation expansion — deliberate, to keep address
+comparison symmetric).
 
 ### Views
 - `event_import_upload` (GET/POST) — upload CSV, run matching, store in session
@@ -2429,5 +2457,5 @@ The "Proceed to Import" button is present but disabled. Stage 3 will read
 
 ---
 
-*Last updated: March 13, 2026 (Improve matching: trailing letter strip, street number boost, threshold lowered to 80)*
+*Last updated: March 13, 2026 (Improve matching: apostrophe strip, abbreviation expansion, city name stripping)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

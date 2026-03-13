@@ -13,6 +13,8 @@ from apps.distribution.models import Distributor
 from apps.event_import.matching import (
     match_csv_row,
     normalize_for_match,
+    _expand_abbreviations,
+    _strip_city,
     _strip_trailing_single_letter,
     _extract_street_number,
 )
@@ -362,3 +364,98 @@ class NormalizeDistributorCasingTest(TestCase):
                             'lower-case distributor should resolve to same bucket')
         self.assertNotEqual(result_mixed['status'], 'none',
                             'mixed-case distributor should resolve to same bucket')
+
+
+# ---------------------------------------------------------------------------
+# Improvement 1: apostrophe stripping
+# ---------------------------------------------------------------------------
+
+class ApostropheNormalizationTest(TestCase):
+
+    def test_apostrophe_stripped(self):
+        """Apostrophes are removed during normalization."""
+        self.assertEqual(normalize_for_match("McCaffrey's"), 'MCCAFFREYS')
+        self.assertEqual(normalize_for_match("O'Brien's Pub"), 'OBRIENS PUB')
+
+
+# ---------------------------------------------------------------------------
+# Improvement 2: abbreviation expansion
+# ---------------------------------------------------------------------------
+
+class AbbreviationExpansionTest(TestCase):
+
+    def test_abbreviation_expansion_wl(self):
+        """'W&L' expands to 'WINE AND LIQUOR'."""
+        result = _expand_abbreviations(normalize_for_match('Empire W&L'))
+        self.assertIn('WINE AND LIQUOR', result)
+
+    def test_abbreviation_expansion_ws(self):
+        """'W&S' expands to 'WINE AND SPIRITS'."""
+        result = _expand_abbreviations(normalize_for_match('ShopRite W&S'))
+        self.assertIn('WINE AND SPIRITS', result)
+
+    def test_abbreviation_expansion_liq(self):
+        """'LIQ' expands to 'LIQUOR'."""
+        result = _expand_abbreviations('MAIN ST LIQ')
+        self.assertIn('LIQUOR', result)
+
+    def test_abbreviation_expansion_mkt(self):
+        """'MKT' expands to 'MARKET'."""
+        result = _expand_abbreviations('CORNER MKT')
+        self.assertIn('MARKET', result)
+
+
+# ---------------------------------------------------------------------------
+# Improvement 3: city stripping
+# ---------------------------------------------------------------------------
+
+class StripCityTest(TestCase):
+
+    def test_strip_city_from_end(self):
+        """City appended to location name is stripped."""
+        result = _strip_city('BOURBON ST WINE SPIRITS ASBURY', 'ASBURY')
+        self.assertEqual(result, 'BOURBON ST WINE SPIRITS')
+
+    def test_strip_city_from_start(self):
+        """City prepended to location name is stripped."""
+        result = _strip_city('PRINCETON MCCAFFREYS', 'PRINCETON')
+        self.assertEqual(result, 'MCCAFFREYS')
+
+    def test_strip_city_no_match(self):
+        """City not present in name leaves name unchanged."""
+        result = _strip_city('SHOPRITE BYRAM', 'STANHOPE')
+        self.assertEqual(result, 'SHOPRITE BYRAM')
+
+    def test_strip_city_empty_city(self):
+        """Empty city string leaves name unchanged."""
+        result = _strip_city('BOURBON ST WINE', '')
+        self.assertEqual(result, 'BOURBON ST WINE')
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: McCaffrey's / Princeton
+# ---------------------------------------------------------------------------
+
+class McCaffreysEndToEndTest(TestCase):
+
+    def test_mccaffreys_matches_high(self):
+        """
+        'McCaffrey's Market' at '301 N Harrison Ave', city 'Princeton'
+        should match 'PRINCETON MCCAFFREYS' at '301 N HARRISON ST'
+        with status='high' and score >= 75.
+
+        Relies on: apostrophe strip, city strip from both sides, and
+        street number boost (301 matches).
+        """
+        accts = [{'pk': 50, 'name': 'Princeton McCaffreys',
+                  'street': '301 N Harrison St', 'city': 'Princeton'}]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    "McCaffrey's Market",
+            'address':     '301 N Harrison Ave',
+            'city':        'Princeton',
+        }
+        result = match_csv_row(row, by_dist)
+        self.assertEqual(result['status'], 'high')
+        self.assertGreaterEqual(result['score'], 75)
