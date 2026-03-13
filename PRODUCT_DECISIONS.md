@@ -2385,9 +2385,25 @@ weighted fuzzy scoring:
 | Address | 30% | `fuzz.token_sort_ratio` |
 | City | 10% | `fuzz.token_sort_ratio` |
 
+**Street number boost:** After computing the weighted score, if the leading
+street number from the CSV address and the candidate account address both
+exist and match exactly, `+10` is added (capped at 100). Street numbers
+rarely coincide by accident, so a number match is strong evidence of a
+correct match. A number mismatch leaves the score unchanged (no penalty).
+
+**Trailing single-letter stripping:** Some account names in the database
+carry a trailing route/category letter suffix (e.g. "JIMMY S LIQUORS B",
+"SAJOMA LIQUOR INC R") that does not appear in the CSV location name.
+This suffix is stripped from the account name before fuzzy comparison
+using `re.sub(r' [A-Z]$', '', name)`. Applied to account names only —
+never to CSV location names.
+
 Confidence thresholds:
-- **≥ 85** → `high` — auto-accepted, no user action needed
-- **50–84** → `review` — user selects correct account or "No Match"
+- **≥ 80** → `high` — auto-accepted, no user action needed
+  (lowered from 85: the street number boost of +10 means genuinely correct
+  matches that share a street number score 90+, while wrong matches that
+  don't share a number stay below 80)
+- **50–79** → `review` — user selects correct account or "No Match"
 - **< 50** → `none` — skipped
 
 Distributor normalization: `strip()` + `.title()` before lookup.
@@ -2413,5 +2429,5 @@ The "Proceed to Import" button is present but disabled. Stage 3 will read
 
 ---
 
-*Last updated: March 13, 2026 (Add historical event import tool — Stages 1 & 2)*
+*Last updated: March 13, 2026 (Improve matching: trailing letter strip, street number boost, threshold lowered to 80)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

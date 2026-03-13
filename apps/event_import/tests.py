@@ -10,7 +10,12 @@ from apps.accounts.models import Account
 from apps.core.models import Company, User
 from apps.core.rbac import Role
 from apps.distribution.models import Distributor
-from apps.event_import.matching import match_csv_row, normalize_for_match
+from apps.event_import.matching import (
+    match_csv_row,
+    normalize_for_match,
+    _strip_trailing_single_letter,
+    _extract_street_number,
+)
 from apps.event_import.views import _parse_csv
 
 
@@ -155,7 +160,7 @@ class UploadAccessTest(TestCase):
 class MatchHighConfidenceTest(TestCase):
 
     def test_match_high_confidence(self):
-        """Exact name + address match returns status='high' with score >= 85."""
+        """Exact name + address match returns status='high' with score >= 80."""
         accts = [{'pk': 1, 'name': 'Main Street Wine & Spirits',
                   'street': '123 Main St', 'city': 'Hoboken'}]
         by_dist = {'Shore Point Distributing': accts}
@@ -168,7 +173,7 @@ class MatchHighConfidenceTest(TestCase):
         result = match_csv_row(row, by_dist)
         self.assertEqual(result['status'], 'high')
         self.assertIsNotNone(result['match'])
-        self.assertGreaterEqual(result['score'], 85)
+        self.assertGreaterEqual(result['score'], 80)
 
     def test_match_high_confidence_with_minor_variation(self):
         """Name with slight punctuation difference still scores >= 85."""
@@ -242,6 +247,91 @@ class MatchNoneTest(TestCase):
         self.assertEqual(result['status'], 'none')
         self.assertEqual(result['score'], 0.0)
         self.assertEqual(result['candidates'], [])
+
+
+class TrailingLetterStrippingTest(TestCase):
+
+    def test_trailing_single_letter_stripped(self):
+        """Trailing ' B' suffix is removed from normalized account name."""
+        self.assertEqual(_strip_trailing_single_letter('JIMMY S LIQUORS B'), 'JIMMY S LIQUORS')
+        self.assertEqual(_strip_trailing_single_letter('SAJOMA LIQUOR INC R'), 'SAJOMA LIQUOR INC')
+        self.assertEqual(_strip_trailing_single_letter('BRONX LIQUOR & WINE B'), 'BRONX LIQUOR & WINE')
+
+    def test_non_trailing_single_letter_unchanged(self):
+        """Names that do not end in a lone letter are left alone."""
+        # 'S' in 'CONSUMER S DISCOUNT' is not at the end
+        name = 'CONSUMER S DISCOUNT WINES & SPIRITS'
+        self.assertEqual(_strip_trailing_single_letter(name), name)
+
+    def test_trailing_letter_stripped_improves_match(self):
+        """Account name with trailing suffix matches CSV location better after stripping."""
+        # Without stripping, "JIMMY S LIQUORS B" vs "JIMMY S LIQUORS" would lose points.
+        # With stripping the account name becomes identical to the CSV location.
+        accts = [{'pk': 10, 'name': 'Jimmy S Liquors B',
+                  'street': '50 Main St', 'city': 'Newark'}]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    'Jimmy S Liquors',
+            'address':     '50 Main St',
+            'city':        'Newark',
+        }
+        result = match_csv_row(row, by_dist)
+        self.assertEqual(result['status'], 'high')
+        self.assertGreaterEqual(result['score'], 80)
+
+
+class StreetNumberBoostTest(TestCase):
+
+    def test_street_number_boost(self):
+        """
+        Two candidates with similar names but only one sharing the street
+        number should score higher and win.
+        """
+        accts = [
+            {'pk': 20, 'name': 'Main Liquors', 'street': '100 Elm St',  'city': 'Newark'},
+            {'pk': 21, 'name': 'Main Liquors', 'street': '999 Oak Ave', 'city': 'Newark'},
+        ]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    'Main Liquors',
+            'address':     '100 Elm St',
+            'city':        'Newark',
+        }
+        result = match_csv_row(row, by_dist)
+        # The match should be pk=20 (street number 100 matches)
+        self.assertIsNotNone(result['match'])
+        self.assertEqual(result['match']['pk'], 20)
+        # Score should reflect the boost
+        self.assertGreaterEqual(result['score'], 80)
+
+    def test_street_number_no_boost_when_mismatch(self):
+        """Mismatched street numbers do not receive the +10 boost."""
+        accts = [{'pk': 30, 'name': 'Oak Street Wine',
+                  'street': '500 Oak St', 'city': 'Trenton'}]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    'Oak Street Wine',
+            'address':     '999 Oak St',   # different number
+            'city':        'Trenton',
+        }
+        result_mismatch = match_csv_row(row, by_dist)
+
+        # Now try with matching number — should score higher
+        row_match = {**row, 'address': '500 Oak St'}
+        result_match = match_csv_row(row_match, by_dist)
+
+        self.assertGreater(result_match['score'], result_mismatch['score'])
+
+    def test_extract_street_number(self):
+        """_extract_street_number pulls the leading numeric group."""
+        self.assertEqual(_extract_street_number('1179 St Georges Ave'), '1179')
+        self.assertEqual(_extract_street_number('90-70 Rt 206'), '90')
+        self.assertEqual(_extract_street_number('39-05 104TH ST'), '39')
+        self.assertEqual(_extract_street_number(''), '')
+        self.assertEqual(_extract_street_number('Main St'), '')
 
 
 class NormalizeDistributorCasingTest(TestCase):
