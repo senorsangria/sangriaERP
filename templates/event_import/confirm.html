@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Historical Event Import — Confirm{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6">
+
+    <h2 class="mb-4">Historical Event Import &mdash; Ready to Import</h2>
+
+    <div class="card mb-4">
+      <div class="card-body text-center py-4">
+        <div class="fs-1 mb-3">&#x1F4CB;</div>
+        <h4 class="mb-3">
+          Ready to import <strong>{{ matched_events }}</strong>
+          event{{ matched_events|pluralize }}
+          across <strong>{{ matched_accounts }}</strong>
+          account{{ matched_accounts|pluralize }}.
+        </h4>
+        {% if skipped_events %}
+        <p class="text-muted mb-0">
+          <span class="text-danger fw-semibold">{{ skipped_events }}</span>
+          event{{ skipped_events|pluralize }} will be skipped (no match).
+        </p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="alert alert-warning">
+      <i class="bi bi-hourglass me-1"></i>
+      <strong>Stage 3 (actual import) is not yet built.</strong>
+      The "Proceed to Import" button is disabled until Stage 3 is implemented.
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <a href="{% url 'event_import_upload' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-counterclockwise me-1"></i>Start Over
+      </a>
+      <button class="btn btn-primary px-4" disabled title="Stage 3 not yet built">
+        <i class="bi bi-play-circle me-1"></i>Proceed to Import
+      </button>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

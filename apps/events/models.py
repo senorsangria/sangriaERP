@@ -102,6 +102,19 @@ class Event(TimeStampedModel):
     # Populated when Event Manager requests revision on a Recap Submitted event
     revision_note = models.TextField(blank=True)
 
+    # Import flags — set only on events created via historical import
+    is_imported = models.BooleanField(
+        default=False,
+        help_text='True for events created via historical import.',
+    )
+    legacy_ambassador_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text='Ambassador name from historical import. '
+                  'Only set on imported events.',
+    )
+
     # Recap fields — populated by ambassador during recap submission
     # Tasting Part 1
     recap_samples_poured = models.IntegerField(null=True, blank=True)

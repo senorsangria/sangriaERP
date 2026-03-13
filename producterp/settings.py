@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     'apps.events',
     'apps.imports',
     'apps.reports',
+    'apps.event_import',
 ]
 
 MIDDLEWARE = [

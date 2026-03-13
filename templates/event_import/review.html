@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% block title %}Historical Event Import — Match Review{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <h2 class="mb-0">Historical Event Import &mdash; Match Review</h2>
+  <a href="{% url 'event_import_upload' %}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left me-1"></i>Start Over
+  </a>
+</div>
+
+{# ── Summary card ── #}
+<div class="card mb-4">
+  <div class="card-header">
+    <h5 class="mb-0"><i class="bi bi-clipboard-data me-2"></i>Summary</h5>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Total unique locations</div>
+        <div class="fs-4 fw-bold">{{ summary.total_unique_locations }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="text-muted small">Total events</div>
+        <div class="fs-4 fw-bold">{{ summary.total_rows }}</div>
+      </div>
+    </div>
+    <hr>
+    <div class="row g-3">
+      <div class="col-12 col-sm-4">
+        <div class="d-flex align-items-start gap-2">
+          <span class="fs-5">&#x2705;</span>
+          <div>
+            <div class="fw-semibold text-success">High confidence</div>
+            <div class="text-muted small">
+              {{ summary.high_count }} location{{ summary.high_count|pluralize }}
+              &bull; {{ summary.high_rows }} event{{ summary.high_rows|pluralize }}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-sm-4">
+        <div class="d-flex align-items-start gap-2">
+          <span class="fs-5">&#x26A0;&#xFE0F;</span>
+          <div>
+            <div class="fw-semibold text-warning">Needs review</div>
+            <div class="text-muted small">
+              {{ summary.review_count }} location{{ summary.review_count|pluralize }}
+              &bull; {{ summary.review_rows }} event{{ summary.review_rows|pluralize }}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-sm-4">
+        <div class="d-flex align-items-start gap-2">
+          <span class="fs-5">&#x274C;</span>
+          <div>
+            <div class="fw-semibold text-danger">No match found</div>
+            <div class="text-muted small">
+              {{ summary.none_count }} location{{ summary.none_count|pluralize }}
+              &bull; {{ summary.none_rows }} event{{ summary.none_rows|pluralize }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<form method="post" action="{% url 'event_import_confirm' %}">
+  {% csrf_token %}
+
+  {# ══════════════════════════════════════════════════
+     Section 2 — Needs Review  (expanded, shown first so user resolves before scrolling)
+     ══════════════════════════════════════════════════ #}
+  {% if review_matches %}
+  <div class="mb-4">
+    <h4 class="mb-3">
+      <span class="badge bg-warning text-dark me-2">&#x26A0;</span>
+      Needs Review
+      <span class="badge bg-secondary ms-2">{{ summary.review_count }}</span>
+    </h4>
+    <p class="text-muted">
+      These locations partially matched accounts in the database.
+      Select the correct account for each, or choose "No Match" to skip.
+    </p>
+
+    {% for item in review_matches %}
+    <div class="card mb-3 border-warning">
+      <div class="card-body">
+        <div class="row g-3">
+
+          {# Left — CSV data #}
+          <div class="col-12 col-md-5">
+            <h6 class="text-muted text-uppercase small mb-2">CSV Data</h6>
+            <dl class="mb-0 row row-cols-1 g-1" style="font-size:.9rem">
+              <dt class="col fw-semibold">Distributor</dt>
+              <dd class="col text-truncate">{{ item.distributor }}</dd>
+
+              <dt class="col fw-semibold">Location</dt>
+              <dd class="col text-truncate">{{ item.location }}</dd>
+
+              <dt class="col fw-semibold">Address</dt>
+              <dd class="col text-truncate">{{ item.address }}</dd>
+
+              <dt class="col fw-semibold">City</dt>
+              <dd class="col text-truncate">{{ item.city }}</dd>
+
+              <dt class="col fw-semibold">Events</dt>
+              <dd class="col">{{ item.row_count }}</dd>
+            </dl>
+          </div>
+
+          {# Right — candidates #}
+          <div class="col-12 col-md-7">
+            <h6 class="text-muted text-uppercase small mb-2">Select Match</h6>
+            {% for candidate in item.candidates %}
+            <div class="form-check mb-2">
+              <input
+                class="form-check-input"
+                type="radio"
+                name="match_{{ item.csv_key }}"
+                id="cand_{{ forloop.parentloop.counter }}_{{ forloop.counter }}"
+                value="{{ candidate.pk }}"
+              >
+              <label
+                class="form-check-label"
+                for="cand_{{ forloop.parentloop.counter }}_{{ forloop.counter }}"
+              >
+                <span class="fw-semibold">{{ candidate.name }}</span>
+                <span class="text-muted small ms-1">
+                  {{ candidate.street }}, {{ candidate.city }}
+                </span>
+                <span class="badge bg-secondary ms-1" title="Match score">
+                  {{ candidate.score|floatformat:0 }}%
+                </span>
+              </label>
+            </div>
+            {% endfor %}
+            <div class="form-check mt-2">
+              <input
+                class="form-check-input"
+                type="radio"
+                name="match_{{ item.csv_key }}"
+                id="none_{{ forloop.counter }}"
+                value="none"
+                checked
+              >
+              <label class="form-check-label text-muted" for="none_{{ forloop.counter }}">
+                No Match &mdash; skip these events
+              </label>
+            </div>
+          </div>
+
+        </div>{# /row #}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# ══════════════════════════════════════════════════
+     Section 1 — High Confidence  (collapsed)
+     ══════════════════════════════════════════════════ #}
+  {% if high_matches %}
+  <div class="mb-4">
+    <button
+      class="btn btn-link text-decoration-none p-0 mb-2 d-flex align-items-center gap-2"
+      type="button"
+      data-bs-toggle="collapse"
+      data-bs-target="#highCollapse"
+      aria-expanded="false"
+      aria-controls="highCollapse"
+    >
+      <span class="fs-5">&#x2705;</span>
+      <h4 class="mb-0">
+        High Confidence Matches
+        <span class="badge bg-success ms-2">{{ summary.high_count }}</span>
+      </h4>
+      <i class="bi bi-chevron-down small text-muted"></i>
+    </button>
+    <p class="text-muted small mb-2">
+      These will be imported automatically — no action needed.
+    </p>
+
+    <div class="collapse" id="highCollapse">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Distributor</th>
+              <th>CSV Location</th>
+              <th>CSV Address</th>
+              <th>CSV City</th>
+              <th>Matched Account</th>
+              <th class="text-end">Score</th>
+              <th class="text-end">Events</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in high_matches %}
+            <tr>
+              <td class="text-truncate" style="max-width:120px">{{ item.distributor }}</td>
+              <td class="text-truncate" style="max-width:150px">{{ item.location }}</td>
+              <td class="text-truncate" style="max-width:150px">{{ item.address }}</td>
+              <td>{{ item.city }}</td>
+              <td class="fw-semibold">{{ item.match_account_name }}</td>
+              <td class="text-end">
+                <span class="badge bg-success">{{ item.score|floatformat:0 }}%</span>
+              </td>
+              <td class="text-end">{{ item.row_count }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ══════════════════════════════════════════════════
+     Section 3 — No Match  (collapsed)
+     ══════════════════════════════════════════════════ #}
+  {% if none_matches %}
+  <div class="mb-4">
+    <button
+      class="btn btn-link text-decoration-none p-0 mb-2 d-flex align-items-center gap-2"
+      type="button"
+      data-bs-toggle="collapse"
+      data-bs-target="#noneCollapse"
+      aria-expanded="false"
+      aria-controls="noneCollapse"
+    >
+      <span class="fs-5">&#x274C;</span>
+      <h4 class="mb-0">
+        No Match Found
+        <span class="badge bg-danger ms-2">{{ summary.none_count }}</span>
+      </h4>
+      <i class="bi bi-chevron-down small text-muted"></i>
+    </button>
+    <p class="text-muted small mb-2">
+      These events will be skipped — no account scored above 50%.
+    </p>
+
+    <div class="collapse" id="noneCollapse">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Distributor</th>
+              <th>CSV Location</th>
+              <th>CSV Address</th>
+              <th>CSV City</th>
+              <th class="text-end">Events</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in none_matches %}
+            <tr>
+              <td class="text-truncate" style="max-width:120px">{{ item.distributor }}</td>
+              <td class="text-truncate" style="max-width:150px">{{ item.location }}</td>
+              <td class="text-truncate" style="max-width:150px">{{ item.address }}</td>
+              <td>{{ item.city }}</td>
+              <td class="text-end">{{ item.row_count }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Confirm button ── #}
+  <div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top flex-wrap gap-2">
+    <a href="{% url 'event_import_upload' %}" class="btn btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Start Over
+    </a>
+    <button type="submit" class="btn btn-primary px-4">
+      <i class="bi bi-check2-circle me-1"></i>Confirm Selections
+    </button>
+  </div>
+
+</form>
+{% endblock %}

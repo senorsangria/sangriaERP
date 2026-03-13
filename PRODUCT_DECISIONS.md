@@ -284,6 +284,7 @@ Searchable list for one-off or exception assignments
 | Phase 10.3.3 Tweaks | Festival→Special Event, Sort Order, Revert Complete, Account Mgmt | ✅ Complete |
 | Phase 10.4 | Expense Management | ✅ Complete |
 | Phase 10.5 | RBAC Migration + Ok to Pay + Payroll Reviewer | ✅ Complete |
+| Phase 10.6 | Historical Event Import — Stages 1 & 2 (matching + review) | ✅ Complete |
 
 ---
 
@@ -2350,5 +2351,67 @@ to `report_account_detail`. Each row dict in `account_sales_by_year` includes `a
 
 ---
 
-*Last updated: March 12, 2026 (Add percentage change and status icon to Change column in Portfolio Status table)*
+## Historical Event Import Tool
+
+### Overview
+A two-stage pipeline for importing historical tasting events from a CSV file.
+Stage 1 (matching) and Stage 2 (review interface) are built. Stage 3 (actual
+event creation) is deferred pending review of match results in production.
+
+### App
+`apps/event_import/` — registered in INSTALLED_APPS as `event_import`.
+URLs mounted at `/event-import/`.
+Access restricted to Supplier Admin.
+
+### Model Changes
+Two fields added to `apps/events/models.py` `Event`:
+- `is_imported` — BooleanField, default False. True for events created via import.
+- `legacy_ambassador_name` — CharField(255), blank, default ''. Ambassador name
+  from the historical CSV. Only populated on imported events.
+Migration: `apps/events/migrations/0007_add_import_fields.py`
+
+### Dependencies
+`rapidfuzz==3.14.3` added to `requirements.txt`. Installed to
+`/home/runner/.local/lib/python3.13/site-packages` in the dev environment
+(PYTHONPATH must include this path). Will install normally on Render via pip.
+
+### Matching Logic (`apps/event_import/matching.py`)
+Each CSV row is matched against active accounts for its distributor using
+weighted fuzzy scoring:
+
+| Component | Weight | Method |
+|-----------|--------|--------|
+| Name (location vs account name) | 60% | `fuzz.token_sort_ratio` |
+| Address | 30% | `fuzz.token_sort_ratio` |
+| City | 10% | `fuzz.token_sort_ratio` |
+
+Confidence thresholds:
+- **≥ 85** → `high` — auto-accepted, no user action needed
+- **50–84** → `review` — user selects correct account or "No Match"
+- **< 50** → `none` — skipped
+
+Distributor normalization: `strip()` + `.title()` before lookup.
+`normalize_for_match()` used for all field comparison: uppercase, strip,
+remove `.,'-`, collapse spaces. Does NOT expand street abbreviations
+(deliberate — abbreviation expansion hurts name matching).
+
+### Views
+- `event_import_upload` (GET/POST) — upload CSV, run matching, store in session
+- `event_import_review` (GET) — display results by confidence tier
+- `event_import_confirm` (POST) — merge user selections + high matches into
+  final map, store in session, show summary with disabled "Proceed to Import"
+
+### Session Keys
+- `event_import_matches` — `{high: [...], review: [...], none: [...]}`
+- `event_import_rows` — raw CSV rows (list of dicts), needed for Stage 3
+- `event_import_confirmed` — final `{csv_key → account_pk | None}` map
+
+### Stage 3 (Not Yet Built)
+The "Proceed to Import" button is present but disabled. Stage 3 will read
+`event_import_confirmed` from the session and create `Event` records with
+`is_imported=True` and `legacy_ambassador_name` set from the CSV.
+
+---
+
+*Last updated: March 13, 2026 (Add historical event import tool — Stages 1 & 2)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

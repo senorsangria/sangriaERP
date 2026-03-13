@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Historical Event Import{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6">
+
+    <h2 class="mb-4">Historical Event Import</h2>
+
+    <div class="card">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-cloud-upload me-2"></i>Upload Events CSV</h5>
+      </div>
+      <div class="card-body">
+        <p class="text-muted mb-3">
+          Upload a CSV file of historical tasting events. The system will attempt to
+          match each location to an existing account in the database.
+        </p>
+
+        <div class="alert alert-info mb-4">
+          <i class="bi bi-info-circle me-1"></i>
+          <strong>Expected CSV columns:</strong>
+          <code>distributor</code>, <code>location</code>, <code>address</code>, <code>city</code>
+          (plus any additional columns — they will be preserved for Stage 3).
+        </div>
+
+        <form method="post" enctype="multipart/form-data">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label for="csv_file" class="form-label fw-semibold">CSV File</label>
+            <input
+              type="file"
+              class="form-control"
+              id="csv_file"
+              name="csv_file"
+              accept=".csv"
+              required
+            >
+          </div>
+          <div class="d-grid">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-search me-1"></i>Upload &amp; Match
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

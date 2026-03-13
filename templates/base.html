@@ -161,6 +161,7 @@
           {% endif %}
           <li class="nav-item"><a class="nav-link" href="{% url 'mapping_list' %}"><i class="bi bi-arrow-left-right me-1"></i>Item Mapping</a></li>
           <li class="nav-item"><a class="nav-link" href="{% url 'batch_list' %}"><i class="bi bi-clock-history me-1"></i>Import History</a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'event_import_upload' %}"><i class="bi bi-calendar2-plus me-1"></i>Historical Event Import</a></li>
           {% endif %}
 
           {% if user.is_saas_admin %}
@@ -358,6 +359,12 @@
         <li class="nav-item">
           <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
             <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
+          </a>
+        </li>
+        <li class="nav-section">Tools</li>
+        <li class="nav-item">
+          <a class="nav-link {% if 'event_import' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_import_upload' %}">
+            <i class="bi bi-calendar2-plus me-2"></i>Historical Event Import
           </a>
         </li>
 
