@@ -62,16 +62,53 @@ def _build_accounts_by_distributor(company):
     return result
 
 
+COLUMN_MAP = {
+    'event location':               'location',
+    'event date':                   'date',
+    'event note 1 (retail contact)': 'note1',
+    'event note 2 (retailer phone)': 'note2',
+    'promo person':                 'promo_person',
+    'qr code scans':                'qr_scans',
+    'racap note 1':                 'recap1',
+    'recap note 2':                 'recap2',
+    'bottles sold bwred0750':       'sold_bwred0750',
+    'bottles sold bwred1500':       'sold_bwred1500',
+    'bottles sold bwwht0750':       'sold_bwwht0750',
+    'bottles sold bwwht1500':       'sold_bwwht1500',
+    'bottles sold bwapprasp1l':     'sold_bwapprasp1l',
+    'bottles used bwred0750':       'used_bwred0750',
+    'bottles used bwred1500':       'used_bwred1500',
+    'bottles used bwwht0750':       'used_bwwht0750',
+    'bottles used bwwht1500':       'used_bwwht1500',
+    'bottles used bwapprasp1l':     'used_bwapprasp1l',
+    'bottle price bwred0750':       'price_bwred0750',
+    'bottle price bwred1500':       'price_bwred1500',
+    'bottle price bwwht0750':       'price_bwwht0750',
+    'bottle price bwwht1500':       'price_bwwht1500',
+    'bottle price bwapprasp1l':     'price_bwapprasp1l',
+}
+
+
 def _parse_csv(file_obj):
     """
     Parse an uploaded CSV file-like object.
-    Returns a list of dicts (one per row, keys lowercased and stripped).
+    Returns a list of dicts (one per row, keys lowercased, stripped,
+    and renamed via COLUMN_MAP to match the internal field names used
+    by the matching engine and Stage 3 import).
     """
     text = file_obj.read().decode('utf-8-sig')
     reader = csv.DictReader(io.StringIO(text))
     rows = []
     for row in reader:
-        rows.append({k.strip().lower(): (v or '').strip() for k, v in row.items()})
+        normalized = {
+            k.strip().lower(): (v or '').strip()
+            for k, v in row.items()
+        }
+        mapped = {
+            COLUMN_MAP.get(k, k): v
+            for k, v in normalized.items()
+        }
+        rows.append(mapped)
     return rows
 
 

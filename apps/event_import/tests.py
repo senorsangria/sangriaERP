@@ -1,6 +1,8 @@
 """
 Tests for the event_import app — matching engine and upload access control.
 """
+import io
+
 from django.test import Client, TestCase
 from django.urls import reverse
 
@@ -9,6 +11,7 @@ from apps.core.models import Company, User
 from apps.core.rbac import Role
 from apps.distribution.models import Distributor
 from apps.event_import.matching import match_csv_row, normalize_for_match
+from apps.event_import.views import _parse_csv
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +58,65 @@ def _acct_dict(acct):
 
 def _accounts_by_distributor(dist_name, accounts):
     return {dist_name: [_acct_dict(a) for a in accounts]}
+
+
+# ---------------------------------------------------------------------------
+# CSV column mapping
+# ---------------------------------------------------------------------------
+
+class CsvColumnMappingTest(TestCase):
+
+    def _make_file(self, csv_text):
+        """Wrap CSV text in a file-like object as _parse_csv expects."""
+        return io.BytesIO(csv_text.encode('utf-8'))
+
+    def test_event_location_mapped_to_location(self):
+        """'Event Location' CSV column is mapped to the 'location' key."""
+        csv_text = (
+            'Distributor,Event Location,Address,City\r\n'
+            'Shore Point,Main Street Wine & Spirits,123 Main St,Hoboken\r\n'
+        )
+        rows = _parse_csv(self._make_file(csv_text))
+        self.assertEqual(len(rows), 1)
+        self.assertIn('location', rows[0])
+        self.assertNotIn('event location', rows[0])
+        self.assertEqual(rows[0]['location'], 'Main Street Wine & Spirits')
+
+    def test_all_column_mappings_applied(self):
+        """All renamed columns are present under their mapped names."""
+        csv_text = (
+            'Distributor,Event Location,Address,City,Event Date,'
+            'Promo Person,QR Code Scans,Samples,'
+            'Racap Note 1,Recap Note 2,'
+            'Bottles Sold BWRed0750,Bottles Used BWRed0750,Bottle Price BWRed0750\r\n'
+            'Shore Point,Test Store,1 Main St,Newark,2024-01-15,'
+            'Jane Doe,5,10,'
+            'Good event,Follow up,'
+            '3,1,12.99\r\n'
+        )
+        rows = _parse_csv(self._make_file(csv_text))
+        row = rows[0]
+        self.assertEqual(row['location'], 'Test Store')
+        self.assertEqual(row['date'], '2024-01-15')
+        self.assertEqual(row['promo_person'], 'Jane Doe')
+        self.assertEqual(row['qr_scans'], '5')
+        self.assertEqual(row['recap1'], 'Good event')
+        self.assertEqual(row['recap2'], 'Follow up')
+        self.assertEqual(row['sold_bwred0750'], '3')
+        self.assertEqual(row['used_bwred0750'], '1')
+        self.assertEqual(row['price_bwred0750'], '12.99')
+
+    def test_passthrough_columns_unchanged(self):
+        """Columns not in COLUMN_MAP are kept as-is (lowercased)."""
+        csv_text = (
+            'Distributor,Event Location,Address,City\r\n'
+            'Shore Point,Test Store,1 Main St,Newark\r\n'
+        )
+        rows = _parse_csv(self._make_file(csv_text))
+        row = rows[0]
+        self.assertEqual(row['distributor'], 'Shore Point')
+        self.assertEqual(row['address'], '1 Main St')
+        self.assertEqual(row['city'], 'Newark')
 
 
 # ---------------------------------------------------------------------------
