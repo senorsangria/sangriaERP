@@ -9,9 +9,9 @@ import re
 from rapidfuzz import fuzz
 
 # Confidence thresholds
-HIGH_THRESHOLD   = 80   # ≥ 80 → auto-accepted (lowered from 85; street number
+HIGH_THRESHOLD   = 75   # ≥ 75 → auto-accepted (lowered from 80; street number
                          #         boost of +10 makes genuinely correct matches
-                         #         score 90+ while wrong matches stay below 80)
+                         #         score 85+ while wrong matches stay below 75)
 REVIEW_THRESHOLD = 50   # 50–79 → needs user review
 
 

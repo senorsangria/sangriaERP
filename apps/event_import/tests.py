@@ -160,7 +160,7 @@ class UploadAccessTest(TestCase):
 class MatchHighConfidenceTest(TestCase):
 
     def test_match_high_confidence(self):
-        """Exact name + address match returns status='high' with score >= 80."""
+        """Exact name + address match returns status='high' with score >= 75."""
         accts = [{'pk': 1, 'name': 'Main Street Wine & Spirits',
                   'street': '123 Main St', 'city': 'Hoboken'}]
         by_dist = {'Shore Point Distributing': accts}
@@ -173,7 +173,7 @@ class MatchHighConfidenceTest(TestCase):
         result = match_csv_row(row, by_dist)
         self.assertEqual(result['status'], 'high')
         self.assertIsNotNone(result['match'])
-        self.assertGreaterEqual(result['score'], 80)
+        self.assertGreaterEqual(result['score'], 75)
 
     def test_match_high_confidence_with_minor_variation(self):
         """Name with slight punctuation difference still scores >= 85."""
@@ -278,7 +278,7 @@ class TrailingLetterStrippingTest(TestCase):
         }
         result = match_csv_row(row, by_dist)
         self.assertEqual(result['status'], 'high')
-        self.assertGreaterEqual(result['score'], 80)
+        self.assertGreaterEqual(result['score'], 75)
 
 
 class StreetNumberBoostTest(TestCase):
@@ -304,7 +304,7 @@ class StreetNumberBoostTest(TestCase):
         self.assertIsNotNone(result['match'])
         self.assertEqual(result['match']['pk'], 20)
         # Score should reflect the boost
-        self.assertGreaterEqual(result['score'], 80)
+        self.assertGreaterEqual(result['score'], 75)
 
     def test_street_number_no_boost_when_mismatch(self):
         """Mismatched street numbers do not receive the +10 boost."""
