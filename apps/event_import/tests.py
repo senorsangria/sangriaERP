@@ -3,6 +3,7 @@ Tests for the event_import app — matching engine and upload access control.
 """
 import csv
 import io
+import datetime
 
 from django.test import Client, TestCase
 from django.urls import reverse
@@ -11,6 +12,7 @@ from apps.accounts.models import Account
 from apps.core.models import Company, User
 from apps.core.rbac import Role
 from apps.distribution.models import Distributor
+from apps.events.models import Event
 from apps.event_import.matching import (
     match_csv_row,
     normalize_for_match,
@@ -896,3 +898,89 @@ class ExportCsvAccessTest(TestCase):
         self.assertEqual(row['Matched Account Name'],    '')
         self.assertEqual(row['Matched Account Address'], '')
         self.assertEqual(row['Matched Account City'],    '')
+
+
+# ---------------------------------------------------------------------------
+# Delete all imported events
+# ---------------------------------------------------------------------------
+
+def make_event(company, is_imported=True):
+    return Event.objects.create(
+        company=company,
+        is_imported=is_imported,
+        date=datetime.date(2024, 1, 15),
+    )
+
+
+class DeleteAllImportedEventsTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Delete Test Co')
+        self.client  = Client()
+
+    def test_delete_requires_supplier_admin(self):
+        """Non-supplier-admin is redirected to dashboard."""
+        ambassador = make_user(self.company, 'ambassador', username='amb_del')
+        self.client.login(username='amb_del', password='testpass123')
+        response = self.client.get(reverse('event_import_delete_all'))
+        self.assertRedirects(
+            response,
+            reverse('dashboard'),
+            fetch_redirect_response=False,
+        )
+
+    def test_delete_get_shows_count(self):
+        """GET request shows the count of imported events in the response."""
+        admin = make_user(self.company, 'supplier_admin', username='sadmin_del_get')
+        self.client.login(username='sadmin_del_get', password='testpass123')
+        make_event(self.company, is_imported=True)
+        make_event(self.company, is_imported=True)
+        response = self.client.get(reverse('event_import_delete_all'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '2')
+
+    def test_delete_post_removes_imported_events(self):
+        """POST deletes all is_imported=True events for the company and redirects."""
+        admin = make_user(self.company, 'supplier_admin', username='sadmin_del_post')
+        self.client.login(username='sadmin_del_post', password='testpass123')
+        make_event(self.company, is_imported=True)
+        make_event(self.company, is_imported=True)
+        response = self.client.post(reverse('event_import_delete_all'))
+        self.assertRedirects(
+            response,
+            reverse('event_import_upload'),
+            fetch_redirect_response=False,
+        )
+        self.assertEqual(
+            Event.objects.filter(is_imported=True, company=self.company).count(),
+            0,
+        )
+
+    def test_delete_post_preserves_non_imported_events(self):
+        """POST does not delete events where is_imported=False."""
+        admin = make_user(self.company, 'supplier_admin', username='sadmin_del_pres')
+        self.client.login(username='sadmin_del_pres', password='testpass123')
+        make_event(self.company, is_imported=True)
+        make_event(self.company, is_imported=False)
+        self.client.post(reverse('event_import_delete_all'))
+        self.assertEqual(
+            Event.objects.filter(is_imported=False, company=self.company).count(),
+            1,
+        )
+
+    def test_delete_post_scoped_to_company(self):
+        """POST only deletes imported events for the user's company, not other companies."""
+        other_company = make_company('Other Co')
+        admin = make_user(self.company, 'supplier_admin', username='sadmin_del_scope')
+        self.client.login(username='sadmin_del_scope', password='testpass123')
+        make_event(self.company,  is_imported=True)
+        make_event(other_company, is_imported=True)
+        self.client.post(reverse('event_import_delete_all'))
+        self.assertEqual(
+            Event.objects.filter(is_imported=True, company=self.company).count(),
+            0,
+        )
+        self.assertEqual(
+            Event.objects.filter(is_imported=True, company=other_company).count(),
+            1,
+        )

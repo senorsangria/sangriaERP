@@ -18,6 +18,7 @@ from django.shortcuts import redirect, render
 
 from apps.accounts.models import Account
 from apps.event_import.matching import match_csv_row
+from apps.events.models import Event
 
 
 # ---------------------------------------------------------------------------
@@ -325,11 +326,17 @@ def event_import_confirm(request):
     skipped_events = sum(row_counts.get(k, 0) for k in skipped_keys)
     matched_accounts = len(set(v for v in final_map.values() if v is not None))
 
+    imported_count = Event.objects.filter(
+        is_imported=True,
+        company=request.user.company,
+    ).count()
+
     return render(request, 'event_import/confirm.html', {
         'matched_events':   matched_events,
         'matched_accounts': matched_accounts,
         'skipped_events':   skipped_events,
         'total_events':     matched_events + skipped_events,
+        'imported_count':   imported_count,
     })
 
 
@@ -391,3 +398,28 @@ def event_import_export_csv(request):
     response = HttpResponse(output.getvalue(), content_type='text/csv')
     response['Content-Disposition'] = 'attachment; filename="event_import_matched.csv"'
     return response
+
+
+# ---------------------------------------------------------------------------
+# View 5 — Delete All Imported Events
+# ---------------------------------------------------------------------------
+
+def event_import_delete_all(request):
+    guard = _require_supplier_admin(request)
+    if guard:
+        return guard
+
+    qs = Event.objects.filter(
+        is_imported=True,
+        company=request.user.company,
+    )
+
+    if request.method == 'POST':
+        count = qs.count()
+        qs.delete()
+        messages.success(request, f'Successfully deleted {count} imported event{("s" if count != 1 else "")}.')
+        return redirect('event_import_upload')
+
+    # GET — show confirmation page
+    count = qs.count()
+    return render(request, 'event_import/delete_all.html', {'imported_count': count})

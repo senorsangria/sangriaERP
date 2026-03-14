@@ -39,6 +39,12 @@
         <a href="{% url 'event_import_export_csv' %}" class="btn btn-outline-primary">
           <i class="bi bi-download"></i> Export Matched CSV
         </a>
+        <button type="button"
+                class="btn btn-outline-danger"
+                data-bs-toggle="modal"
+                data-bs-target="#deleteImportedModal">
+          <i class="bi bi-trash"></i> Delete All Imported Events
+        </button>
         <button class="btn btn-primary px-4" disabled title="Stage 3 not yet built">
           <i class="bi bi-play-circle me-1"></i>Proceed to Import
         </button>
@@ -50,6 +56,29 @@
       and the matching engine will auto-match most records.
     </p>
 
+  </div>
+</div>
+
+<!-- Delete All Imported Events Modal -->
+<div class="modal fade" id="deleteImportedModal" tabindex="-1" aria-labelledby="deleteImportedModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteImportedModalLabel">Delete All Imported Events</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        This will permanently delete all <strong>{{ imported_count }}</strong> imported
+        event{{ imported_count|pluralize }} and cannot be undone. Are you sure?
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <form method="post" action="{% url 'event_import_delete_all' %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-danger">Delete All Imported Events</button>
+        </form>
+      </div>
+    </div>
   </div>
 </div>
 {% endblock %}

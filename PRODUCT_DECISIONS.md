@@ -2503,7 +2503,22 @@ The "Proceed to Import" button is present but disabled. Stage 3 will read
 `event_import_confirmed` from the session and create `Event` records with
 `is_imported=True` and `legacy_ambassador_name` set from the CSV.
 
+### Delete All Imported Events (`/event-import/delete-all/`)
+A "Delete All Imported Events" button on the confirmation page lets the user
+permanently delete all previously imported events. Design decisions:
+
+- **Scoped to the user's company** — only deletes `Event` records where
+  `is_imported=True` and `company=request.user.company`. Events belonging to
+  other tenants are never touched.
+- **Cascades to related records** — deleting an `Event` also removes related
+  `EventItemRecap`, `EventPhoto`, and `Expense` records via Django's CASCADE.
+- **Confirmation modal required** — clicking the button opens a Bootstrap modal
+  showing the count of currently imported events before deletion proceeds.
+  The modal includes a Cancel button and a POST-based Confirm button.
+- **Access: Supplier Admin only** — non-supplier-admins are redirected to
+  dashboard, matching the access pattern of the rest of the event import tool.
+
 ---
 
-*Last updated: March 14, 2026 (Improve matching: branch number strip, enhanced street boost, street type normalization)*
+*Last updated: March 14, 2026 (Add delete all imported events to event import tool)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
