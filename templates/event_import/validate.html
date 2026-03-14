@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}CSV Distributor Validation Report{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-10">
+
+    <h2 class="mb-4">CSV Distributor Validation Report</h2>
+
+    {# Summary card #}
+    <div class="card mb-4">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-bar-chart me-2"></i>Summary</h5>
+      </div>
+      <div class="card-body">
+        <div class="row text-center">
+          <div class="col-6 col-md-3 mb-2">
+            <div class="fw-bold fs-4">{{ summary.total_cities }}</div>
+            <div class="text-muted small">Total cities in CSV</div>
+          </div>
+          <div class="col-6 col-md-3 mb-2">
+            <div class="fw-bold fs-4 {% if summary.conflict_cities > 0 %}text-warning{% endif %}">
+              {{ summary.conflict_cities }}
+            </div>
+            <div class="text-muted small">Cities with distributor conflicts</div>
+          </div>
+          <div class="col-6 col-md-3 mb-2">
+            <div class="fw-bold fs-4 {% if summary.needs_fix > 0 %}text-danger{% endif %}">
+              {{ summary.needs_fix }}
+            </div>
+            <div class="text-muted small">Cities needing correction</div>
+          </div>
+          <div class="col-6 col-md-3 mb-2">
+            <div class="fw-bold fs-4 {% if summary.no_suggestion > 0 %}text-warning{% endif %}">
+              {{ summary.no_suggestion }}
+            </div>
+            <div class="text-muted small">Cities with no suggestion (manual review needed)</div>
+          </div>
+        </div>
+        <div class="text-muted small mt-2">Total CSV rows: {{ total_rows }}</div>
+      </div>
+    </div>
+
+    {# No conflicts — success #}
+    {% if not conflicts %}
+      <div class="alert alert-success">
+        <i class="bi bi-check-circle-fill me-2"></i>
+        <strong>No distributor conflicts found.</strong>
+        Your CSV looks clean — proceed to import.
+      </div>
+      <a href="{% url 'event_import_upload' %}" class="btn btn-primary">
+        <i class="bi bi-arrow-left me-1"></i>Back to Upload
+      </a>
+
+    {% else %}
+      {# Conflict cards #}
+      {% for conflict in conflicts %}
+        <div class="card mb-4 border-{% if conflict.confidence == 'low' or conflict.confidence == 'unknown' %}warning{% else %}danger{% endif %}">
+          <div class="card-header bg-{% if conflict.confidence == 'low' or conflict.confidence == 'unknown' %}warning bg-opacity-25{% else %}danger bg-opacity-10{% endif %}">
+            <h5 class="mb-0">
+              <i class="bi bi-geo-alt me-1"></i>{{ conflict.city }}
+              {% if conflict.confidence == 'low' or conflict.confidence == 'unknown' %}
+                <span class="badge bg-warning text-dark ms-2">Manual Review</span>
+              {% else %}
+                <span class="badge bg-danger ms-2">Conflict</span>
+              {% endif %}
+            </h5>
+          </div>
+          <div class="card-body">
+            <div class="row">
+
+              {# Left — CSV data #}
+              <div class="col-md-6 mb-3 mb-md-0">
+                <h6 class="fw-semibold mb-2">CSV Data for This City</h6>
+                <table class="table table-sm table-bordered mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Distributor</th>
+                      <th class="text-end">Events</th>
+                      <th>Locations</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% with max_count=conflict.csv_distributors.0.event_count %}
+                    {% for dist in conflict.csv_distributors %}
+                      <tr class="{% if dist.event_count < max_count %}table-danger{% endif %}">
+                        <td>{{ dist.name }}</td>
+                        <td class="text-end">{{ dist.event_count }}</td>
+                        <td>
+                          <ul class="list-unstyled mb-0 small">
+                            {% for loc in dist.locations %}
+                              <li>{{ loc }}</li>
+                            {% endfor %}
+                          </ul>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                    {% endwith %}
+                  </tbody>
+                </table>
+                <div class="text-muted small mt-1">Minority distributor(s) highlighted in red.</div>
+              </div>
+
+              {# Right — Suggested fix #}
+              <div class="col-md-6">
+                <h6 class="fw-semibold mb-2">Suggested Fix</h6>
+                {% if conflict.confidence == 'high' or conflict.confidence == 'medium' %}
+                  <div class="text-success fw-semibold mb-1">
+                    <i class="bi bi-check-circle me-1"></i>
+                    Suggested distributor: {{ conflict.suggested_distributor }}
+                  </div>
+                  <div class="text-muted small mb-3">{{ conflict.reason }}</div>
+                  {% with majority=conflict.csv_distributors.0 %}
+                    {% for dist in conflict.csv_distributors %}
+                      {% if dist.name != conflict.suggested_distributor %}
+                        <div class="alert alert-danger py-2 px-3 small mb-2">
+                          <strong>Fix:</strong> Change <em>{{ dist.name }}</em> rows for {{ conflict.city }}
+                          to <strong>{{ conflict.suggested_distributor }}</strong> in your CSV
+                        </div>
+                      {% endif %}
+                    {% endfor %}
+                  {% endwith %}
+                {% else %}
+                  <div class="text-warning fw-semibold mb-1">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    Needs manual review
+                  </div>
+                  <div class="text-muted small">{{ conflict.reason }}</div>
+                {% endif %}
+              </div>
+
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+
+      <div class="alert alert-info">
+        <i class="bi bi-info-circle me-1"></i>
+        After fixing your CSV, return to the upload page to proceed with the import.
+      </div>
+      <a href="{% url 'event_import_upload' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Back to Upload Page
+      </a>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

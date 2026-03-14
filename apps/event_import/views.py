@@ -15,9 +15,11 @@ import io
 from django.contrib import messages
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
+from rapidfuzz import fuzz
 
 from apps.accounts.models import Account
-from apps.event_import.matching import match_csv_row
+from apps.distribution.models import Distributor
+from apps.event_import.matching import match_csv_row, normalize_for_match
 from apps.events.models import Event
 
 
@@ -398,6 +400,158 @@ def event_import_export_csv(request):
     response = HttpResponse(output.getvalue(), content_type='text/csv')
     response['Content-Disposition'] = 'attachment; filename="event_import_matched.csv"'
     return response
+
+
+# ---------------------------------------------------------------------------
+# View 5 — Delete All Imported Events
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# View 6 — Validate CSV (pre-upload distributor conflict check)
+# ---------------------------------------------------------------------------
+
+def event_import_validate_csv(request):
+    guard = _require_supplier_admin(request)
+    if guard:
+        return guard
+
+    if request.method != 'POST':
+        return redirect('event_import_upload')
+
+    csv_file = request.FILES.get('csv_file')
+    if not csv_file:
+        messages.error(request, 'Please select a CSV file to validate.')
+        return redirect('event_import_upload')
+
+    try:
+        rows = _parse_csv(csv_file)
+    except Exception as exc:
+        messages.error(request, f'Could not read CSV file: {exc}')
+        return redirect('event_import_upload')
+
+    if not rows:
+        messages.error(request, 'The CSV file is empty.')
+        return redirect('event_import_upload')
+
+    total_rows = len(rows)
+
+    # PHASE 1 — Find cities with multiple distributors in the CSV
+    city_dist_data = {}  # city (title case) → {dist_name → {count, locations}}
+    for row in rows:
+        city = row.get('city', '').strip().title()
+        dist = row.get('distributor', '').strip().title()
+        location = row.get('location', '').strip()
+        if not city:
+            continue
+        city_dist_data.setdefault(city, {})
+        if dist not in city_dist_data[city]:
+            city_dist_data[city][dist] = {'count': 0, 'locations': set()}
+        city_dist_data[city][dist]['count'] += 1
+        if location:
+            city_dist_data[city][dist]['locations'].add(location)
+
+    conflicting_cities = {
+        city: dist_data
+        for city, dist_data in city_dist_data.items()
+        if len(dist_data) > 1
+    }
+
+    total_cities = len(city_dist_data)
+    conflict_cities = len(conflicting_cities)
+
+    # PHASE 2 + 3 — Resolve and build conflict report
+    conflicts = []
+    needs_fix = 0
+    no_suggestion = 0
+
+    for city, dist_data in conflicting_cities.items():
+        csv_distributors = sorted([
+            {
+                'name': dist_name,
+                'event_count': info['count'],
+                'locations': sorted(info['locations']),
+            }
+            for dist_name, info in dist_data.items()
+        ], key=lambda x: x['event_count'], reverse=True)
+
+        # Step 1 — find DB distributors with active accounts in this city
+        city_accounts_qs = (
+            Account.active_accounts
+            .filter(company=request.user.company, city__iexact=city)
+            .select_related('distributor')
+        )
+        db_dist_accounts = {}  # Distributor obj → [account name, ...]
+        for acct in city_accounts_qs:
+            db_dist_accounts.setdefault(acct.distributor, []).append(acct.name)
+        db_distributors = list(db_dist_accounts.keys())
+
+        if len(db_distributors) == 1:
+            suggested = db_distributors[0]
+            confidence = 'high'
+            reason = 'Only distributor with accounts in this city in sales data'
+        elif len(db_distributors) == 0:
+            suggested = None
+            confidence = 'unknown'
+            reason = 'No accounts found for this city in database'
+        else:
+            # Step 2 — retailer name matching
+            match_counts = {db_dist: 0 for db_dist in db_distributors}
+            for csv_dist_name, info in dist_data.items():
+                for loc in info['locations']:
+                    norm_loc = normalize_for_match(loc)
+                    for db_dist in db_distributors:
+                        for db_name in db_dist_accounts[db_dist]:
+                            if fuzz.token_sort_ratio(norm_loc, normalize_for_match(db_name)) >= 80:
+                                match_counts[db_dist] += 1
+                                break
+
+            best_count = max(match_counts.values())
+            winners = [d for d, c in match_counts.items() if c == best_count]
+            if len(winners) == 1:
+                suggested = winners[0]
+                confidence = 'medium'
+                reason = 'Multiple distributors in DB — resolved by retailer name matching'
+            else:
+                suggested = None
+                confidence = 'low'
+                reason = 'Needs manual review — cannot determine correct distributor'
+
+        suggested_name = suggested.name.strip().title() if suggested else None
+        is_correct = (
+            suggested_name is not None
+            and all(d['name'].strip().title() == suggested_name for d in csv_distributors)
+        )
+
+        conflict_dict = {
+            'city': city,
+            'csv_distributors': csv_distributors,
+            'suggested_distributor': suggested_name,
+            'confidence': confidence,
+            'reason': reason,
+            'is_correct': is_correct,
+        }
+
+        if not is_correct:
+            needs_fix += 1
+        if confidence in ('unknown', 'low'):
+            no_suggestion += 1
+
+        conflicts.append(conflict_dict)
+
+    conflicts_to_show = [c for c in conflicts if not c['is_correct']]
+
+    summary = {
+        'total_cities': total_cities,
+        'conflict_cities': conflict_cities,
+        'needs_fix': needs_fix,
+        'no_suggestion': no_suggestion,
+    }
+
+    return render(request, 'event_import/validate.html', {
+        'conflicts': conflicts_to_show,
+        'summary': summary,
+        'total_rows': total_rows,
+    })
 
 
 # ---------------------------------------------------------------------------

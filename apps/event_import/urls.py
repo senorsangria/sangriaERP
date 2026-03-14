@@ -5,6 +5,7 @@ from apps.event_import.views import (
     event_import_confirm,
     event_import_export_csv,
     event_import_delete_all,
+    event_import_validate_csv,
 )
 
 urlpatterns = [
@@ -13,4 +14,5 @@ urlpatterns = [
     path('confirm/', event_import_confirm, name='event_import_confirm'),
     path('export-csv/', event_import_export_csv, name='event_import_export_csv'),
     path('delete-all/', event_import_delete_all, name='event_import_delete_all'),
+    path('validate/', event_import_validate_csv, name='event_import_validate_csv'),
 ]

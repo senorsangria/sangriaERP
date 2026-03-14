@@ -2518,7 +2518,53 @@ permanently delete all previously imported events. Design decisions:
 - **Access: Supplier Admin only** — non-supplier-admins are redirected to
   dashboard, matching the access pattern of the rest of the event import tool.
 
+### CSV Validation (`/event-import/validate/`)
+A pre-upload validation step lets the user check their CSV for distributor
+assignment errors before running the full import matching process.
+
+**How to use:** On the upload page, use the "Validate CSV" form (above the
+main upload form) to submit a CSV file. The system analyzes distributor
+assignments per city and returns a validation report. Validation is optional
+but recommended before importing.
+
+**Three-phase conflict detection logic:**
+
+**Phase 1 — Find cities with multiple distributors in the CSV:**
+- Build a city → set-of-distributors map from all CSV rows
+- Normalize city names (strip + title case) for grouping
+- A conflict exists when a city has more than one distributor in the CSV
+- For each conflicting city, record the event count and unique location names per distributor
+
+**Phase 2 — Resolve suggested distributor using the database:**
+For each conflicting city:
+
+1. Check which distributors have active accounts in that city (scoped to `request.user.company`).
+2. If exactly one DB distributor has accounts in that city → `confidence = 'high'`
+3. If no DB distributor has accounts in that city → `confidence = 'unknown'`, no suggestion
+4. If multiple DB distributors have accounts in that city → retailer name matching:
+   - For each CSV location name, fuzzy-match (rapidfuzz `token_sort_ratio >= 80`) against
+     account names under each DB distributor (after `normalize_for_match()` on both sides)
+   - The DB distributor with the most retailer matches wins → `confidence = 'medium'`
+   - If tied → `confidence = 'low'`, no suggestion
+
+**Phase 3 — Build conflict report:**
+Each conflict entry includes:
+- City name, CSV distributors (with event counts and location names)
+- Suggested distributor (or None), confidence level, reason text
+- `is_correct` flag (True if all CSV rows already use the suggested distributor — no fix needed)
+- Only conflicts where `is_correct` is False are shown in the report
+
+**Confidence levels:**
+| Level | Meaning |
+|-------|---------|
+| `high` | Only one DB distributor has accounts in the city — clear answer |
+| `medium` | Multiple DB distributors; retailer name matching resolved a winner |
+| `low` | Multiple DB distributors; retailer matching tied — manual review needed |
+| `unknown` | No DB accounts found for this city at all |
+
+**Access:** Supplier Admin only, matching the rest of the event import tool.
+
 ---
 
-*Last updated: March 14, 2026 (Add delete all imported events to event import tool)*
+*Last updated: March 14, 2026 (Add CSV distributor validation report to event import tool)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

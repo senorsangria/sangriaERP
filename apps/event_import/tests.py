@@ -984,3 +984,175 @@ class DeleteAllImportedEventsTest(TestCase):
             Event.objects.filter(is_imported=True, company=other_company).count(),
             1,
         )
+
+
+# ---------------------------------------------------------------------------
+# CSV validation view
+# ---------------------------------------------------------------------------
+
+def _make_csv_bytes(rows):
+    """Build a CSV bytes object from a list of dicts."""
+    buf = io.StringIO()
+    fieldnames = rows[0].keys() if rows else []
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+    return buf.getvalue().encode('utf-8')
+
+
+class ValidateCsvAccessTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Validate Co')
+        self.client = Client()
+
+    def test_validate_requires_supplier_admin(self):
+        """Non-supplier-admin is redirected to dashboard."""
+        ambassador = make_user(self.company, 'ambassador', username='amb_val')
+        self.client.login(username='amb_val', password='testpass123')
+        csv_bytes = _make_csv_bytes([
+            {'distributor': 'Dist A', 'location': 'Store 1', 'address': '1 Main St', 'city': 'Newark'},
+        ])
+        response = self.client.post(
+            reverse('event_import_validate_csv'),
+            {'csv_file': io.BytesIO(csv_bytes)},
+        )
+        self.assertRedirects(response, reverse('dashboard'), fetch_redirect_response=False)
+
+
+class ValidateCsvNoConflictsTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Validate No Conflict Co')
+        self.admin = make_user(self.company, 'supplier_admin', username='sadmin_val_nc')
+        self.client = Client()
+        self.client.login(username='sadmin_val_nc', password='testpass123')
+
+    def test_validate_no_conflicts(self):
+        """CSV with all cities under one distributor returns no conflicts."""
+        csv_bytes = _make_csv_bytes([
+            {'distributor': 'Shore Point', 'location': 'Store A', 'address': '1 Main St', 'city': 'Newark'},
+            {'distributor': 'Shore Point', 'location': 'Store B', 'address': '2 Oak Ave', 'city': 'Newark'},
+            {'distributor': 'Shore Point', 'location': 'Store C', 'address': '3 Elm St', 'city': 'Hoboken'},
+        ])
+        response = self.client.post(
+            reverse('event_import_validate_csv'),
+            {'csv_file': io.BytesIO(csv_bytes)},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['conflicts'], [])
+        self.assertEqual(response.context['summary']['conflict_cities'], 0)
+        self.assertEqual(response.context['summary']['needs_fix'], 0)
+
+
+class ValidateCsvDetectsConflictTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Validate Conflict Co')
+        self.admin = make_user(self.company, 'supplier_admin', username='sadmin_val_c')
+        self.client = Client()
+        self.client.login(username='sadmin_val_c', password='testpass123')
+
+    def test_validate_detects_conflict(self):
+        """CSV with same city under two distributors is flagged as a conflict."""
+        csv_bytes = _make_csv_bytes([
+            {'distributor': 'Dist A', 'location': 'Store A', 'address': '1 Main St', 'city': 'Newark'},
+            {'distributor': 'Dist B', 'location': 'Store B', 'address': '2 Oak Ave', 'city': 'Newark'},
+        ])
+        response = self.client.post(
+            reverse('event_import_validate_csv'),
+            {'csv_file': io.BytesIO(csv_bytes)},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['summary']['conflict_cities'], 1)
+        self.assertEqual(response.context['summary']['needs_fix'], 1)
+        conflicts = response.context['conflicts']
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]['city'], 'Newark')
+
+
+class ValidateCsvSuggestsDbDistributorTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Validate Suggest Co')
+        self.admin = make_user(self.company, 'supplier_admin', username='sadmin_val_s')
+        self.client = Client()
+        self.client.login(username='sadmin_val_s', password='testpass123')
+
+    def test_validate_suggests_db_distributor(self):
+        """When only one DB distributor has accounts in conflicting city, it is suggested with high confidence."""
+        dist_a = make_distributor(self.company, name='Shore Point')
+        make_account(self.company, dist_a, name='Store A', city='Newark')
+
+        csv_bytes = _make_csv_bytes([
+            {'distributor': 'Shore Point', 'location': 'Store A', 'address': '1 Main St', 'city': 'Newark'},
+            {'distributor': 'Wrong Dist',  'location': 'Store B', 'address': '2 Oak Ave', 'city': 'Newark'},
+        ])
+        response = self.client.post(
+            reverse('event_import_validate_csv'),
+            {'csv_file': io.BytesIO(csv_bytes)},
+        )
+        self.assertEqual(response.status_code, 200)
+        conflicts = response.context['conflicts']
+        self.assertEqual(len(conflicts), 1)
+        conflict = conflicts[0]
+        self.assertEqual(conflict['confidence'], 'high')
+        self.assertEqual(conflict['suggested_distributor'], 'Shore Point')
+
+
+class ValidateCsvNoDbMatchTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Validate No DB Co')
+        self.admin = make_user(self.company, 'supplier_admin', username='sadmin_val_ndb')
+        self.client = Client()
+        self.client.login(username='sadmin_val_ndb', password='testpass123')
+
+    def test_validate_no_db_match(self):
+        """City not in DB returns unknown confidence."""
+        csv_bytes = _make_csv_bytes([
+            {'distributor': 'Dist A', 'location': 'Store A', 'address': '1 Main St', 'city': 'Trenton'},
+            {'distributor': 'Dist B', 'location': 'Store B', 'address': '2 Oak Ave', 'city': 'Trenton'},
+        ])
+        response = self.client.post(
+            reverse('event_import_validate_csv'),
+            {'csv_file': io.BytesIO(csv_bytes)},
+        )
+        self.assertEqual(response.status_code, 200)
+        conflicts = response.context['conflicts']
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]['confidence'], 'unknown')
+        self.assertIsNone(conflicts[0]['suggested_distributor'])
+
+
+class ValidateCsvRetailerComparisonTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Validate Retailer Co')
+        self.admin = make_user(self.company, 'supplier_admin', username='sadmin_val_r')
+        self.client = Client()
+        self.client.login(username='sadmin_val_r', password='testpass123')
+
+    def test_validate_retailer_comparison(self):
+        """When multiple DB distributors have accounts in city, retailer matching determines suggestion."""
+        dist_a = make_distributor(self.company, name='Shore Point')
+        dist_b = make_distributor(self.company, name='Other Dist')
+        # Shore Point has an account whose name matches the CSV location for Dist A
+        make_account(self.company, dist_a, name='Newark Wine And Spirits', city='Newark')
+        make_account(self.company, dist_b, name='Completely Different Store', city='Newark')
+
+        csv_bytes = _make_csv_bytes([
+            {'distributor': 'Dist A', 'location': 'Newark Wine And Spirits', 'address': '1 Main St', 'city': 'Newark'},
+            {'distributor': 'Dist B', 'location': 'Some Other Place',         'address': '2 Oak Ave', 'city': 'Newark'},
+        ])
+        response = self.client.post(
+            reverse('event_import_validate_csv'),
+            {'csv_file': io.BytesIO(csv_bytes)},
+        )
+        self.assertEqual(response.status_code, 200)
+        conflicts = response.context['conflicts']
+        self.assertEqual(len(conflicts), 1)
+        conflict = conflicts[0]
+        # Shore Point should win because its account name matches the CSV location
+        self.assertEqual(conflict['confidence'], 'medium')
+        self.assertEqual(conflict['suggested_distributor'], 'Shore Point')
