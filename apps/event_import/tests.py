@@ -201,10 +201,18 @@ class MatchReviewTest(TestCase):
     def test_match_review(self):
         """
         Exact name match but completely different address/city scores in
-        review range (50-84). score ≈ 100*0.6 + 0*0.3 + 0*0.1 = 60.
+        review range (50-84).
+
+        Two candidates are used so neither triggers the clear-leader rule
+        (gap < 10 → no auto-promotion). Both have the same name but
+        different streets, so they score similarly and neither stands out.
         """
-        accts = [{'pk': 3, 'name': 'Main Street Wine & Spirits',
-                  'street': '999 Oak Avenue', 'city': 'Jersey City'}]
+        accts = [
+            {'pk': 3,  'name': 'Main Street Wine & Spirits',
+             'street': '999 Oak Avenue', 'city': 'Jersey City'},
+            {'pk': 98, 'name': 'Main Street Wine & Spirits',
+             'street': '888 Oak Avenue', 'city': 'Jersey City'},
+        ]
         by_dist = {'Shore Point Distributing': accts}
         row = {
             'distributor': 'Shore Point Distributing',
@@ -613,3 +621,104 @@ class StreetTypeNormalizationTest(TestCase):
         result = match_csv_row(row, by_dist)
         self.assertEqual(result['status'], 'high')
         self.assertGreaterEqual(result['score'], 75)
+
+
+# ---------------------------------------------------------------------------
+# Clear leader auto-promotion
+# ---------------------------------------------------------------------------
+
+class ClearLeaderPromotionTest(TestCase):
+    """
+    These tests use exact name + city matches to produce controlled scores:
+      perfect name + matching city  = 100*0.6 + 100*0.1 = 70
+      perfect name + no city match  = 100*0.6            = 60
+      unrelated name + city match   ≈           100*0.1  = 10
+    No address is used so there is no street-number boost to interfere.
+    """
+
+    def test_clear_leader_promoted(self):
+        """
+        Top score 70 (≥70, <75), second score ~10 (gap ≥10) →
+        clear leader rule promotes status to 'high'.
+        """
+        accts = [
+            {'pk': 100, 'name': 'Wine Cellar', 'street': '', 'city': 'Newark'},
+            {'pk': 101, 'name': 'Xyz Abc Def', 'street': '', 'city': 'Newark'},
+        ]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    'Wine Cellar',
+            'address':     '',
+            'city':        'Newark',
+        }
+        result = match_csv_row(row, by_dist)
+        self.assertEqual(result['status'], 'high')
+        self.assertEqual(result['match']['pk'], 100)
+
+    def test_clear_leader_not_promoted_close_second(self):
+        """
+        Top score 70 but second candidate ties at 70 (gap 0 < 10) →
+        clear leader rule does not apply; status stays 'review'.
+
+        Accounts have non-empty streets so that the CSV's empty address
+        produces addr_score=0 (empty vs non-empty = 0), giving a
+        controlled combined score of 70 (name=100→60, city=100→10).
+        """
+        accts = [
+            {'pk': 102, 'name': 'Wine Cellar', 'street': '100 Oak Ave', 'city': 'Newark'},
+            {'pk': 103, 'name': 'Wine Cellar', 'street': '200 Elm Ave', 'city': 'Newark'},
+        ]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    'Wine Cellar',
+            'address':     '',
+            'city':        'Newark',
+        }
+        result = match_csv_row(row, by_dist)
+        self.assertEqual(result['status'], 'review')
+
+    def test_clear_leader_not_promoted_low_top(self):
+        """
+        Top score ~62 (gap ≥10 vs second, but top < 70) →
+        clear leader rule does not apply; status stays 'review'.
+
+        Accounts have non-empty streets so addr_score=0 (empty CSV vs
+        non-empty account). City mismatch (Newark vs Trenton) keeps the
+        score below 70 even with a perfect name match.
+        """
+        accts = [
+            {'pk': 104, 'name': 'Wine Cellar', 'street': '100 Oak Ave', 'city': 'Trenton'},
+            {'pk': 105, 'name': 'Xyz Abc Def', 'street': '200 Elm Ave', 'city': 'Trenton'},
+        ]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    'Wine Cellar',
+            'address':     '',
+            'city':        'Newark',    # mismatches both accounts → low city score
+        }
+        result = match_csv_row(row, by_dist)
+        # top score ≈ 61-62 (name only + tiny city partial); < 70 → no clear_leader
+        # score >= REVIEW_THRESHOLD → 'review'
+        self.assertEqual(result['status'], 'review')
+
+    def test_clear_leader_single_candidate(self):
+        """
+        Single candidate at 70 (≥70, <75) → clear leader rule promotes
+        to 'high' because there is no competition at all.
+        """
+        accts = [
+            {'pk': 106, 'name': 'Wine Cellar', 'street': '', 'city': 'Newark'},
+        ]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    'Wine Cellar',
+            'address':     '',
+            'city':        'Newark',
+        }
+        result = match_csv_row(row, by_dist)
+        self.assertEqual(result['status'], 'high')
+        self.assertEqual(result['match']['pk'], 106)
