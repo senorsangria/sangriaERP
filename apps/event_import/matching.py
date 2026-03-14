@@ -90,18 +90,25 @@ def _strip_city(name: str, city: str) -> str:
         → 'MCCAFFREYS'
       _strip_city('SHOPRITE BYRAM', 'STANHOPE')
         → 'SHOPRITE BYRAM'  (city not found, unchanged)
+      _strip_city('ShopRite Wine & Spirits - Morristown', 'Morristown')
+        → 'ShopRite Wine & Spirits'
     """
     if not city:
         return name
     city_norm = normalize_for_match(city)
     name_norm = name  # already normalized by caller
 
-    # Strip from end
+    # Strip " - CITYNAME" dash separator pattern first
+    dash_pattern = r'\s*-\s*' + re.escape(city_norm) + r'\s*'
+    name_norm = re.sub(dash_pattern, '', name_norm, flags=re.IGNORECASE).strip()
+
+    # Then strip from end (no dash)
     if name_norm.endswith(' ' + city_norm):
         name_norm = name_norm[:-len(' ' + city_norm)].strip()
-    # Strip from start
+    # Then strip from start
     elif name_norm.startswith(city_norm + ' '):
         name_norm = name_norm[len(city_norm + ' '):].strip()
+
     return name_norm
 
 
@@ -164,6 +171,21 @@ def _normalize_street_type(address: str) -> str:
     for pattern, replacement in STREET_TYPE_MAP:
         address = re.sub(pattern, replacement, address, flags=re.IGNORECASE)
     return re.sub(r'\s+', ' ', address).strip()
+
+
+def _strip_parentheticals(name: str) -> str:
+    """
+    Remove parenthetical suffixes from account names.
+
+    Examples:
+      'SHOP RITE LIQUORS (CEDAR KNOLLS)' → 'SHOP RITE LIQUORS'
+      'BUY RITE (NORTH AVE)' → 'BUY RITE'
+
+    Applied to account names only — never to CSV location names.
+    """
+    name = re.sub(r'\s*\([^)]*\)\s*', '', name).strip()
+    name = re.sub(r'\s+', ' ', name).strip()
+    return name
 
 
 def _strip_branch_numbers(name: str) -> str:
@@ -249,10 +271,11 @@ def match_csv_row(row: dict, accounts_by_distributor: dict) -> dict:
     scored = []
     for acct in candidates_raw:
         # Account name: normalize → strip trailing letter
-        #               → strip branch numbers → strip city
+        #               → strip branch numbers → strip parentheticals → strip city
         acct_name = normalize_for_match(acct.get('name', ''))
         acct_name = _strip_trailing_single_letter(acct_name)
         acct_name = _strip_branch_numbers(acct_name)
+        acct_name = _strip_parentheticals(acct_name)
         acct_name = _strip_city(acct_name, csv_city)
 
         # Account address: normalize → expand street types
@@ -281,13 +304,27 @@ def match_csv_row(row: dict, accounts_by_distributor: dict) -> dict:
                 boost = 10  # number matches but street name differs
             combined = min(100.0, combined + boost)
 
+        # City mismatch penalty: if both CSV and candidate city are present
+        # but don't fuzzy-match (< 80), apply a 15% penalty.
+        cand_city_norm = normalize_for_match(acct.get('city', ''))
+        if csv_city and cand_city_norm and city_score < 80:
+            combined = combined * 0.85
+
         scored.append({**acct, 'score': round(combined, 2)})
 
     scored.sort(key=lambda x: x['score'], reverse=True)
     top3 = scored[:3]
-    best_score = top3[0]['score'] if top3 else 0.0
+    best_score   = top3[0]['score'] if top3 else 0.0
+    second_score = top3[1]['score'] if len(top3) > 1 else 0.0
 
-    if best_score >= HIGH_THRESHOLD:
+    # Clear leader: one strong candidate with no close competition.
+    # The lack of ambiguity is itself evidence of a correct match.
+    clear_leader = (
+        best_score >= 70 and
+        (len(top3) == 1 or second_score <= best_score - 10)
+    )
+
+    if best_score >= HIGH_THRESHOLD or clear_leader:
         status = 'high'
         match = top3[0]
     elif best_score >= REVIEW_THRESHOLD:

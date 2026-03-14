@@ -19,6 +19,7 @@ from apps.event_import.matching import (
     _expand_abbreviations,
     _strip_branch_numbers,
     _strip_city,
+    _strip_parentheticals,
     _strip_trailing_single_letter,
     _extract_street_number,
     _extract_street_name,
@@ -549,10 +550,10 @@ class StreetNameBoostTest(TestCase):
         result_match  = match_csv_row(row_match,  by_dist)
         result_no_num = match_csv_row(row_no_num, by_dist)
 
-        # Strong boost (+15) should give exactly 15 more points than no boost
-        self.assertAlmostEqual(
-            result_match['score'] - result_no_num['score'], 15, delta=1,
-        )
+        # Strong boost (+15) should give significantly more points than no boost.
+        # The city-mismatch penalty (0.85×) applies to both rows, so the absolute
+        # delta is slightly less than 15 — asserting > 10 is robust.
+        self.assertGreater(result_match['score'] - result_no_num['score'], 10)
 
     def test_street_name_boost_weak(self):
         """
@@ -1156,3 +1157,139 @@ class ValidateCsvRetailerComparisonTest(TestCase):
         # Shore Point should win because its account name matches the CSV location
         self.assertEqual(conflict['confidence'], 'medium')
         self.assertEqual(conflict['suggested_distributor'], 'Shore Point')
+
+
+# ---------------------------------------------------------------------------
+# Improvement 1: dash city strip
+# ---------------------------------------------------------------------------
+
+class DashCityStripTest(TestCase):
+
+    def test_dash_city_stripped(self):
+        """'ShopRite Wine & Spirits - Morristown' with city 'Morristown' strips to core name."""
+        raw = normalize_for_match('ShopRite Wine & Spirits - Morristown')
+        result = _strip_city(raw, 'Morristown')
+        self.assertEqual(result, 'SHOPRITE WINE & SPIRITS')
+
+    def test_dash_city_stripped_ws_abbreviation(self):
+        """'ShopRite W&S - Byram' strips city correctly after abbreviation expansion."""
+        from apps.event_import.matching import _expand_abbreviations
+        raw = normalize_for_match('ShopRite W&S - Byram')
+        raw = _expand_abbreviations(raw)
+        result = _strip_city(raw, 'Byram')
+        self.assertNotIn('BYRAM', result)
+        self.assertIn('SHOPRITE', result)
+
+
+# ---------------------------------------------------------------------------
+# Improvement 2: parenthetical strip
+# ---------------------------------------------------------------------------
+
+class StripParentheticalTest(TestCase):
+
+    def test_strip_parenthetical(self):
+        """Parenthetical branch suffix is removed from account name."""
+        self.assertEqual(
+            _strip_parentheticals('SHOP RITE LIQUORS (CEDAR KNOLLS)'),
+            'SHOP RITE LIQUORS',
+        )
+        self.assertEqual(
+            _strip_parentheticals('BUY RITE (NORTH AVE)'),
+            'BUY RITE',
+        )
+
+    def test_strip_parenthetical_no_match(self):
+        """Name with no parenthetical is returned unchanged."""
+        self.assertEqual(
+            _strip_parentheticals('SHOP RITE LIQUORS'),
+            'SHOP RITE LIQUORS',
+        )
+
+
+# ---------------------------------------------------------------------------
+# Improvement 3: city mismatch penalty
+# ---------------------------------------------------------------------------
+
+class CityMismatchPenaltyTest(TestCase):
+
+    def test_city_mismatch_penalty(self):
+        """Candidate with wrong city scores lower than identical candidate with correct city."""
+        accts = [
+            {'pk': 200, 'name': 'Riverside Spirits', 'street': '50 Oak Ave', 'city': 'Newark'},
+            {'pk': 201, 'name': 'Riverside Spirits', 'street': '50 Oak Ave', 'city': 'Trenton'},
+        ]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    'Riverside Spirits',
+            'address':     '50 Oak Ave',
+            'city':        'Newark',
+        }
+        result = match_csv_row(row, by_dist)
+        candidates = {c['pk']: c['score'] for c in result['candidates']}
+        self.assertGreater(candidates[200], candidates[201])
+
+    def test_city_match_no_penalty(self):
+        """Candidate with matching city is not penalized and scores highest."""
+        accts = [
+            {'pk': 202, 'name': 'Harbor Wine', 'street': '10 Main St', 'city': 'Hoboken'},
+        ]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    'Harbor Wine',
+            'address':     '10 Main St',
+            'city':        'Hoboken',
+        }
+        result = match_csv_row(row, by_dist)
+        self.assertGreaterEqual(result['score'], 75)
+        self.assertEqual(result['status'], 'high')
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: ShopRite Morristown / Cedar Knolls
+# ---------------------------------------------------------------------------
+
+class ShopRiteMorristownEndToEndTest(TestCase):
+
+    def test_shoprite_morristown_matches(self):
+        """
+        'ShopRite Wine & Spirits - Morristown' at '178 E Hanover Ave', city
+        'Cedar Knolls' should match 'SHOP RITE LIQUORS (CEDAR KNOLLS)' at
+        '178 EAST HANOVER AVE' with score >= 75.
+
+        Relies on: parenthetical strip from account name, street number
+        boost (178 matches), and city score (both Cedar Knolls).
+        Wrong-city candidate should score significantly lower due to the
+        city mismatch penalty.
+        """
+        accts = [
+            {
+                'pk': 300,
+                'name':   'Shop Rite Liquors (Cedar Knolls)',
+                'street': '178 East Hanover Ave',
+                'city':   'Cedar Knolls',
+            },
+            {
+                'pk': 301,
+                'name':   'Shop Rite Liquors (Parsippany)',
+                'street': '99 Route 46',
+                'city':   'Parsippany',
+            },
+        ]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    'ShopRite Wine & Spirits - Morristown',
+            'address':     '178 E Hanover Ave',
+            'city':        'Cedar Knolls',
+        }
+        result = match_csv_row(row, by_dist)
+        scores = {c['pk']: c['score'] for c in result['candidates']}
+
+        # Correct match must hit the high threshold
+        self.assertGreaterEqual(scores[300], 75)
+        self.assertEqual(result['match']['pk'], 300)
+
+        # Wrong-city candidate should score significantly lower
+        self.assertGreater(scores[300] - scores[301], 15)

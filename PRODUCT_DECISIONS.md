@@ -2442,12 +2442,33 @@ street names used in the boost logic. This ensures "Bloomfield Ave" and
 "Bloomfield Avenue" score identically. Applied to addresses only — never
 to location names.
 
+**Dash city suffix stripping (Improvement 7):** CSV location names often
+carry a city tag after a dash separator (e.g. "ShopRite Wine & Spirits -
+Morristown", "Liquor Factory - Newton"). `_strip_city()` now removes the
+`- CITYNAME` pattern (regex `\s*-\s*CITYNAME\s*`) before checking the
+plain start/end cases. Applied to both CSV location names and account names.
+
+**Parenthetical stripping (Improvement 8):** Account names in the database
+often carry parenthetical branch identifiers (e.g. "SHOP RITE LIQUORS
+(CEDAR KNOLLS)", "BUY RITE (NORTH AVE)"). `_strip_parentheticals()` removes
+any `(...)` suffix from the account name before comparison. Applied to
+account names only — never to CSV location names. Added to the account name
+pipeline after `_strip_branch_numbers()` and before `_strip_city()`.
+
+**City mismatch penalty (Improvement 9):** After computing the combined
+weighted score (and applying the street number boost), if both the CSV city
+and the candidate account city are non-empty and their fuzzy similarity is
+< 80, the combined score is multiplied by 0.85 (15% penalty). This
+prevents candidates in a different city from scoring as high as candidates
+in the correct city when names are similar (e.g. multiple ShopRite locations
+across NJ). If either city is blank, no penalty is applied.
+
 **Name comparison pipeline (CSV location):**
-normalize → expand abbreviations → strip city → fuzzy compare
+normalize → expand abbreviations → strip city (incl. dash pattern) → fuzzy compare
 
 **Name comparison pipeline (account name):**
 normalize → strip trailing single letter → strip branch numbers
-→ strip city → fuzzy compare
+→ strip parentheticals → strip city → fuzzy compare
 
 **Address comparison pipeline (both sides):**
 normalize → expand street types → fuzzy compare
