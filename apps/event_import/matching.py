@@ -27,6 +27,23 @@ ABBREVIATION_MAP = [
     (r'\bSTS\b',         'SPIRITS'),
 ]
 
+# Street type abbreviation expansions applied to address strings before
+# fuzzy comparison, so "Ave" and "Avenue" score identically.
+STREET_TYPE_MAP = [
+    (r'\bPL\b',    'PLACE'),
+    (r'\bAVE\b',   'AVENUE'),
+    (r'\bST\b',    'STREET'),
+    (r'\bRD\b',    'ROAD'),
+    (r'\bDR\b',    'DRIVE'),
+    (r'\bBLVD\b',  'BOULEVARD'),
+    (r'\bLN\b',    'LANE'),
+    (r'\bCT\b',    'COURT'),
+    (r'\bHWY\b',   'HIGHWAY'),
+    (r'\bRTE\b',   'ROUTE'),
+    (r'\bRT\b',    'ROUTE'),
+    (r'\bPKWY\b',  'PARKWAY'),
+]
+
 
 def normalize_for_match(s: str) -> str:
     """
@@ -122,6 +139,48 @@ def _extract_street_number(address: str) -> str:
     return m.group(1) if m else ''
 
 
+def _extract_street_name(address: str) -> str:
+    """
+    Extract everything after the leading street number.
+
+    Examples:
+      '655 Rossville Ave'  → 'ROSSVILLE AVE'
+      '20 Bridewell Place' → 'BRIDEWELL PLACE'
+      '90-70 Rt 206'       → 'RT 206'
+      'Main St'            → 'MAIN ST'  (no leading number)
+    """
+    address = normalize_for_match(address)
+    m = re.match(r'^\d+[-\d]*\s+(.*)', address)
+    return m.group(1).strip() if m else address
+
+
+def _normalize_street_type(address: str) -> str:
+    """
+    Expand street type abbreviations so that 'Ave' and 'Avenue',
+    'Pl' and 'Place', etc. score identically in fuzzy comparison.
+
+    Applied to address strings only — never to location names.
+    """
+    for pattern, replacement in STREET_TYPE_MAP:
+        address = re.sub(pattern, replacement, address, flags=re.IGNORECASE)
+    return re.sub(r'\s+', ' ', address).strip()
+
+
+def _strip_branch_numbers(name: str) -> str:
+    """
+    Remove store/branch number identifiers from account names.
+
+    Examples:
+      'SHOPRITE #753- CALDWELL'      → 'SHOPRITE CALDWELL'
+      'LIQUOR FACTORY # 5-NEWTN'     → 'LIQUOR FACTORY NEWTN'
+
+    Applied to account names only — never to CSV location names.
+    """
+    name = re.sub(r'#\s*\d+\s*-?\s*', '', name)
+    name = re.sub(r'\s+', ' ', name).strip()
+    return name
+
+
 def match_csv_row(row: dict, accounts_by_distributor: dict) -> dict:
     """
     Attempt to match a CSV row to an existing Account.
@@ -146,13 +205,17 @@ def match_csv_row(row: dict, accounts_by_distributor: dict) -> dict:
     3. If no accounts found: status='none', score=0
     4. Score each candidate:
          csv_name   = normalize → expand abbreviations → strip city
-         acct_name  = normalize → strip trailing single letter → strip city
+         acct_name  = normalize → strip trailing single letter
+                      → strip branch numbers → strip city
+         csv_addr   = normalize → expand street types
          name_score = token_sort_ratio(csv_name, acct_name)            × 0.6
-         addr_score = token_sort_ratio(address,  account street)        × 0.3
+         addr_score = token_sort_ratio(csv_addr, acct_addr_norm)        × 0.3
          city_score = token_sort_ratio(city,     account city)          × 0.1
          combined   = weighted sum above
          → if csv street number and account street number both present
-           and match exactly: combined = min(100, combined + 10)
+           and match exactly:
+             street_name_score ≥ 70 → +15 (strong address match)
+             street_name_score < 70 → +10 (number matches, name differs)
     5. Sort by combined score descending, take top 3
     6. Best score ≥ HIGH_THRESHOLD   → status='high',   match=top candidate
        Best score ≥ REVIEW_THRESHOLD → status='review', match=None
@@ -176,17 +239,24 @@ def match_csv_row(row: dict, accounts_by_distributor: dict) -> dict:
     csv_name_raw = _expand_abbreviations(csv_name_raw)
     csv_name = _strip_city(csv_name_raw, csv_city)
 
-    csv_addr = normalize_for_match(row.get('address', ''))
-    csv_num  = _extract_street_number(csv_addr)
+    # CSV address: normalize → expand street types (for addr_score)
+    csv_addr = _normalize_street_type(normalize_for_match(row.get('address', '')))
+    # Street number and street name for boost (use raw address so
+    # _extract_street_name can normalize internally)
+    csv_num         = _extract_street_number(row.get('address', ''))
+    csv_street_name = _normalize_street_type(_extract_street_name(row.get('address', '')))
 
     scored = []
     for acct in candidates_raw:
-        # Account name: normalize → strip trailing letter → strip city
-        acct_name = _strip_trailing_single_letter(
-            normalize_for_match(acct.get('name', ''))
-        )
+        # Account name: normalize → strip trailing letter
+        #               → strip branch numbers → strip city
+        acct_name = normalize_for_match(acct.get('name', ''))
+        acct_name = _strip_trailing_single_letter(acct_name)
+        acct_name = _strip_branch_numbers(acct_name)
         acct_name = _strip_city(acct_name, csv_city)
-        acct_street = normalize_for_match(acct.get('street', ''))
+
+        # Account address: normalize → expand street types
+        acct_street = _normalize_street_type(normalize_for_match(acct.get('street', '')))
 
         name_score = fuzz.token_sort_ratio(csv_name, acct_name)
         addr_score = fuzz.token_sort_ratio(csv_addr, acct_street)
@@ -195,11 +265,21 @@ def match_csv_row(row: dict, accounts_by_distributor: dict) -> dict:
         )
         combined = (name_score * 0.6) + (addr_score * 0.3) + (city_score * 0.1)
 
-        # Street number boost: matching street numbers are strong evidence
-        # of a correct match and rarely coincide by accident.
-        cand_num = _extract_street_number(acct_street)
+        # Enhanced street number boost: matching street numbers are strong
+        # evidence of a correct match. Also consider street name similarity
+        # to distinguish strong matches (same number + similar name) from
+        # weak ones (same number, very different name).
+        cand_num = _extract_street_number(acct.get('street', ''))
         if csv_num and cand_num and csv_num == cand_num:
-            combined = min(100.0, combined + 10)
+            cand_street_name = _normalize_street_type(
+                _extract_street_name(acct.get('street', ''))
+            )
+            street_name_score = fuzz.token_sort_ratio(csv_street_name, cand_street_name)
+            if street_name_score >= 70:
+                boost = 15  # strong address match
+            else:
+                boost = 10  # number matches but street name differs
+            combined = min(100.0, combined + boost)
 
         scored.append({**acct, 'score': round(combined, 2)})
 

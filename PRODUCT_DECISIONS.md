@@ -2419,11 +2419,38 @@ Applied to both the CSV location name and the candidate account name.
 Example: "PRINCETON MCCAFFREYS" with city "Princeton" → "MCCAFFREYS";
 "BOURBON ST WINE SPIRITS ASBURY" with city "Asbury" → "BOURBON ST WINE SPIRITS".
 
+**Branch number stripping (Improvement 4):** Account names in the database
+sometimes carry a store/branch number (e.g. "SHOPRITE #753- CALDWELL",
+"LIQUOR FACTORY # 5-NEWTN"). `_strip_branch_numbers()` removes the `#NNN-`
+pattern (with optional surrounding spaces) after normalization and trailing
+letter stripping. Applied to account names only.
+
+**Enhanced street number boost (Improvement 5):** The flat +10 street number
+boost is replaced with a smarter two-tier boost. When the leading street
+numbers match, `_extract_street_name()` extracts the remainder of each
+address and `_normalize_street_type()` is applied before computing a fuzzy
+street-name similarity. If that similarity is ≥ 70 the boost is **+15**
+(strong address match); if it is < 70 the boost is **+10** (number matches
+but street name differs). Combined scores are still capped at 100.
+
+**Street type normalization (Improvement 6):** A `STREET_TYPE_MAP` of 12
+common abbreviations (PL→PLACE, AVE→AVENUE, ST→STREET, RD→ROAD, DR→DRIVE,
+BLVD→BOULEVARD, LN→LANE, CT→COURT, HWY→HIGHWAY, RTE/RT→ROUTE, PKWY→PARKWAY)
+is applied via `_normalize_street_type()` to both the CSV address and the
+candidate account address before computing `addr_score`, and also to the
+street names used in the boost logic. This ensures "Bloomfield Ave" and
+"Bloomfield Avenue" score identically. Applied to addresses only — never
+to location names.
+
 **Name comparison pipeline (CSV location):**
 normalize → expand abbreviations → strip city → fuzzy compare
 
 **Name comparison pipeline (account name):**
-normalize → strip trailing single letter → strip city → fuzzy compare
+normalize → strip trailing single letter → strip branch numbers
+→ strip city → fuzzy compare
+
+**Address comparison pipeline (both sides):**
+normalize → expand street types → fuzzy compare
 
 Confidence thresholds:
 - **≥ 75** → `high` — auto-accepted, no user action needed
@@ -2457,5 +2484,5 @@ The "Proceed to Import" button is present but disabled. Stage 3 will read
 
 ---
 
-*Last updated: March 13, 2026 (Improve matching: apostrophe strip, abbreviation expansion, city name stripping)*
+*Last updated: March 14, 2026 (Improve matching: branch number strip, enhanced street boost, street type normalization)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

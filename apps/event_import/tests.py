@@ -14,9 +14,12 @@ from apps.event_import.matching import (
     match_csv_row,
     normalize_for_match,
     _expand_abbreviations,
+    _strip_branch_numbers,
     _strip_city,
     _strip_trailing_single_letter,
     _extract_street_number,
+    _extract_street_name,
+    _normalize_street_type,
 )
 from apps.event_import.views import _parse_csv
 
@@ -455,6 +458,157 @@ class McCaffreysEndToEndTest(TestCase):
             'location':    "McCaffrey's Market",
             'address':     '301 N Harrison Ave',
             'city':        'Princeton',
+        }
+        result = match_csv_row(row, by_dist)
+        self.assertEqual(result['status'], 'high')
+        self.assertGreaterEqual(result['score'], 75)
+
+
+# ---------------------------------------------------------------------------
+# Improvement 1: branch number stripping
+# ---------------------------------------------------------------------------
+
+class BranchNumberStrippingTest(TestCase):
+
+    def test_strip_branch_number(self):
+        """Branch number '#753-' is removed from account name."""
+        self.assertEqual(
+            _strip_branch_numbers('SHOPRITE #753- CALDWELL'),
+            'SHOPRITE CALDWELL',
+        )
+
+    def test_strip_branch_number_with_space(self):
+        """Branch number '# 5-' with internal space is removed."""
+        self.assertEqual(
+            _strip_branch_numbers('LIQUOR FACTORY # 5-NEWTN'),
+            'LIQUOR FACTORY NEWTN',
+        )
+
+    def test_branch_number_improves_match(self):
+        """
+        'Shop Rite Caldwell' at '478 Bloomfield Ave', city 'Caldwell'
+        should match 'SHOPRITE #753- CALDWELL' at '478 BLOOMFIELD AVE'
+        with status='high' and score >= 75.
+
+        Relies on: branch number strip, city strip, street type
+        normalization (AVE→AVENUE), and street number boost.
+        """
+        accts = [{'pk': 60, 'name': 'ShopRite #753- Caldwell',
+                  'street': '478 Bloomfield Ave', 'city': 'Caldwell'}]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    'Shop Rite Caldwell',
+            'address':     '478 Bloomfield Ave',
+            'city':        'Caldwell',
+        }
+        result = match_csv_row(row, by_dist)
+        self.assertEqual(result['status'], 'high')
+        self.assertGreaterEqual(result['score'], 75)
+
+
+# ---------------------------------------------------------------------------
+# Improvement 2: enhanced street number boost
+# ---------------------------------------------------------------------------
+
+class StreetNameBoostTest(TestCase):
+
+    def test_street_name_boost_strong(self):
+        """
+        Matching street number AND similar street name (score >= 70)
+        gives a boost of 15. Verified by comparing against a candidate
+        with the same name but a mismatched street number (no boost).
+        """
+        accts = [{'pk': 70, 'name': 'Test Store',
+                  'street': '100 Elm St', 'city': 'Newark'}]
+        by_dist = {'Shore Point': accts}
+
+        row_match = {
+            'distributor': 'Shore Point',
+            'location':    'Test Store',
+            'address':     '100 Elm Street',   # same number, same street name
+            'city':        'Bogota',            # intentional city mismatch
+        }
+        row_no_num = {
+            'distributor': 'Shore Point',
+            'location':    'Test Store',
+            'address':     '999 Elm Street',   # different number → no boost
+            'city':        'Bogota',
+        }
+        result_match  = match_csv_row(row_match,  by_dist)
+        result_no_num = match_csv_row(row_no_num, by_dist)
+
+        # Strong boost (+15) should give exactly 15 more points than no boost
+        self.assertAlmostEqual(
+            result_match['score'] - result_no_num['score'], 15, delta=1,
+        )
+
+    def test_street_name_boost_weak(self):
+        """
+        Matching street number but dissimilar street name (score < 70)
+        gives a boost of 10. Verified by comparing strong vs weak boost
+        on the same account — the strong boost should outscore the weak.
+        """
+        accts = [{'pk': 71, 'name': 'Test Store',
+                  'street': '100 Elm Street', 'city': 'Newark'}]
+        by_dist = {'Shore Point': accts}
+
+        row_strong = {
+            'distributor': 'Shore Point',
+            'location':    'Test Store',
+            'address':     '100 Elm Street',       # same name → boost 15
+            'city':        'Bogota',
+        }
+        row_weak = {
+            'distributor': 'Shore Point',
+            'location':    'Test Store',
+            'address':     '100 Qwerty Boulevard',  # same number, very different name → boost 10
+            'city':        'Bogota',
+        }
+        result_strong = match_csv_row(row_strong, by_dist)
+        result_weak   = match_csv_row(row_weak,   by_dist)
+
+        # Strong boost should outscore weak boost
+        self.assertGreater(result_strong['score'], result_weak['score'])
+
+
+# ---------------------------------------------------------------------------
+# Improvement 3: street type normalization
+# ---------------------------------------------------------------------------
+
+class StreetTypeNormalizationTest(TestCase):
+
+    def test_street_type_normalization(self):
+        """'Bridewell Place' and 'Bridewell Pl' normalize to the same string."""
+        full  = _normalize_street_type(normalize_for_match('Bridewell Place'))
+        abbr  = _normalize_street_type(normalize_for_match('Bridewell Pl'))
+        self.assertEqual(full, abbr)
+
+    def test_street_type_normalization_route(self):
+        """'Rt 206', 'Rte 206', and 'Route 206' all normalize to the same string."""
+        rt    = _normalize_street_type(normalize_for_match('Rt 206'))
+        rte   = _normalize_street_type(normalize_for_match('Rte 206'))
+        route = _normalize_street_type(normalize_for_match('Route 206'))
+        self.assertEqual(rt, route)
+        self.assertEqual(rte, route)
+
+    def test_costco_clifton_matches(self):
+        """
+        'Costco Clifton' at '20 Bridewell Place', city 'Clifton' should
+        match 'WESTERN BEVERAGE AT COSTCO CLIFTON' at '20 BRIDEWELL PL'
+        with status='high' and score >= 75.
+
+        Relies on: city strip from both sides, street type normalization
+        (PL→PLACE), and strong street number boost (20 + Bridewell).
+        """
+        accts = [{'pk': 80, 'name': 'Western Beverage At Costco Clifton',
+                  'street': '20 Bridewell Pl', 'city': 'Clifton'}]
+        by_dist = {'Shore Point': accts}
+        row = {
+            'distributor': 'Shore Point',
+            'location':    'Costco Clifton',
+            'address':     '20 Bridewell Place',
+            'city':        'Clifton',
         }
         result = match_csv_row(row, by_dist)
         self.assertEqual(result['status'], 'high')
