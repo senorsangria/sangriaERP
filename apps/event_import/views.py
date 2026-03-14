@@ -13,6 +13,7 @@ import csv
 import io
 
 from django.contrib import messages
+from django.http import HttpResponse
 from django.shortcuts import redirect, render
 
 from apps.accounts.models import Account
@@ -330,3 +331,63 @@ def event_import_confirm(request):
         'skipped_events':   skipped_events,
         'total_events':     matched_events + skipped_events,
     })
+
+
+# ---------------------------------------------------------------------------
+# View 4 — Export CSV
+# ---------------------------------------------------------------------------
+
+def event_import_export_csv(request):
+    guard = _require_supplier_admin(request)
+    if guard:
+        return guard
+
+    rows      = request.session.get('event_import_rows')
+    confirmed = request.session.get('event_import_confirmed')
+    matches   = request.session.get('event_import_matches')
+
+    if rows is None or confirmed is None or matches is None:
+        messages.error(request, 'No import in progress. Please upload a CSV first.')
+        return redirect('event_import_upload')
+
+    # Build set of csv_keys per bucket for status lookup
+    high_keys   = {item['csv_key'] for item in matches.get('high',   [])}
+    review_keys = {item['csv_key'] for item in matches.get('review', [])}
+
+    # Fetch all matched Account objects in one query
+    confirmed_pks = [pk for pk in confirmed.values() if pk is not None]
+    accounts_by_pk = {
+        acct.pk: acct
+        for acct in Account.objects.filter(pk__in=confirmed_pks)
+    }
+
+    # Build output
+    output = io.StringIO()
+    # Determine field names from the first row; preserve original column order
+    if rows:
+        original_fieldnames = list(rows[0].keys())
+    else:
+        original_fieldnames = []
+
+    extra_cols = ['Matched Account Name', 'Matched Account Address', 'Matched Account City']
+    writer = csv.DictWriter(
+        output,
+        fieldnames=original_fieldnames + extra_cols,
+        extrasaction='ignore',
+    )
+    writer.writeheader()
+
+    for row in rows:
+        key        = _csv_key(row)
+        account_pk = confirmed.get(key)
+        account    = accounts_by_pk.get(account_pk) if account_pk is not None else None
+
+        out_row = dict(row)
+        out_row['Matched Account Name']    = account.name    if account else ''
+        out_row['Matched Account Address'] = account.street  if account else ''
+        out_row['Matched Account City']    = account.city    if account else ''
+        writer.writerow(out_row)
+
+    response = HttpResponse(output.getvalue(), content_type='text/csv')
+    response['Content-Disposition'] = 'attachment; filename="event_import_matched.csv"'
+    return response

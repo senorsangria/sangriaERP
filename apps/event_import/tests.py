@@ -1,6 +1,7 @@
 """
 Tests for the event_import app — matching engine and upload access control.
 """
+import csv
 import io
 
 from django.test import Client, TestCase
@@ -722,3 +723,176 @@ class ClearLeaderPromotionTest(TestCase):
         result = match_csv_row(row, by_dist)
         self.assertEqual(result['status'], 'high')
         self.assertEqual(result['match']['pk'], 106)
+
+
+# ---------------------------------------------------------------------------
+# CSV export view
+# ---------------------------------------------------------------------------
+
+def _make_session_data(company, distributor):
+    """
+    Build the three session objects needed by the export view.
+    Uses a single high-confidence match row.
+    """
+    acct = make_account(
+        company, distributor,
+        name='Test Liquors',
+        street='100 Main St',
+        city='Newark',
+    )
+    csv_key = 'Shore Point Distributing||Test Liquors||100 Main St||Newark'
+    rows = [
+        {
+            'distributor': 'Shore Point Distributing',
+            'location':    'Test Liquors',
+            'address':     '100 Main St',
+            'city':        'Newark',
+            'date':        '2024-01-15',
+        }
+    ]
+    matches = {
+        'high':   [{'csv_key': csv_key, 'match_account_pk': acct.pk,
+                    'match_account_name': acct.name, 'row_count': 1, 'score': 90}],
+        'review': [],
+        'none':   [],
+    }
+    confirmed = {csv_key: acct.pk}
+    return rows, matches, confirmed, acct, csv_key
+
+
+def _make_skipped_session_data(company, distributor):
+    """
+    Build session objects where the single row is in the review bucket
+    but the user selected No Match (confirmed pk = None).
+    """
+    csv_key = 'Shore Point Distributing||Test Bar||200 Oak Ave||Trenton'
+    rows = [
+        {
+            'distributor': 'Shore Point Distributing',
+            'location':    'Test Bar',
+            'address':     '200 Oak Ave',
+            'city':        'Trenton',
+            'date':        '2024-02-10',
+        }
+    ]
+    matches = {
+        'high':   [],
+        'review': [{'csv_key': csv_key, 'candidates': [], 'row_count': 1, 'best_score': 55}],
+        'none':   [],
+    }
+    confirmed = {csv_key: None}
+    return rows, matches, confirmed, csv_key
+
+
+class ExportCsvAccessTest(TestCase):
+
+    def setUp(self):
+        self.company     = make_company()
+        self.distributor = make_distributor(self.company)
+        self.client      = Client()
+
+    def test_export_requires_supplier_admin(self):
+        """Non-supplier-admin is redirected to dashboard."""
+        ambassador = make_user(self.company, 'ambassador', username='amb_exp')
+        self.client.login(username='amb_exp', password='testpass123')
+        response = self.client.get(reverse('event_import_export_csv'))
+        self.assertRedirects(
+            response,
+            reverse('dashboard'),
+            fetch_redirect_response=False,
+        )
+
+    def test_export_no_session_redirects(self):
+        """Missing session data redirects to event_import_upload with error."""
+        admin = make_user(self.company, 'supplier_admin', username='sadmin_exp_ns')
+        self.client.login(username='sadmin_exp_ns', password='testpass123')
+        response = self.client.get(reverse('event_import_export_csv'))
+        self.assertRedirects(
+            response,
+            reverse('event_import_upload'),
+            fetch_redirect_response=False,
+        )
+
+    def test_export_returns_csv(self):
+        """Authorized user with valid session gets a CSV response."""
+        admin = make_user(self.company, 'supplier_admin', username='sadmin_exp_rc')
+        self.client.login(username='sadmin_exp_rc', password='testpass123')
+
+        rows, matches, confirmed, acct, _ = _make_session_data(self.company, self.distributor)
+        session = self.client.session
+        session['event_import_rows']      = rows
+        session['event_import_matches']   = matches
+        session['event_import_confirmed'] = confirmed
+        session.save()
+
+        response = self.client.get(reverse('event_import_export_csv'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/csv')
+        self.assertIn(
+            'attachment; filename="event_import_matched.csv"',
+            response['Content-Disposition'],
+        )
+
+    def test_export_appends_three_columns(self):
+        """Exported CSV has the three extra columns in the header."""
+        admin = make_user(self.company, 'supplier_admin', username='sadmin_exp_3c')
+        self.client.login(username='sadmin_exp_3c', password='testpass123')
+
+        rows, matches, confirmed, acct, _ = _make_session_data(self.company, self.distributor)
+        session = self.client.session
+        session['event_import_rows']      = rows
+        session['event_import_matches']   = matches
+        session['event_import_confirmed'] = confirmed
+        session.save()
+
+        response = self.client.get(reverse('event_import_export_csv'))
+        content = response.content.decode('utf-8')
+        reader = csv.DictReader(io.StringIO(content))
+        fieldnames = reader.fieldnames
+        self.assertIn('Matched Account Name',    fieldnames)
+        self.assertIn('Matched Account Address', fieldnames)
+        self.assertIn('Matched Account City',    fieldnames)
+
+    def test_export_matched_row_has_account_data(self):
+        """A high-confidence matched row has non-blank account name, address, city."""
+        admin = make_user(self.company, 'supplier_admin', username='sadmin_exp_mr')
+        self.client.login(username='sadmin_exp_mr', password='testpass123')
+
+        rows, matches, confirmed, acct, _ = _make_session_data(self.company, self.distributor)
+        session = self.client.session
+        session['event_import_rows']      = rows
+        session['event_import_matches']   = matches
+        session['event_import_confirmed'] = confirmed
+        session.save()
+
+        response = self.client.get(reverse('event_import_export_csv'))
+        content = response.content.decode('utf-8')
+        reader = csv.DictReader(io.StringIO(content))
+        data_rows = list(reader)
+        self.assertEqual(len(data_rows), 1)
+        row = data_rows[0]
+        self.assertEqual(row['Matched Account Name'],    acct.name)
+        self.assertEqual(row['Matched Account Address'], acct.street)
+        self.assertEqual(row['Matched Account City'],    acct.city)
+
+    def test_export_skipped_row_has_blank_account(self):
+        """A skipped (no-match) row has blank account columns."""
+        admin = make_user(self.company, 'supplier_admin', username='sadmin_exp_sk')
+        self.client.login(username='sadmin_exp_sk', password='testpass123')
+
+        rows, matches, confirmed, _ = _make_skipped_session_data(self.company, self.distributor)
+        session = self.client.session
+        session['event_import_rows']      = rows
+        session['event_import_matches']   = matches
+        session['event_import_confirmed'] = confirmed
+        session.save()
+
+        response = self.client.get(reverse('event_import_export_csv'))
+        content = response.content.decode('utf-8')
+        reader = csv.DictReader(io.StringIO(content))
+        data_rows = list(reader)
+        self.assertEqual(len(data_rows), 1)
+        row = data_rows[0]
+        self.assertEqual(row['Matched Account Name'],    '')
+        self.assertEqual(row['Matched Account Address'], '')
+        self.assertEqual(row['Matched Account City'],    '')

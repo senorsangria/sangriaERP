@@ -35,10 +35,20 @@
       <a href="{% url 'event_import_upload' %}" class="btn btn-outline-secondary">
         <i class="bi bi-arrow-counterclockwise me-1"></i>Start Over
       </a>
-      <button class="btn btn-primary px-4" disabled title="Stage 3 not yet built">
-        <i class="bi bi-play-circle me-1"></i>Proceed to Import
-      </button>
+      <div class="d-flex gap-2 flex-wrap">
+        <a href="{% url 'event_import_export_csv' %}" class="btn btn-outline-primary">
+          <i class="bi bi-download"></i> Export Matched CSV
+        </a>
+        <button class="btn btn-primary px-4" disabled title="Stage 3 not yet built">
+          <i class="bi bi-play-circle me-1"></i>Proceed to Import
+        </button>
+      </div>
     </div>
+    <p class="text-muted small mt-2">
+      Downloads the original CSV with your match decisions appended. Useful as a reference
+      when importing on production &mdash; run through the review process again on production
+      and the matching engine will auto-match most records.
+    </p>
 
   </div>
 </div>

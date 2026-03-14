@@ -2477,6 +2477,27 @@ comparison symmetric).
 - `event_import_rows` — raw CSV rows (list of dicts), needed for Stage 3
 - `event_import_confirmed` — final `{csv_key → account_pk | None}` map
 
+### CSV Export (`/event-import/export-csv/`)
+An "Export Matched CSV" button on the confirmation page lets the user
+download the original CSV with three columns appended:
+
+| Column | Value |
+|--------|-------|
+| Matched Account Name | `account.name` or blank if no match |
+| Matched Account Address | `account.street` or blank if no match |
+| Matched Account City | `account.city` or blank if no match |
+
+**Match Status values** (determined per unique csv_key):
+- `high` — csv_key was in the high-confidence bucket (auto-accepted)
+- `confirmed` — csv_key was in review bucket and user selected an account
+- `skipped` — csv_key was in review bucket and user selected No Match
+- `no_match` — csv_key was in the none bucket (no candidate found)
+
+**Intended workflow:** run the review process on dev, export the matched
+CSV for reference, then run the review process again on production — the
+matching engine improvements apply automatically on both environments and
+will auto-match most records without manual review.
+
 ### Stage 3 (Not Yet Built)
 The "Proceed to Import" button is present but disabled. Stage 3 will read
 `event_import_confirmed` from the session and create `Event` records with
