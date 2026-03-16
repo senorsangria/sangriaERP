@@ -144,16 +144,25 @@ def _csv_key(row):
 
 def _parse_int(value):
     """Parse an integer from a string, returning None if blank or invalid."""
+    if not value or not value.strip():
+        return None
+    cleaned = value.strip()
+    if cleaned.upper() in ('N/A', 'NA', '-', 'NONE'):
+        return None
     try:
-        return int(float(value)) if value.strip() else None
+        return int(float(cleaned))
     except (ValueError, AttributeError):
         return None
 
 
 def _parse_price(value):
     """Parse a Decimal price from a string, stripping $ and commas."""
+    if not value or not value.strip():
+        return None
+    cleaned = value.strip().replace('$', '').replace(',', '').strip()
+    if cleaned.upper() in ('N/A', 'NA', '-', 'NONE'):
+        return None
     try:
-        cleaned = value.strip().replace('$', '').replace(',', '').strip()
         return Decimal(cleaned) if cleaned else None
     except (InvalidOperation, AttributeError):
         return None
@@ -404,6 +413,18 @@ def event_import_execute(request):
     if confirmed is None or rows is None or matches is None:
         messages.error(request, 'No import in progress. Please upload a CSV first.')
         return redirect('event_import_upload')
+
+    # Sort rows oldest-first so events are created in ascending date order
+    def _parse_date_for_sort(row):
+        raw = row.get('date', '')
+        for fmt in ('%m/%d/%y', '%m/%d/%Y'):
+            try:
+                return datetime.strptime(raw.strip(), fmt)
+            except (ValueError, AttributeError):
+                continue
+        return datetime.min  # unparseable dates sort first
+
+    rows = sorted(rows, key=_parse_date_for_sort)
 
     # Find Supplier Admin for this company to use as ambassador/event_manager
     supplier_admin = User.objects.filter(

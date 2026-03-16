@@ -25,7 +25,7 @@ from apps.event_import.matching import (
     _extract_street_name,
     _normalize_street_type,
 )
-from apps.event_import.views import _parse_csv
+from apps.event_import.views import _parse_csv, _parse_int, _parse_price
 
 
 # ---------------------------------------------------------------------------
@@ -1518,3 +1518,103 @@ class ShopRiteMorristownEndToEndTest(TestCase):
 
         # Wrong-city candidate should score significantly lower
         self.assertGreater(scores[300] - scores[301], 15)
+
+
+# ---------------------------------------------------------------------------
+# Parse helper N/A handling
+# ---------------------------------------------------------------------------
+
+class ParseIntNATest(TestCase):
+
+    def test_parse_int_na_returns_none(self):
+        """_parse_int('N/A') returns None."""
+        self.assertIsNone(_parse_int('N/A'))
+
+    def test_parse_int_dash_returns_none(self):
+        """_parse_int('-') returns None."""
+        self.assertIsNone(_parse_int('-'))
+
+
+class ParsePriceNATest(TestCase):
+
+    def test_parse_price_na_returns_none(self):
+        """_parse_price('N/A') returns None."""
+        self.assertIsNone(_parse_price('N/A'))
+
+
+# ---------------------------------------------------------------------------
+# Execute: oldest-first ordering
+# ---------------------------------------------------------------------------
+
+class ExecuteOldestFirstTest(TestCase):
+
+    def setUp(self):
+        self.company     = make_company('Oldest First Co')
+        self.distributor = make_distributor(self.company, name='Shore Point Distributing')
+        self.admin       = make_user(self.company, 'supplier_admin', username='sadmin_oldest')
+        self.client      = Client()
+        self.client.login(username='sadmin_oldest', password='testpass123')
+
+    def test_execute_processes_oldest_first(self):
+        """Events are created in ascending date order regardless of row order in session."""
+        acct = make_account(
+            self.company, self.distributor,
+            name='Test Wines',
+            street='50 Oak Ave',
+            city='Hoboken',
+        )
+        csv_key = 'Shore Point Distributing||Test Wines||50 Oak Ave||Hoboken'
+
+        # Rows intentionally out of order: newest first
+        rows = [
+            {
+                'distributor': 'Shore Point Distributing',
+                'location':    'Test Wines',
+                'address':     '50 Oak Ave',
+                'city':        'Hoboken',
+                'date':        '03/10/24',
+                'start':       '', 'hrs': '2',
+                'note1': '', 'note2': '', 'promo_person': '',
+                'recap1': '', 'recap2': '', 'samples': '', 'qr_scans': '',
+            },
+            {
+                'distributor': 'Shore Point Distributing',
+                'location':    'Test Wines',
+                'address':     '50 Oak Ave',
+                'city':        'Hoboken',
+                'date':        '01/05/24',
+                'start':       '', 'hrs': '2',
+                'note1': '', 'note2': '', 'promo_person': '',
+                'recap1': '', 'recap2': '', 'samples': '', 'qr_scans': '',
+            },
+            {
+                'distributor': 'Shore Point Distributing',
+                'location':    'Test Wines',
+                'address':     '50 Oak Ave',
+                'city':        'Hoboken',
+                'date':        '02/20/24',
+                'start':       '', 'hrs': '2',
+                'note1': '', 'note2': '', 'promo_person': '',
+                'recap1': '', 'recap2': '', 'samples': '', 'qr_scans': '',
+            },
+        ]
+        matches  = {
+            'high':   [{'csv_key': csv_key, 'match_account_pk': acct.pk,
+                        'match_account_name': acct.name, 'row_count': 3, 'score': 95}],
+            'review': [],
+            'none':   [],
+        }
+        confirmed = {csv_key: acct.pk}
+
+        session = self.client.session
+        session['event_import_rows']      = rows
+        session['event_import_matches']   = matches
+        session['event_import_confirmed'] = confirmed
+        session.save()
+
+        self.client.post(reverse('event_import_execute'))
+
+        events = list(Event.objects.filter(company=self.company, is_imported=True).order_by('pk'))
+        self.assertEqual(len(events), 3)
+        dates = [str(e.date) for e in events]
+        self.assertEqual(dates, ['2024-01-05', '2024-02-20', '2024-03-10'])
