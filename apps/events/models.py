@@ -102,6 +102,15 @@ class Event(TimeStampedModel):
     # Populated when Event Manager requests revision on a Recap Submitted event
     revision_note = models.TextField(blank=True)
 
+    # Historical import batch — set only on events created via historical import
+    historical_batch = models.ForeignKey(
+        'event_import.HistoricalImportBatch',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='events',
+    )
+
     # Import flags — set only on events created via historical import
     is_imported = models.BooleanField(
         default=False,

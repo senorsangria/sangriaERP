@@ -25,12 +25,6 @@
       </div>
     </div>
 
-    <div class="alert alert-warning">
-      <i class="bi bi-hourglass me-1"></i>
-      <strong>Stage 3 (actual import) is not yet built.</strong>
-      The "Proceed to Import" button is disabled until Stage 3 is implemented.
-    </div>
-
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
       <a href="{% url 'event_import_upload' %}" class="btn btn-outline-secondary">
         <i class="bi bi-arrow-counterclockwise me-1"></i>Start Over
@@ -45,9 +39,12 @@
                 data-bs-target="#deleteImportedModal">
           <i class="bi bi-trash"></i> Delete All Imported Events
         </button>
-        <button class="btn btn-primary px-4" disabled title="Stage 3 not yet built">
-          <i class="bi bi-play-circle me-1"></i>Proceed to Import
-        </button>
+        <form method="post" action="{% url 'event_import_execute' %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-primary px-4">
+            <i class="bi bi-check-circle me-1"></i>Proceed to Import
+          </button>
+        </form>
       </div>
     </div>
     <p class="text-muted small mt-2">

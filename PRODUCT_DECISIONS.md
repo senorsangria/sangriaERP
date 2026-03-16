@@ -285,6 +285,56 @@ Searchable list for one-off or exception assignments
 | Phase 10.4 | Expense Management | ✅ Complete |
 | Phase 10.5 | RBAC Migration + Ok to Pay + Payroll Reviewer | ✅ Complete |
 | Phase 10.6 | Historical Event Import — Stages 1 & 2 (matching + review) | ✅ Complete |
+| Phase 10.7 | Historical Event Import — Stage 3 (event creation, batch tracking, batch delete) | ✅ Complete |
+
+---
+
+## Phase 10.7 — Historical Event Import: Stage 3
+
+### HistoricalImportBatch model (`apps/event_import/models.py`)
+- Tracks each historical import run (one batch per CSV upload → execute)
+- Fields: `company`, `imported_by`, `imported_at` (auto), `event_count`,
+  `csv_filename`, `notes`
+- `event_count` is set after all events are created (final DB count, not row count)
+- Ordered by `-imported_at`
+
+### `historical_batch` FK on Event (`apps/events/models.py`)
+- `ForeignKey('event_import.HistoricalImportBatch', on_delete=SET_NULL, null=True, blank=True)`
+- Set on every event created via Stage 3; NULL on all hand-created events
+- Deleting a batch does NOT cascade to events (SET_NULL) — events must be
+  deleted explicitly before or instead of the batch
+
+### Import status for historical events
+- All imported events are created with `status='complete'`
+- `is_imported=True` flags them as historical
+- `legacy_ambassador_name` stores the promo person name from the CSV
+  (the CSV promo person is not resolved to a User record)
+- `ambassador` and `event_manager` are both set to the company's Supplier Admin user
+
+### Stage 3 flow (`event_import_execute`)
+1. POST only; Supplier Admin only
+2. Loads `event_import_confirmed` (csv_key → account_pk), `event_import_rows`,
+   and `event_import_matches` from session
+3. Creates a `HistoricalImportBatch` immediately
+4. Iterates every raw CSV row; skips rows where confirmed map → None
+5. For each matched row: creates Event + EventItemRecap records for any
+   item code with at least one non-null value (sold, used, or price)
+6. Item lookup: `Item.objects.filter(brand__company=request.user.company)`
+7. Date parsing: tries `%m/%d/%y` then `%m/%d/%Y`; skips row on failure
+8. Updates `batch.event_count` after all events are created
+9. Clears all three session keys
+10. Redirects to upload page with success message
+
+### Batch delete (`event_import_delete_batch`)
+- URL: `DELETE /event-import/delete-batch/<batch_id>/` (POST)
+- Scoped to `request.user.company` — returns 404 for cross-company attempts
+- Deletes all `Event` records where `historical_batch=batch` first,
+  then deletes the batch record itself
+- Shown on the upload page as a "Previous Imports" table with per-row delete buttons
+
+### Delete All (`event_import_delete_all`)
+- Now also deletes all `HistoricalImportBatch` records for the company
+  after deleting imported events
 
 ---
 

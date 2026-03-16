@@ -1,5 +1,5 @@
 """
-Event Import views: upload CSV, review matches, confirm selections.
+Event Import views: upload CSV, review matches, confirm selections, execute import.
 
 Access: Supplier Admin only.
 
@@ -7,20 +7,29 @@ Flow:
   1. event_import_upload  — upload CSV → run matching → store in session
   2. event_import_review  — display match results, let user resolve 'review' rows
   3. event_import_confirm — merge high + user selections → store final map
-                            → show summary with "Proceed to Import" (Stage 3)
+                            → show summary with "Proceed to Import"
+  4. event_import_execute — create Event + EventItemRecap records (Stage 3)
 """
 import csv
 import io
+import logging
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.http import HttpResponse
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from rapidfuzz import fuzz
 
 from apps.accounts.models import Account
+from apps.catalog.models import Item
+from apps.core.models import User
 from apps.distribution.models import Distributor
 from apps.event_import.matching import match_csv_row, normalize_for_match
-from apps.events.models import Event
+from apps.event_import.models import HistoricalImportBatch
+from apps.events.models import Event, EventItemRecap
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +142,23 @@ def _csv_key(row):
     ])
 
 
+def _parse_int(value):
+    """Parse an integer from a string, returning None if blank or invalid."""
+    try:
+        return int(float(value)) if value.strip() else None
+    except (ValueError, AttributeError):
+        return None
+
+
+def _parse_price(value):
+    """Parse a Decimal price from a string, stripping $ and commas."""
+    try:
+        cleaned = value.strip().replace('$', '').replace(',', '').strip()
+        return Decimal(cleaned) if cleaned else None
+    except (InvalidOperation, AttributeError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # View 1 — Upload
 # ---------------------------------------------------------------------------
@@ -231,7 +257,10 @@ def event_import_upload(request):
 
         return redirect('event_import_review')
 
-    return render(request, 'event_import/upload.html')
+    batches = HistoricalImportBatch.objects.filter(
+        company=request.user.company
+    ).order_by('-imported_at')
+    return render(request, 'event_import/upload.html', {'batches': batches})
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +379,168 @@ def event_import_confirm(request):
 
 
 # ---------------------------------------------------------------------------
-# View 4 — Export CSV
+# View 4 — Execute Import (Stage 3)
+# ---------------------------------------------------------------------------
+
+ITEM_CODES = ['BWRed0750', 'BWRed1500', 'BWWht0750', 'BWWht1500', 'BWAppRasp1L']
+
+
+def event_import_execute(request):
+    """
+    Stage 3: Create Event and EventItemRecap records for all confirmed matches.
+    POST only.
+    """
+    guard = _require_supplier_admin(request)
+    if guard:
+        return guard
+
+    if request.method != 'POST':
+        return redirect('event_import_confirm')
+
+    confirmed = request.session.get('event_import_confirmed')
+    rows      = request.session.get('event_import_rows')
+    matches   = request.session.get('event_import_matches')
+
+    if confirmed is None or rows is None or matches is None:
+        messages.error(request, 'No import in progress. Please upload a CSV first.')
+        return redirect('event_import_upload')
+
+    # Find Supplier Admin for this company to use as ambassador/event_manager
+    supplier_admin = User.objects.filter(
+        company=request.user.company,
+        roles__codename='supplier_admin',
+    ).first() or request.user
+
+    # Create batch record
+    batch = HistoricalImportBatch.objects.create(
+        company=request.user.company,
+        imported_by=request.user,
+        csv_filename='Old_Events_to_Import.csv',
+    )
+
+    # Build item lookup by item_code
+    items_by_code = {
+        item.item_code: item
+        for item in Item.objects.filter(brand__company=request.user.company)
+    }
+
+    # Process each row
+    for row in rows:
+        key        = _csv_key(row)
+        account_pk = confirmed.get(key)
+
+        if account_pk is None:
+            continue
+
+        try:
+            account = Account.objects.get(pk=account_pk)
+        except Account.DoesNotExist:
+            logger.warning(f'event_import_execute: account pk={account_pk} not found, skipping')
+            continue
+
+        # Parse date
+        raw_date = row.get('date', '')
+        event_date = None
+        for fmt in ('%m/%d/%y', '%m/%d/%Y'):
+            try:
+                event_date = datetime.strptime(raw_date, fmt).date()
+                break
+            except (ValueError, TypeError):
+                continue
+        if event_date is None:
+            logger.warning(f'event_import_execute: could not parse date "{raw_date}", skipping row')
+            continue
+
+        # Parse start_time
+        raw_start = row.get('start', '')
+        start_time = None
+        try:
+            start_time = datetime.strptime(raw_start.strip(), '%I:%M %p').time()
+        except (ValueError, AttributeError):
+            pass
+
+        # Parse duration_hours
+        raw_hrs = row.get('hrs', '')
+        try:
+            duration_hours = int(float(raw_hrs)) if raw_hrs.strip() else 1
+        except (ValueError, AttributeError):
+            duration_hours = 1
+
+        # Build notes
+        parts = []
+        if row.get('note1'):
+            parts.append(f"Retail Contact: {row['note1']}")
+        if row.get('note2'):
+            parts.append(f"Retail Phone: {row['note2']}")
+        notes = ' | '.join(parts) if parts else ''
+
+        # Build recap_notes
+        parts = []
+        if row.get('recap1'):
+            parts.append(row['recap1'])
+        if row.get('recap2'):
+            parts.append(row['recap2'])
+        recap_notes = ' | '.join(parts) if parts else ''
+
+        # Parse recap fields
+        recap_samples_poured      = _parse_int(row.get('samples', ''))
+        recap_qr_codes_scanned    = _parse_int(row.get('qr_scans', ''))
+
+        # Create Event
+        event = Event.objects.create(
+            company=request.user.company,
+            account=account,
+            event_type='tasting',
+            status='complete',
+            date=event_date,
+            start_time=start_time,
+            duration_hours=duration_hours,
+            duration_minutes=0,
+            ambassador=supplier_admin,
+            event_manager=supplier_admin,
+            created_by=request.user,
+            notes=notes,
+            recap_notes=recap_notes,
+            recap_samples_poured=recap_samples_poured,
+            recap_qr_codes_scanned=recap_qr_codes_scanned,
+            is_imported=True,
+            legacy_ambassador_name=row.get('promo_person', ''),
+            historical_batch=batch,
+        )
+
+        # Create EventItemRecap records for any item with data
+        for item_code in ITEM_CODES:
+            code_lower = item_code.lower()
+            sold  = _parse_int(row.get(f'sold_{code_lower}', ''))
+            used  = _parse_int(row.get(f'used_{code_lower}', ''))
+            price = _parse_price(row.get(f'price_{code_lower}', ''))
+
+            if any(v is not None for v in [sold, used, price]):
+                item = items_by_code.get(item_code)
+                if item:
+                    event.items.add(item)
+                    EventItemRecap.objects.create(
+                        event=event,
+                        item=item,
+                        bottles_sold=sold,
+                        bottles_used_for_samples=used,
+                        shelf_price=price,
+                    )
+
+    # Update batch event count
+    batch.event_count = Event.objects.filter(historical_batch=batch).count()
+    batch.save()
+
+    # Clear session
+    for key in ['event_import_matches', 'event_import_rows', 'event_import_confirmed']:
+        request.session.pop(key, None)
+
+    messages.success(request, f'Successfully imported {batch.event_count} events.')
+    return redirect('event_import_upload')
+
+
+# ---------------------------------------------------------------------------
+# View 5 — Export CSV
 # ---------------------------------------------------------------------------
 
 def event_import_export_csv(request):
@@ -578,9 +768,38 @@ def event_import_delete_all(request):
     if request.method == 'POST':
         count = qs.count()
         qs.delete()
+        # Also clean up all batch records for this company
+        HistoricalImportBatch.objects.filter(company=request.user.company).delete()
         messages.success(request, f'Successfully deleted {count} imported event{("s" if count != 1 else "")}.')
         return redirect('event_import_upload')
 
     # GET — show confirmation page
     count = qs.count()
     return render(request, 'event_import/delete_all.html', {'imported_count': count})
+
+
+# ---------------------------------------------------------------------------
+# View 8 — Delete a single import batch
+# ---------------------------------------------------------------------------
+
+def event_import_delete_batch(request, batch_id):
+    """Delete one historical import batch and all its events. POST only."""
+    guard = _require_supplier_admin(request)
+    if guard:
+        return guard
+
+    if request.method != 'POST':
+        return redirect('event_import_upload')
+
+    batch = get_object_or_404(
+        HistoricalImportBatch,
+        pk=batch_id,
+        company=request.user.company,
+    )
+
+    count = Event.objects.filter(historical_batch=batch).count()
+    Event.objects.filter(historical_batch=batch).delete()
+    batch.delete()
+
+    messages.success(request, f'Deleted import batch ({count} event{("s" if count != 1 else "")} removed).')
+    return redirect('event_import_upload')

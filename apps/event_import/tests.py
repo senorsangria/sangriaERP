@@ -1138,6 +1138,219 @@ class ValidateCsvNoDbMatchTest(TestCase):
         self.assertIsNone(conflicts[0]['suggested_distributor'])
 
 
+# ---------------------------------------------------------------------------
+# Execute import (Stage 3)
+# ---------------------------------------------------------------------------
+
+from apps.catalog.models import Brand, Item as CatalogItem
+from apps.event_import.models import HistoricalImportBatch
+
+
+def _make_execute_session(company, distributor):
+    """Build session data for a single matched row ready for execute."""
+    acct = make_account(
+        company, distributor,
+        name='Test Wines',
+        street='50 Oak Ave',
+        city='Hoboken',
+    )
+    csv_key = 'Shore Point Distributing||Test Wines||50 Oak Ave||Hoboken'
+    rows = [
+        {
+            'distributor': 'Shore Point Distributing',
+            'location':    'Test Wines',
+            'address':     '50 Oak Ave',
+            'city':        'Hoboken',
+            'date':        '01/15/24',
+            'start':       '2:00 PM',
+            'hrs':         '2',
+            'note1':       'Jane Smith',
+            'note2':       '555-1234',
+            'promo_person': 'Bob Jones',
+            'recap1':      'Great event',
+            'recap2':      '',
+            'samples':     '30',
+            'qr_scans':    '5',
+            'sold_bwred0750':  '3',
+            'used_bwred0750':  '1',
+            'price_bwred0750': '12.99',
+        }
+    ]
+    matches = {
+        'high':   [{'csv_key': csv_key, 'match_account_pk': acct.pk,
+                    'match_account_name': acct.name, 'row_count': 1, 'score': 95}],
+        'review': [],
+        'none':   [],
+    }
+    confirmed = {csv_key: acct.pk}
+    return rows, matches, confirmed, acct, csv_key
+
+
+def _make_brand_and_item(company, item_code='BWRed0750', item_name='Classic Red 750ml'):
+    """Create a Brand+Item for testing EventItemRecap creation."""
+    brand = Brand.objects.create(company=company, name=f'Test Brand {item_code}')
+    return CatalogItem.objects.create(brand=brand, name=item_name, item_code=item_code)
+
+
+class ExecuteAccessTest(TestCase):
+
+    def setUp(self):
+        self.company     = make_company('Execute Access Co')
+        self.distributor = make_distributor(self.company)
+        self.client      = Client()
+
+    def test_execute_requires_supplier_admin(self):
+        """Non-supplier-admin is redirected to dashboard."""
+        ambassador = make_user(self.company, 'ambassador', username='amb_exec')
+        self.client.login(username='amb_exec', password='testpass123')
+        response = self.client.post(reverse('event_import_execute'))
+        self.assertRedirects(response, reverse('dashboard'), fetch_redirect_response=False)
+
+
+class ExecuteImportTest(TestCase):
+
+    def setUp(self):
+        self.company     = make_company('Execute Import Co')
+        self.distributor = make_distributor(self.company)
+        self.admin       = make_user(self.company, 'supplier_admin', username='sadmin_exec')
+        self.client      = Client()
+        self.client.login(username='sadmin_exec', password='testpass123')
+
+    def _set_session(self, rows, matches, confirmed):
+        session = self.client.session
+        session['event_import_rows']      = rows
+        session['event_import_matches']   = matches
+        session['event_import_confirmed'] = confirmed
+        session.save()
+
+    def test_execute_creates_events(self):
+        """Running execute with valid session creates Event records with correct fields."""
+        rows, matches, confirmed, acct, _ = _make_execute_session(self.company, self.distributor)
+        self._set_session(rows, matches, confirmed)
+
+        self.client.post(reverse('event_import_execute'))
+
+        events = Event.objects.filter(company=self.company, is_imported=True)
+        self.assertEqual(events.count(), 1)
+        event = events.first()
+        self.assertEqual(event.status, 'complete')
+        self.assertTrue(event.is_imported)
+        self.assertEqual(event.legacy_ambassador_name, 'Bob Jones')
+        self.assertIsNotNone(event.historical_batch)
+        self.assertEqual(event.account, acct)
+        self.assertEqual(str(event.date), '2024-01-15')
+        self.assertEqual(event.notes, 'Retail Contact: Jane Smith | Retail Phone: 555-1234')
+        self.assertEqual(event.recap_notes, 'Great event')
+        self.assertEqual(event.recap_samples_poured, 30)
+        self.assertEqual(event.recap_qr_codes_scanned, 5)
+
+    def test_execute_creates_event_item_recaps(self):
+        """EventItemRecap records created for rows with bottle data."""
+        _make_brand_and_item(self.company, 'BWRed0750', 'Classic Red 750ml')
+        rows, matches, confirmed, acct, _ = _make_execute_session(self.company, self.distributor)
+        self._set_session(rows, matches, confirmed)
+
+        self.client.post(reverse('event_import_execute'))
+
+        from apps.events.models import EventItemRecap
+        event = Event.objects.filter(company=self.company, is_imported=True).first()
+        recaps = EventItemRecap.objects.filter(event=event)
+        self.assertEqual(recaps.count(), 1)
+        recap = recaps.first()
+        self.assertEqual(recap.bottles_sold, 3)
+        self.assertEqual(recap.bottles_used_for_samples, 1)
+        from decimal import Decimal
+        self.assertEqual(recap.shelf_price, Decimal('12.99'))
+
+    def test_execute_skips_unmatched_rows(self):
+        """Rows with no account_pk in confirmed map are not created as events."""
+        rows, matches, confirmed, acct, csv_key = _make_execute_session(self.company, self.distributor)
+        confirmed[csv_key] = None   # mark as skipped
+        self._set_session(rows, matches, confirmed)
+
+        self.client.post(reverse('event_import_execute'))
+
+        self.assertEqual(Event.objects.filter(company=self.company, is_imported=True).count(), 0)
+
+    def test_execute_clears_session(self):
+        """Session keys are cleared after successful import."""
+        rows, matches, confirmed, _, _ = _make_execute_session(self.company, self.distributor)
+        self._set_session(rows, matches, confirmed)
+
+        self.client.post(reverse('event_import_execute'))
+
+        session = self.client.session
+        self.assertNotIn('event_import_rows',      session)
+        self.assertNotIn('event_import_matches',   session)
+        self.assertNotIn('event_import_confirmed', session)
+
+    def test_execute_creates_batch(self):
+        """HistoricalImportBatch created with correct event_count."""
+        rows, matches, confirmed, acct, _ = _make_execute_session(self.company, self.distributor)
+        self._set_session(rows, matches, confirmed)
+
+        self.client.post(reverse('event_import_execute'))
+
+        batches = HistoricalImportBatch.objects.filter(company=self.company)
+        self.assertEqual(batches.count(), 1)
+        batch = batches.first()
+        self.assertEqual(batch.event_count, 1)
+        self.assertEqual(batch.imported_by, self.admin)
+
+
+# ---------------------------------------------------------------------------
+# Delete batch
+# ---------------------------------------------------------------------------
+
+class DeleteBatchTest(TestCase):
+
+    def setUp(self):
+        self.company     = make_company('Delete Batch Co')
+        self.distributor = make_distributor(self.company)
+        self.admin       = make_user(self.company, 'supplier_admin', username='sadmin_delbatch')
+        self.client      = Client()
+        self.client.login(username='sadmin_delbatch', password='testpass123')
+
+    def _make_batch_with_events(self, count=2):
+        batch = HistoricalImportBatch.objects.create(
+            company=self.company,
+            imported_by=self.admin,
+            event_count=count,
+        )
+        for i in range(count):
+            Event.objects.create(
+                company=self.company,
+                is_imported=True,
+                date=datetime.date(2024, 1, i + 1),
+                historical_batch=batch,
+            )
+        return batch
+
+    def test_delete_batch_removes_events(self):
+        """Deleting a batch removes all its events."""
+        batch = self._make_batch_with_events(3)
+        self.assertEqual(Event.objects.filter(historical_batch=batch).count(), 3)
+
+        self.client.post(reverse('event_import_delete_batch', args=[batch.pk]))
+
+        self.assertEqual(Event.objects.filter(company=self.company, is_imported=True).count(), 0)
+        self.assertFalse(HistoricalImportBatch.objects.filter(pk=batch.pk).exists())
+
+    def test_delete_batch_scoped_to_company(self):
+        """Cannot delete another company's batch — returns 404."""
+        other_company = make_company('Other Batch Co')
+        other_admin   = make_user(other_company, 'supplier_admin', username='sadmin_other_batch')
+        other_batch   = HistoricalImportBatch.objects.create(
+            company=other_company,
+            imported_by=other_admin,
+            event_count=0,
+        )
+
+        response = self.client.post(reverse('event_import_delete_batch', args=[other_batch.pk]))
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(HistoricalImportBatch.objects.filter(pk=other_batch.pk).exists())
+
+
 class ValidateCsvRetailerComparisonTest(TestCase):
 
     def setUp(self):
