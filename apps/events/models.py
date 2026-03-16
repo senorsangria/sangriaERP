@@ -30,6 +30,7 @@ class Event(TimeStampedModel):
         REVISION_REQUESTED = 'revision_requested', 'Revision Requested'
         COMPLETE           = 'complete',           'Complete'
         OK_TO_PAY          = 'ok_to_pay',          'Ok to Pay'
+        PAID               = 'paid',               'Paid'
 
     # Core fields
     company = models.ForeignKey(

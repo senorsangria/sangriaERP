@@ -1233,7 +1233,7 @@ class ExecuteImportTest(TestCase):
         events = Event.objects.filter(company=self.company, is_imported=True)
         self.assertEqual(events.count(), 1)
         event = events.first()
-        self.assertEqual(event.status, 'ok_to_pay')
+        self.assertEqual(event.status, 'paid')
         self.assertTrue(event.is_imported)
         self.assertEqual(event.legacy_ambassador_name, 'Bob Jones')
         self.assertIsNotNone(event.historical_batch)

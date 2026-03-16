@@ -491,7 +491,7 @@ def event_import_execute(request):
             company=request.user.company,
             account=account,
             event_type='tasting',
-            status='ok_to_pay',
+            status='paid',
             date=event_date,
             start_time=start_time,
             duration_hours=duration_hours,

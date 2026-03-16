@@ -104,6 +104,11 @@ on this project including AI coding assistants.
 - Any user in the company can be assigned as the ambassador
   on an event — role does not restrict field participation
 - Recap and photo upload fields are deferred to Event Management phase
+- **Status workflow:** Draft → Scheduled → Recap In Progress → Recap Submitted
+  → Revision Requested → Complete → Ok to Pay → Paid
+- **Paid** is the final status; added for future use — not yet wired into
+  the event management workflow UI
+- Historical imported events are created directly at `status='paid'`
 
 ### Item Mapping
 - Scoped to Brand (which is scoped to Company)
@@ -305,7 +310,7 @@ Searchable list for one-off or exception assignments
   deleted explicitly before or instead of the batch
 
 ### Import status for historical events
-- All imported events are created with `status='complete'`
+- All imported events are created with `status='paid'`
 - `is_imported=True` flags them as historical
 - `legacy_ambassador_name` stores the promo person name from the CSV
   (the CSV promo person is not resolved to a User record)
