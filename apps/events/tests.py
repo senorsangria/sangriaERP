@@ -1999,3 +1999,24 @@ class EventListTabsTest(TestCase):
         resp = self.client.get(reverse('event_list'))
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.context['active_count'], 2)
+
+    def test_event_list_default_tab_is_active(self):
+        """With no ?tab param, active_tab context is 'active'."""
+        resp = self.client.get(reverse('event_list'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_tab'], 'active')
+
+    def test_event_list_past_tab_param(self):
+        """With ?tab=past, active_tab context is 'past'."""
+        resp = self.client.get(reverse('event_list') + '?tab=past')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_tab'], 'past')
+
+    def test_event_detail_return_tab_passed(self):
+        """return_tab context is set from ?return_tab query param."""
+        event = self._make_event(Event.Status.PAID)
+        resp = self.client.get(
+            reverse('event_detail', args=[event.pk]) + '?return_tab=past'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['return_tab'], 'past')

@@ -383,6 +383,8 @@ def event_list(request):
             'creator': '', 'distributor': '', 'account_name': '', 'city': '',
         })
 
+    active_tab = request.GET.get('tab', 'active')
+
     # ---- Base queryset ----
     qs = _get_visible_events(request.user)
 
@@ -445,6 +447,7 @@ def event_list(request):
         'paid_groups':      paid_groups,
         'active_count':     active_count,
         'paid_count':       paid_count,
+        'active_tab':       active_tab,
         'filters':          filters,
         'filters_active':   filters_active,
         'years':            years,
@@ -628,6 +631,8 @@ def event_detail(request, pk):
     visible = _get_visible_events(request.user)
     event = get_object_or_404(visible, pk=pk, company=company)
 
+    return_tab = request.GET.get('return_tab', 'active')
+
     can_edit = bool(request.user.get_role_codenames() & _CREATOR_ROLES)
     can_action = bool(request.user.get_role_codenames() & _ACTION_ROLES)
     can_recap = _can_recap(request.user, event)
@@ -686,6 +691,7 @@ def event_detail(request, pk):
         'items_with_recaps':      items_with_recaps,
         'photos':                 photos,
         'expenses':               expenses,
+        'return_tab':             return_tab,
     })
 
 

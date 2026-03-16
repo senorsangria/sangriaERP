@@ -16,7 +16,7 @@
      Top bar: Back | Event Type badge | Status badge | Edit button
      ==================================================================== -->
 <div class="d-flex align-items-center mb-3 gap-2 flex-wrap">
-  <a href="{% url 'event_list' %}" class="btn btn-sm btn-outline-secondary">
+  <a href="{% url 'event_list' %}?tab={{ return_tab }}" class="btn btn-sm btn-outline-secondary">
     <i class="bi bi-arrow-left me-1"></i>Events
   </a>
   <span class="badge bg-light text-dark border">
