@@ -265,6 +265,7 @@ def _sort_events(events_qs):
     scheduled      = sorted([e for e in events if e.status == Event.Status.SCHEDULED],         key=date_asc_key)
     complete       = sorted([e for e in events if e.status == Event.Status.COMPLETE],           key=date_desc_key)
     ok_to_pay      = sorted([e for e in events if e.status == Event.Status.OK_TO_PAY],         key=date_desc_key)
+    paid           = sorted([e for e in events if e.status == Event.Status.PAID],              key=date_desc_key)
 
     groups = []
     if revision:
@@ -281,6 +282,8 @@ def _sort_events(events_qs):
         groups.append(('Complete', 'complete', complete))
     if ok_to_pay:
         groups.append(('Ok to Pay', 'ok_to_pay', ok_to_pay))
+    if paid:
+        groups.append(('Paid', 'paid', paid))
 
     return groups
 
