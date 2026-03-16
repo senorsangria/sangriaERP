@@ -278,7 +278,7 @@ def event_import_review(request):
         return redirect('event_import_upload')
 
     high   = sorted(session_data['high'],   key=lambda x: x['score'], reverse=True)
-    review = sorted(session_data['review'], key=lambda x: x['best_score'], reverse=True)
+    review = sorted(session_data['review'], key=lambda x: x['row_count'], reverse=True)
     none   = session_data['none']
 
     total_rows = (
@@ -491,7 +491,7 @@ def event_import_execute(request):
             company=request.user.company,
             account=account,
             event_type='tasting',
-            status='complete',
+            status='ok_to_pay',
             date=event_date,
             start_time=start_time,
             duration_hours=duration_hours,
