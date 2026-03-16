@@ -109,6 +109,12 @@ on this project including AI coding assistants.
 - **Paid** is the final status; added for future use — not yet wired into
   the event management workflow UI
 - Historical imported events are created directly at `status='paid'`
+- **Event list tabs:** The event list has two tabs — Active Events and Past Events
+  - Active Events tab shows all statuses except `paid`; the status filter applies only here
+  - Past Events tab shows only `paid` events, sorted date descending
+  - Non-status filters (year, month, type, distributor, account, city) apply to both tabs
+  - Status filter is hidden when the Past Events tab is active
+  - Page always opens on the Active Events tab
 
 ### Item Mapping
 - Scoped to Brand (which is scoped to Company)

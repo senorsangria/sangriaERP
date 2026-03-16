@@ -1949,3 +1949,53 @@ class PayrollReviewerVisibilityTest(TestCase):
         self.assertEqual(resp.status_code, 200)
         pks = [e.pk for group in resp.context['event_groups'] for e in group[2]]
         self.assertIn(event.pk, pks)
+
+
+# ---------------------------------------------------------------------------
+# Event list — Active / Past tabs
+# ---------------------------------------------------------------------------
+
+class EventListTabsTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Tabs Test Co')
+        self.admin   = make_user(self.company, 'supplier_admin', username='sa_tabs')
+        self.account = make_account(self.company, 'Tab Test Store')
+        self.client  = Client()
+        self.client.login(username='sa_tabs', password='testpass123')
+
+    def _make_event(self, status):
+        return make_event(
+            self.company, self.admin,
+            Event.EventType.TASTING,
+            status=status,
+            account=self.account,
+        )
+
+    def test_event_list_active_tab_excludes_paid(self):
+        """Paid events do not appear in event_groups (active tab)."""
+        paid_event    = self._make_event(Event.Status.PAID)
+        active_event  = self._make_event(Event.Status.COMPLETE)
+        resp = self.client.get(reverse('event_list'))
+        self.assertEqual(resp.status_code, 200)
+        active_pks = [e.pk for group in resp.context['event_groups'] for e in group[2]]
+        self.assertNotIn(paid_event.pk, active_pks)
+        self.assertIn(active_event.pk, active_pks)
+
+    def test_event_list_paid_count_in_context(self):
+        """paid_count matches the number of paid events visible to the user."""
+        self._make_event(Event.Status.PAID)
+        self._make_event(Event.Status.PAID)
+        self._make_event(Event.Status.COMPLETE)
+        resp = self.client.get(reverse('event_list'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['paid_count'], 2)
+
+    def test_event_list_active_count_in_context(self):
+        """active_count matches the number of non-paid events visible to the user."""
+        self._make_event(Event.Status.PAID)
+        self._make_event(Event.Status.COMPLETE)
+        self._make_event(Event.Status.SCHEDULED)
+        resp = self.client.get(reverse('event_list'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_count'], 2)

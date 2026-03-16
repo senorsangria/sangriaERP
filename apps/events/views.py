@@ -234,11 +234,17 @@ def _sort_events(events_qs):
     Group and sort events per the required sort order:
       1. Revision Requested (date asc)
       2. Draft (no-date first, then date asc)
-      3. Recap Submitted (date asc)
-      4. Scheduled (date asc)
-      5. Complete (date desc)
+      3. Recap In Progress (date asc)
+      4. Recap Submitted (date asc)
+      5. Scheduled (date asc)
+      6. Complete (date desc)
+      7. Ok to Pay (date desc)
 
-    Returns a list of (group_label, events_list) tuples.
+    Paid events are separated out and returned independently.
+
+    Returns a tuple: (groups, paid_events)
+      groups      — list of (group_label, group_key, events_list) for active statuses
+      paid_events — list of paid events sorted date descending
     """
     MAX_DATE = date_type.max
 
@@ -282,10 +288,8 @@ def _sort_events(events_qs):
         groups.append(('Complete', 'complete', complete))
     if ok_to_pay:
         groups.append(('Ok to Pay', 'ok_to_pay', ok_to_pay))
-    if paid:
-        groups.append(('Paid', 'paid', paid))
 
-    return groups
+    return groups, paid
 
 
 # ---------------------------------------------------------------------------
@@ -387,8 +391,16 @@ def event_list(request):
     if not _can_view_drafts(request.user):
         qs = qs.exclude(status=Event.Status.DRAFT)
 
-    # ---- Apply filters ----
-    qs = _apply_event_filters(qs, filters)
+    # Split into active (non-paid) and past (paid) querysets
+    active_qs = qs.exclude(status=Event.Status.PAID)
+    paid_qs   = qs.filter(status=Event.Status.PAID)
+
+    # Apply all filters (including status) to active events
+    active_qs = _apply_event_filters(active_qs, filters)
+
+    # Apply non-status filters to paid events (status filter excluded for past tab)
+    filters_no_status = {**filters, 'status': []}
+    paid_qs = _apply_event_filters(paid_qs, filters_no_status)
 
     # ---- Build filter sidebar data ----
     # Years from event dates (from full visible set, not filtered)
@@ -413,7 +425,13 @@ def event_list(request):
     distributors = Distributor.objects.filter(company=company, is_active=True).order_by('name')
 
     # ---- Group and sort ----
-    event_groups = _sort_events(qs)
+    event_groups, _ = _sort_events(active_qs)
+
+    paid_events = list(paid_qs.order_by('-date'))
+    paid_groups = [('Paid', 'paid', paid_events)] if paid_events else []
+
+    active_count = sum(len(g[2]) for g in event_groups)
+    paid_count   = len(paid_events)
 
     filters_active = bool(
         filters.get('status') or filters.get('year') or filters.get('month')
@@ -424,6 +442,9 @@ def event_list(request):
 
     return render(request, 'events/event_list.html', {
         'event_groups':     event_groups,
+        'paid_groups':      paid_groups,
+        'active_count':     active_count,
+        'paid_count':       paid_count,
         'filters':          filters,
         'filters_active':   filters_active,
         'years':            years,
