@@ -112,6 +112,13 @@ def _parse_csv(file_obj):
             COLUMN_MAP.get(k, k): v
             for k, v in normalized.items()
         }
+        # Skip blank rows (spreadsheet trailing empty rows)
+        if not any([
+            mapped.get('location', ''),
+            mapped.get('address', ''),
+            mapped.get('city', ''),
+        ]):
+            continue
         rows.append(mapped)
     return rows
 

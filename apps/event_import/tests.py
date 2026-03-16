@@ -132,6 +132,18 @@ class CsvColumnMappingTest(TestCase):
         self.assertEqual(row['address'], '1 Main St')
         self.assertEqual(row['city'], 'Newark')
 
+    def test_blank_rows_skipped(self):
+        """Rows with blank location, address, and city are skipped."""
+        csv_text = (
+            'Distributor,Event Location,Address,City\r\n'
+            'Shore Point,Main St Wines,123 Main St,Hoboken\r\n'
+            'Shore Point,,,\r\n'
+            ',,,\r\n'
+        )
+        rows = _parse_csv(self._make_file(csv_text))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['location'], 'Main St Wines')
+
 
 # ---------------------------------------------------------------------------
 # Access control
