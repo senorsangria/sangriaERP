@@ -145,7 +145,8 @@
           <input type="text" name="account_name" id="filter_acct"
                  class="form-control form-control-sm"
                  placeholder="Account name…"
-                 value="{{ filters.account_name }}">
+                 value="{{ filters.account_name }}"
+                 autocomplete="off">
         </div>
 
         <!-- City -->
@@ -154,7 +155,8 @@
           <input type="text" name="city" id="filter_city"
                  class="form-control form-control-sm"
                  placeholder="City…"
-                 value="{{ filters.city }}">
+                 value="{{ filters.city }}"
+                 autocomplete="off">
         </div>
 
         <!-- Buttons -->
@@ -162,7 +164,7 @@
           <button type="submit" class="btn btn-sm btn-primary">
             <i class="bi bi-search me-1"></i>Apply Filters
           </button>
-          <a href="?tab={{ active_tab }}" class="btn btn-sm btn-outline-secondary">
+          <a href="?tab={{ active_tab }}" id="clear-filters-link" class="btn btn-sm btn-outline-secondary">
             <i class="bi bi-x-circle me-1"></i>Clear Filters
           </a>
           <button type="submit" formaction="{% url 'event_export_csv' %}"
@@ -345,7 +347,7 @@
         </span>
       </div>
       {% for event in group_events %}
-      <a href="{% url 'event_detail' event.pk %}?return_tab={{ active_tab }}" class="text-decoration-none text-dark">
+      <a href="{% url 'event_detail' event.pk %}?return_tab=past" class="text-decoration-none text-dark">
         <div class="card mb-2 event-card">
           <div class="card-body py-2 px-3">
             <div class="d-flex justify-content-between align-items-start">
@@ -410,7 +412,7 @@
               {% for event in group_events %}
               <tr>
                 <td>
-                  <a href="{% url 'event_detail' event.pk %}?return_tab={{ active_tab }}" class="text-decoration-none fw-semibold">
+                  <a href="{% url 'event_detail' event.pk %}?return_tab=past" class="text-decoration-none fw-semibold">
                     {% if event.date %}{{ event.date|date:"m/d/y" }}{% else %}<span class="text-muted fst-italic">No date</span>{% endif %}
                   </a>
                 </td>
@@ -510,6 +512,20 @@
 
       // Show/hide status filter
       document.getElementById('status-filter-section').style.display = isPast ? 'none' : '';
+
+      // Update the hidden tab input in the filter form
+      const tabInput = document.querySelector('input[type="hidden"][name="tab"]');
+      if (tabInput) {
+        tabInput.value = isPast ? 'past' : 'active';
+      }
+
+      // Update the Clear Filters link href
+      const clearLink = document.getElementById('clear-filters-link');
+      if (clearLink) {
+        const url = new URL(clearLink.href);
+        url.searchParams.set('tab', isPast ? 'past' : 'active');
+        clearLink.href = url.toString();
+      }
     });
   });
 

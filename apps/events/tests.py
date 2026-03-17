@@ -2021,6 +2021,14 @@ class EventListTabsTest(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.context['return_tab'], 'past')
 
+    def test_past_tab_links_use_return_tab_past(self):
+        """Event links in the past-events pane hardcode return_tab=past."""
+        event = self._make_event(Event.Status.PAID)
+        resp = self.client.get(reverse('event_list') + '?tab=past')
+        self.assertEqual(resp.status_code, 200)
+        expected_url = reverse('event_detail', args=[event.pk]) + '?return_tab=past'
+        self.assertContains(resp, expected_url)
+
     def test_event_detail_total_bottles_sold(self):
         """Event with item recaps shows correct total_bottles_sold in context."""
         from apps.events.models import EventItemRecap
