@@ -205,25 +205,25 @@
           {% for item, recap in items_with_recaps %}
           <div class="border rounded p-3 mb-3">
             <div class="fw-semibold mb-2">{{ item.name }}</div>
-            <div class="d-flex flex-wrap gap-3">
-              <div>
+            <div class="row g-2">
+              <div class="col-5">
                 <label class="form-label small fw-semibold d-block">Shelf Price ($)</label>
                 <input type="number" step="0.01" min="0" max="999.99" size="6" maxlength="6"
-                       class="form-control form-control-sm" style="width:auto;"
+                       class="form-control form-control-sm"
                        name="shelf_price_{{ item.pk }}"
                        value="{% if recap and recap.shelf_price != None %}{{ recap.shelf_price }}{% endif %}">
               </div>
-              <div>
-                <label class="form-label small fw-semibold d-block">Bottles Sold</label>
+              <div class="col-3">
+                <label class="form-label small fw-semibold d-block">Btl. Sold</label>
                 <input type="number" min="0" max="999" size="3" maxlength="3"
-                       class="form-control form-control-sm" style="width:auto;"
+                       class="form-control form-control-sm"
                        name="bottles_sold_{{ item.pk }}"
                        value="{% if recap and recap.bottles_sold != None %}{{ recap.bottles_sold }}{% endif %}">
               </div>
-              <div>
-                <label class="form-label small fw-semibold d-block">Bottles for Samples</label>
+              <div class="col-4">
+                <label class="form-label small fw-semibold d-block">Sample Btl.</label>
                 <input type="number" min="0" max="99" size="2" maxlength="2"
-                       class="form-control form-control-sm" style="width:auto;"
+                       class="form-control form-control-sm"
                        name="bottles_samples_{{ item.pk }}"
                        value="{% if recap and recap.bottles_used_for_samples != None %}{{ recap.bottles_used_for_samples }}{% endif %}">
               </div>
