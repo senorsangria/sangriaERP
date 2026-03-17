@@ -164,7 +164,7 @@
           <button type="submit" class="btn btn-sm btn-primary">
             <i class="bi bi-search me-1"></i>Apply Filters
           </button>
-          <a href="?tab={{ active_tab }}" id="clear-filters-link" class="btn btn-sm btn-outline-secondary">
+          <a href="?tab={{ active_tab }}&clear_filters=1" id="clear-filters-link" class="btn btn-sm btn-outline-secondary">
             <i class="bi bi-x-circle me-1"></i>Clear Filters
           </a>
           <button type="submit" formaction="{% url 'event_export_csv' %}"
@@ -524,6 +524,7 @@
       if (clearLink) {
         const url = new URL(clearLink.href);
         url.searchParams.set('tab', isPast ? 'past' : 'active');
+        url.searchParams.set('clear_filters', '1');
         clearLink.href = url.toString();
       }
 
