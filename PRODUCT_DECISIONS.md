@@ -2663,8 +2663,15 @@ Each conflict entry includes:
 - Ambassador moved inline with date/start time/duration on the same row; uses `legacy_ambassador_name` for imported events, ambassador FK name otherwise
 - Total Bottles Sold field added to the read-only recap section (after Samples Poured), computed as the sum of `bottles_sold` across all `EventItemRecap` records; only shown when at least one item recap exists (`has_recap`)
 - "Bottles for Samples" label in per-item recap section replaced with inline format: `Sample Bottle: [value]` (shows `—` if None)
+- Expenses section moved before Per Item Sampled in the read-only recap; heading shows total: "Expenses $XX.XX"; only shown when `has_expenses` is True; `total_expenses` and `has_expenses` computed in `event_detail` view from `event.expenses.all()`
+
+**CSV export tab-awareness:**
+- `event_export_csv` reads `?tab` query parameter (default: `'active'`)
+- If `tab == 'past'`: export includes only events with `status=PAID`
+- If `tab == 'active'` (or any other value): export excludes events with `status=PAID`
+- The filter form's hidden `<input name="tab">` is automatically carried when the Export CSV button (`formaction`) submits the form, so the export always matches the currently visible tab
 
 ---
 
-*Last updated: March 17, 2026 (Event list and detail tweaks: remove columns, imported tag, total bottles sold, inline ambassador)*
+*Last updated: March 17, 2026 (Expenses section reorder, total expense, CSV export tab-awareness)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

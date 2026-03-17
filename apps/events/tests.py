@@ -2062,3 +2062,68 @@ class EventListTabsTest(TestCase):
         resp = self.client.get(reverse('event_detail', args=[event.pk]))
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.context['event'].is_imported)
+
+    def test_event_detail_total_expenses_in_context(self):
+        """Event with expenses passes has_expenses=True and correct total_expenses."""
+        from decimal import Decimal
+        event = self._make_event(Event.Status.COMPLETE)
+        Expense.objects.create(event=event, amount=Decimal('12.50'), description='Cups')
+        Expense.objects.create(event=event, amount=Decimal('7.25'), description='Ice')
+        resp = self.client.get(reverse('event_detail', args=[event.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context['has_expenses'])
+        self.assertEqual(resp.context['total_expenses'], Decimal('19.75'))
+
+    def test_event_detail_no_expenses_hides_section(self):
+        """Event with no expenses passes has_expenses=False and total_expenses=0."""
+        event = self._make_event(Event.Status.COMPLETE)
+        resp = self.client.get(reverse('event_detail', args=[event.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context['has_expenses'])
+        self.assertEqual(resp.context['total_expenses'], 0)
+
+
+class CsvExportTabFilterTest(TestCase):
+    """CSV export respects the ?tab parameter to filter paid vs active events."""
+
+    def setUp(self):
+        self.company = make_company('CSV Tab Co')
+        self.admin   = make_user(self.company, 'supplier_admin', username='sa_csv_tab')
+        self.account = make_account(self.company, 'CSV Tab Store')
+        self.client  = Client()
+        self.client.login(username='sa_csv_tab', password='testpass123')
+
+    def _make_event(self, status):
+        return make_event(
+            self.company, self.admin,
+            Event.EventType.TASTING,
+            status=status,
+            account=self.account,
+            date=date(2026, 1, 15),
+        )
+
+    def _get_csv_rows(self, **params):
+        import csv, io
+        resp = self.client.get(reverse('event_export_csv'), params)
+        self.assertEqual(resp.status_code, 200)
+        return list(csv.reader(io.StringIO(resp.content.decode())))
+
+    def test_export_csv_active_tab_excludes_paid(self):
+        """?tab=active export omits paid events."""
+        paid_event   = self._make_event(Event.Status.PAID)
+        active_event = self._make_event(Event.Status.COMPLETE)
+        rows = self._get_csv_rows(tab='active')
+        pks_in_csv = {row[2] for row in rows[1:]}  # Event Date column used as proxy
+        # Verify only 1 data row (active event) — simplest: count data rows
+        self.assertEqual(len(rows) - 1, 1)
+
+    def test_export_csv_past_tab_includes_only_paid(self):
+        """?tab=past export includes only paid events."""
+        paid_event   = self._make_event(Event.Status.PAID)
+        active_event = self._make_event(Event.Status.COMPLETE)
+        rows = self._get_csv_rows(tab='past')
+        self.assertEqual(len(rows) - 1, 1)
+        # The one data row should be the paid event
+        header = rows[0]
+        data = rows[1]
+        self.assertEqual(data[header.index('Event Status')], Event.Status.PAID.label)

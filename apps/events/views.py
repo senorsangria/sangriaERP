@@ -503,10 +503,17 @@ def event_export_csv(request):
         'city':         request.GET.get('city', ''),
     }
 
+    tab = request.GET.get('tab', 'active')
+
     qs = _get_visible_events(request.user)
     if not _can_view_drafts(request.user):
         qs = qs.exclude(status=Event.Status.DRAFT)
     qs = _apply_event_filters(qs, filters)
+
+    if tab == 'past':
+        qs = qs.filter(status=Event.Status.PAID)
+    else:
+        qs = qs.exclude(status=Event.Status.PAID)
 
     # Fetch all events with related data in a single pass
     events = list(
@@ -675,6 +682,8 @@ def event_detail(request, pk):
 
     photos = event.photos.all() if show_recap else []
     expenses = list(event.expenses.all()) if show_recap else []
+    has_expenses = bool(expenses)
+    total_expenses = sum(e.amount for e in expenses) if expenses else 0
 
     total_bottles_sold = event.item_recaps.aggregate(
         Sum('bottles_sold')
@@ -697,6 +706,8 @@ def event_detail(request, pk):
         'items_with_recaps':      items_with_recaps,
         'photos':                 photos,
         'expenses':               expenses,
+        'has_expenses':           has_expenses,
+        'total_expenses':         total_expenses,
         'return_tab':             return_tab,
         'total_bottles_sold':     total_bottles_sold,
         'has_recap':              has_recap,

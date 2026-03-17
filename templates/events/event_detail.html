@@ -397,8 +397,28 @@
         <p class="mb-3" style="white-space: pre-wrap;">{{ event.recap_notes }}</p>
         {% endif %}
 
+        <!-- Expenses (read-only) -->
+        {% if has_expenses %}
+        <div class="mt-3">
+          <h6 class="text-muted fw-semibold mb-2">Expenses <span class="text-dark">${{ total_expenses }}</span></h6>
+          <div class="d-flex flex-column gap-2">
+            {% for expense in expenses %}
+            <div class="d-flex align-items-start gap-2">
+              <a href="{{ expense.receipt_photo_url }}" target="_blank">
+                <img src="{{ expense.receipt_photo_url }}" alt="Receipt" style="width:48px;height:48px;object-fit:cover;border-radius:4px;">
+              </a>
+              <div class="small">
+                <div class="fw-semibold">{{ expense.description }}</div>
+                <div class="text-muted">${{ expense.amount }}</div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
         {% if items_with_recaps %}
-        <h6 class="text-muted fw-semibold mb-2">Per Item Sampled</h6>
+        <h6 class="text-muted fw-semibold mb-2 mt-3">Per Item Sampled</h6>
         {% for item, recap in items_with_recaps %}
         <div class="border rounded p-3 mb-2">
           <div class="fw-semibold mb-2">{{ item.name }}</div>
@@ -439,26 +459,6 @@
             <a href="{{ photo.file_url }}" target="_blank">
               <img src="{{ photo.file_url }}" alt="Event photo" class="recap-photo-thumb">
             </a>
-            {% endfor %}
-          </div>
-        </div>
-        {% endif %}
-
-        <!-- Expenses (read-only) -->
-        {% if expenses %}
-        <div class="mt-3">
-          <h6 class="text-muted fw-semibold mb-2">Expenses</h6>
-          <div class="d-flex flex-column gap-2">
-            {% for expense in expenses %}
-            <div class="d-flex align-items-start gap-2">
-              <a href="{{ expense.receipt_photo_url }}" target="_blank">
-                <img src="{{ expense.receipt_photo_url }}" alt="Receipt" style="width:48px;height:48px;object-fit:cover;border-radius:4px;">
-              </a>
-              <div class="small">
-                <div class="fw-semibold">{{ expense.description }}</div>
-                <div class="text-muted">${{ expense.amount }}</div>
-              </div>
-            </div>
             {% endfor %}
           </div>
         </div>
