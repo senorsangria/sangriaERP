@@ -402,16 +402,16 @@
         {% for item, recap in items_with_recaps %}
         <div class="border rounded p-3 mb-2">
           <div class="fw-semibold mb-2">{{ item.name }}</div>
-          <div class="row g-2">
-            <div class="col-6 col-md-4">
+          <div class="row g-1">
+            <div class="col-4">
               <span class="info-label d-block">Shelf Price</span>
               {% if recap and recap.shelf_price != None %}${{ recap.shelf_price }}{% else %}<span class="text-muted">—</span>{% endif %}
             </div>
-            <div class="col-6 col-md-4">
+            <div class="col-4">
               <span class="info-label d-block">BTL. Sold</span>
               {% if recap and recap.bottles_sold != None %}{{ recap.bottles_sold }}{% else %}<span class="text-muted">—</span>{% endif %}
             </div>
-            <div class="col-6 col-md-4">
+            <div class="col-4">
               <span class="info-label d-block">Sample BTL.</span>
               {% if recap and recap.bottles_used_for_samples != None %}{{ recap.bottles_used_for_samples }}{% else %}<span class="text-muted">—</span>{% endif %}
             </div>
