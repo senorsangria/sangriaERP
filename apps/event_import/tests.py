@@ -1239,7 +1239,7 @@ class ExecuteImportTest(TestCase):
         self.assertIsNotNone(event.historical_batch)
         self.assertEqual(event.account, acct)
         self.assertEqual(str(event.date), '2024-01-15')
-        self.assertEqual(event.notes, 'Retail Contact: Jane Smith | Retail Phone: 555-1234')
+        self.assertEqual(event.notes, 'Retail Contact: Jane Smith | Retail Phone: 555-1234 | Promo Person: Bob Jones')
         self.assertEqual(event.recap_notes, 'Great event')
         self.assertEqual(event.recap_samples_poured, 30)
         self.assertEqual(event.recap_qr_codes_scanned, 5)
@@ -1296,6 +1296,28 @@ class ExecuteImportTest(TestCase):
         batch = batches.first()
         self.assertEqual(batch.event_count, 1)
         self.assertEqual(batch.imported_by, self.admin)
+
+    def test_notes_includes_promo_person(self):
+        """When promo_person is set, event notes contains 'Promo Person: <name>'."""
+        rows, matches, confirmed, _, _ = _make_execute_session(self.company, self.distributor)
+        rows[0]['promo_person'] = 'Alice Green'
+        self._set_session(rows, matches, confirmed)
+
+        self.client.post(reverse('event_import_execute'))
+
+        event = Event.objects.filter(company=self.company, is_imported=True).first()
+        self.assertIn('Promo Person: Alice Green', event.notes)
+
+    def test_samples_poured_imported(self):
+        """When samples is set in the row, recap_samples_poured is stored on the event."""
+        rows, matches, confirmed, _, _ = _make_execute_session(self.company, self.distributor)
+        rows[0]['samples'] = '42'
+        self._set_session(rows, matches, confirmed)
+
+        self.client.post(reverse('event_import_execute'))
+
+        event = Event.objects.filter(company=self.company, is_imported=True).first()
+        self.assertEqual(event.recap_samples_poured, 42)
 
 
 # ---------------------------------------------------------------------------

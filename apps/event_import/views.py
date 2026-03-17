@@ -493,6 +493,8 @@ def event_import_execute(request):
             parts.append(f"Retail Contact: {row['note1']}")
         if row.get('note2'):
             parts.append(f"Retail Phone: {row['note2']}")
+        if row.get('promo_person'):
+            parts.append(f"Promo Person: {row['promo_person']}")
         notes = ' | '.join(parts) if parts else ''
 
         # Build recap_notes
