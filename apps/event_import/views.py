@@ -80,6 +80,8 @@ COLUMN_MAP = {
     'event date':                   'date',
     'event note 1 (retail contact)': 'note1',
     'event note 2 (retailer phone)': 'note2',
+    'retail contact':               'note1',
+    'retailer phone':               'note2',
     'promo person':                 'promo_person',
     'sample\ncups':                 'samples',
     'qr code scans':                'qr_scans',
@@ -490,12 +492,16 @@ def event_import_execute(request):
 
         # Build notes
         parts = []
-        if row.get('note1'):
-            parts.append(f"Retail Contact: {row['note1']}")
-        if row.get('note2'):
-            parts.append(f"Retail Phone: {row['note2']}")
-        if row.get('promo_person'):
-            parts.append(f"Promo Person: {row['promo_person']}")
+        retail_contact = row.get('note1') or row.get('retail contact', '')
+        retailer_phone = row.get('note2') or row.get('retailer phone', '')
+        promo_person = row.get('promo_person', '')
+
+        if retail_contact:
+            parts.append(f"Retail Contact: {retail_contact}")
+        if retailer_phone:
+            parts.append(f"Retail Phone: {retailer_phone}")
+        if promo_person:
+            parts.append(f"Promo Person: {promo_person}")
         notes = '\n'.join(parts) if parts else ''
 
         # Build recap_notes
