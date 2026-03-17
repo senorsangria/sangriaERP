@@ -15,7 +15,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q, Sum
 from django.http import JsonResponse
-from django.shortcuts import get_object_or_404, redirect, render
+from django.shortcuts import get_object_or_404, redirect, render, reverse
 
 from apps.accounts.models import Account
 from apps.accounts.utils import get_accounts_for_user, get_users_covering_account
@@ -358,7 +358,8 @@ def event_list(request):
 
     if request.GET.get('clear_filters'):
         request.session.pop(SESSION_KEY, None)
-        return redirect('event_list')
+        tab = request.GET.get('tab', 'active')
+        return redirect(f"{reverse('event_list')}?tab={tab}")
 
     if request.method == 'GET' and any(k in request.GET for k in (
         'status', 'year', 'month', 'event_type', 'creator',
