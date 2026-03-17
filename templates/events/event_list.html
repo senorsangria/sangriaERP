@@ -63,7 +63,7 @@
 <!-- Filter bar -->
 <div class="collapse {% if filters_active %}show{% endif %} mb-3" id="filterCard">
   <div class="card card-body py-3" id="filterCard">
-    <form method="get" action="{% url 'event_list' %}">
+    <form method="get" action="{% url 'event_list' %}" autocomplete="off">
       <input type="hidden" name="tab" value="{{ active_tab }}">
       <div class="row g-2">
 
@@ -85,7 +85,7 @@
         <!-- Event Type -->
         <div class="col-6 col-md-3 col-lg-2">
           <label class="filter-label" for="filter_type">Type</label>
-          <select name="event_type" id="filter_type" class="form-select form-select-sm">
+          <select name="event_type" id="filter_type" class="form-select form-select-sm" autocomplete="off">
             <option value="">All Types</option>
             {% for val, label in event_type_choices %}
             <option value="{{ val }}" {% if filters.event_type == val %}selected{% endif %}>{{ label }}</option>
@@ -96,7 +96,7 @@
         <!-- Year -->
         <div class="col-6 col-md-3 col-lg-2">
           <label class="filter-label" for="filter_year">Year</label>
-          <select name="year" id="filter_year" class="form-select form-select-sm">
+          <select name="year" id="filter_year" class="form-select form-select-sm" autocomplete="off">
             <option value="">All Years</option>
             {% for y in years %}
             <option value="{{ y }}" {% if filters.year == y|stringformat:"d" %}selected{% endif %}>{{ y }}</option>
@@ -107,7 +107,7 @@
         <!-- Month -->
         <div class="col-6 col-md-3 col-lg-2">
           <label class="filter-label" for="filter_month">Month</label>
-          <select name="month" id="filter_month" class="form-select form-select-sm">
+          <select name="month" id="filter_month" class="form-select form-select-sm" autocomplete="off">
             <option value="">All Months</option>
             {% for num, name in months %}
             <option value="{{ num }}" {% if filters.month == num|stringformat:"d" %}selected{% endif %}>{{ name }}</option>
@@ -118,7 +118,7 @@
         <!-- Creator -->
         <div class="col-6 col-md-3 col-lg-2">
           <label class="filter-label" for="filter_creator">Creator</label>
-          <select name="creator" id="filter_creator" class="form-select form-select-sm">
+          <select name="creator" id="filter_creator" class="form-select form-select-sm" autocomplete="off">
             <option value="">All Creators</option>
             {% for c in creators %}
             <option value="{{ c.pk }}" {% if filters.creator == c.pk|stringformat:"d" %}selected{% endif %}>
@@ -131,7 +131,7 @@
         <!-- Distributor -->
         <div class="col-6 col-md-3 col-lg-3">
           <label class="filter-label" for="filter_dist">Distributor</label>
-          <select name="distributor" id="filter_dist" class="form-select form-select-sm">
+          <select name="distributor" id="filter_dist" class="form-select form-select-sm" autocomplete="off">
             <option value="">All Distributors</option>
             {% for d in distributors %}
             <option value="{{ d.pk }}" {% if filters.distributor == d.pk|stringformat:"d" %}selected{% endif %}>{{ d.name }}</option>
