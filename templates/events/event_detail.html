@@ -357,21 +357,41 @@
         {% if event.event_type == 'tasting' %}
 
         <h6 class="text-muted fw-semibold mb-2">Overall Event</h6>
-        <div class="row g-2 mb-3">
-          <div class="col-6 col-md-4">
+
+        <!-- Mobile: short labels, all three on one row -->
+        <div class="row g-2 mb-3 d-md-none">
+          <div class="col-4">
             <span class="info-label d-block">Samples Poured</span>
             {% if event.recap_samples_poured is not None %}{{ event.recap_samples_poured }}{% else %}<span class="text-muted">—</span>{% endif %}
           </div>
-          <div class="col-6 col-md-4">
+          {% if has_recap %}
+          <div class="col-4">
+            <span class="info-label d-block">Bottles Sold</span>
+            {{ total_bottles_sold }}
+          </div>
+          {% endif %}
+          <div class="col-4">
+            <span class="info-label d-block">QR Codes</span>
+            {% if event.recap_qr_codes_scanned is not None %}{{ event.recap_qr_codes_scanned }}{% else %}<span class="text-muted">—</span>{% endif %}
+          </div>
+        </div>
+
+        <!-- Desktop: full labels, Samples | Total Bottles Sold | QR Codes Scanned -->
+        <div class="row g-3 mb-3 d-none d-md-flex">
+          <div class="col-auto">
+            <span class="info-label d-block">Samples Poured</span>
+            {% if event.recap_samples_poured is not None %}{{ event.recap_samples_poured }}{% else %}<span class="text-muted">—</span>{% endif %}
+          </div>
+          {% if has_recap %}
+          <div class="col-auto">
+            <span class="info-label d-block">Total Bottles Sold</span>
+            {{ total_bottles_sold }}
+          </div>
+          {% endif %}
+          <div class="col-auto">
             <span class="info-label d-block">QR Codes Scanned</span>
             {% if event.recap_qr_codes_scanned is not None %}{{ event.recap_qr_codes_scanned }}{% else %}<span class="text-muted">—</span>{% endif %}
           </div>
-          {% if has_recap %}
-          <div class="col-6 col-md-4">
-            <div class="text-muted small">TOTAL BOTTLES SOLD</div>
-            <div>{{ total_bottles_sold }}</div>
-          </div>
-          {% endif %}
         </div>
         {% if event.recap_notes %}
         <p class="mb-3" style="white-space: pre-wrap;">{{ event.recap_notes }}</p>
@@ -392,7 +412,8 @@
               {% if recap and recap.bottles_sold != None %}{{ recap.bottles_sold }}{% else %}<span class="text-muted">—</span>{% endif %}
             </div>
             <div class="col-6 col-md-4">
-              Sample Bottle: {% if recap and recap.bottles_used_for_samples != None %}{{ recap.bottles_used_for_samples }}{% else %}—{% endif %}
+              <span class="info-label d-block">Sample Bottle</span>
+              {% if recap and recap.bottles_used_for_samples != None %}{{ recap.bottles_used_for_samples }}{% else %}<span class="text-muted">—</span>{% endif %}
             </div>
           </div>
         </div>
