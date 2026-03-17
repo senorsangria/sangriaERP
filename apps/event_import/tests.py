@@ -1239,7 +1239,7 @@ class ExecuteImportTest(TestCase):
         self.assertIsNotNone(event.historical_batch)
         self.assertEqual(event.account, acct)
         self.assertEqual(str(event.date), '2024-01-15')
-        self.assertEqual(event.notes, 'Retail Contact: Jane Smith | Retail Phone: 555-1234 | Promo Person: Bob Jones')
+        self.assertEqual(event.notes, 'Retail Contact: Jane Smith\nRetail Phone: 555-1234\nPromo Person: Bob Jones')
         self.assertEqual(event.recap_notes, 'Great event')
         self.assertEqual(event.recap_samples_poured, 30)
         self.assertEqual(event.recap_qr_codes_scanned, 5)
@@ -1318,6 +1318,42 @@ class ExecuteImportTest(TestCase):
 
         event = Event.objects.filter(company=self.company, is_imported=True).first()
         self.assertEqual(event.recap_samples_poured, 42)
+
+    def test_samples_column_with_newline(self):
+        """CSV column 'sample\\ncups' (literal newline) maps to 'samples' and recap_samples_poured is stored."""
+        from apps.event_import.views import _parse_csv
+        acct = make_account(
+            self.company, self.distributor,
+            name='Newline Wines', street='1 Test St', city='Newark',
+        )
+        csv_col = 'sample\ncups'
+        header_row = {
+            'distributor': 'Shore Point Distributing',
+            'event location': 'Newline Wines',
+            'address': '1 Test St',
+            'city': 'Newark',
+            'event date': '02/10/24',
+            csv_col: '15',
+        }
+        csv_bytes = _make_csv_bytes([header_row])
+        parsed_rows = _parse_csv(io.BytesIO(csv_bytes))
+        self.assertEqual(len(parsed_rows), 1)
+        self.assertEqual(parsed_rows[0].get('samples'), '15')
+
+        csv_key = f'Shore Point Distributing||Newline Wines||1 Test St||Newark'
+        matches = {
+            'high': [{'csv_key': csv_key, 'match_account_pk': acct.pk,
+                      'match_account_name': acct.name, 'row_count': 1, 'score': 95}],
+            'review': [], 'none': [],
+        }
+        confirmed = {csv_key: acct.pk}
+        self._set_session(parsed_rows, matches, confirmed)
+
+        self.client.post(reverse('event_import_execute'))
+
+        event = Event.objects.filter(company=self.company, is_imported=True).first()
+        self.assertIsNotNone(event)
+        self.assertEqual(event.recap_samples_poured, 15)
 
 
 # ---------------------------------------------------------------------------

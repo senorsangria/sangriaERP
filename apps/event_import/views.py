@@ -81,6 +81,7 @@ COLUMN_MAP = {
     'event note 1 (retail contact)': 'note1',
     'event note 2 (retailer phone)': 'note2',
     'promo person':                 'promo_person',
+    'sample\ncups':                 'samples',
     'qr code scans':                'qr_scans',
     'racap note 1':                 'recap1',
     'recap note 2':                 'recap2',
@@ -495,7 +496,7 @@ def event_import_execute(request):
             parts.append(f"Retail Phone: {row['note2']}")
         if row.get('promo_person'):
             parts.append(f"Promo Person: {row['promo_person']}")
-        notes = ' | '.join(parts) if parts else ''
+        notes = '\n'.join(parts) if parts else ''
 
         # Build recap_notes
         parts = []
