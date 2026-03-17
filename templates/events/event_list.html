@@ -235,16 +235,13 @@
                   {% if event.account.street %}{{ event.account.street|title }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city|title }}{% endif %}
                 </div>
                 {% endif %}
-                <div class="small mt-1">
-                  <i class="bi bi-person me-1 text-muted"></i>
-                  {% if event.ambassador %}{{ event.ambassador.get_full_name|default:event.ambassador.username }}{% else %}<span class="text-muted fst-italic">Unassigned</span>{% endif %}
+                <div class="small mt-1 d-flex align-items-center gap-2">
+                  <span><i class="bi bi-person me-1 text-muted"></i>{% if event.ambassador %}{{ event.ambassador.get_full_name|default:event.ambassador.username }}{% else %}<span class="text-muted fst-italic">Unassigned</span>{% endif %}</span>
+                  {% if event.is_imported %}<span class="text-muted fst-italic">(IMPORTED DATA)</span>{% endif %}
                 </div>
               </div>
               <div class="text-end ps-2">
-                <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status_badge_class == 'warning' %}dark{% else %}white{% endif %}">
-                  {{ event.get_status_display }}
-                </span>
-                <div class="small text-muted mt-1">{{ event.get_event_type_display }}</div>
+                <div class="small text-muted">{{ event.get_event_type_display }}</div>
               </div>
             </div>
           </div>
@@ -275,15 +272,13 @@
                 <th>Type</th>
                 <th>Duration</th>
                 <th>Ambassador</th>
-                <th>Event Manager</th>
                 <th>Distributor</th>
-                <th>Status</th>
               </tr>
             </thead>
             <tbody>
               {% for group_label, group_key, group_events in event_groups %}
               <tr class="group-header">
-                <td colspan="9">── {{ group_label }} ──</td>
+                <td colspan="7">── {{ group_label }} ──</td>
               </tr>
               {% for event in group_events %}
               <tr class="{% if event.status == 'revision_requested' %}event-row-revision{% elif event.status == 'draft' or event.status == 'recap_in_progress' %}event-row-draft{% endif %}">
@@ -299,6 +294,9 @@
                   {% if event.account %}
                     <a href="{% url 'account_detail' event.account.pk %}" class="text-decoration-none">{{ event.account.name }}</a>
                     <div class="small text-muted">{% if event.account.street %}{{ event.account.street|title }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city|title }}{% endif %}</div>
+                    {% if event.is_imported %}
+                    <div class="text-muted fst-italic small">(IMPORTED DATA)</div>
+                    {% endif %}
                   {% else %}
                     <span class="text-muted fst-italic">Admin Event</span>
                   {% endif %}
@@ -313,15 +311,7 @@
                   {% endif %}
                 </td>
                 <td class="text-muted small">
-                  {% if event.event_manager %}{{ event.event_manager.get_full_name|default:event.event_manager.username }}{% else %}—{% endif %}
-                </td>
-                <td class="text-muted small">
                   {% if event.account and event.account.distributor %}{{ event.account.distributor.name }}{% else %}—{% endif %}
-                </td>
-                <td>
-                  <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status_badge_class == 'warning' %}dark{% else %}white{% endif %}">
-                    {{ event.get_status_display }}
-                  </span>
                 </td>
               </tr>
               {% endfor %}
@@ -373,16 +363,13 @@
                   {% if event.account.street %}{{ event.account.street|title }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city|title }}{% endif %}
                 </div>
                 {% endif %}
-                <div class="small mt-1">
-                  <i class="bi bi-person me-1 text-muted"></i>
-                  {% if event.ambassador %}{{ event.ambassador.get_full_name|default:event.ambassador.username }}{% else %}<span class="text-muted fst-italic">Unassigned</span>{% endif %}
+                <div class="small mt-1 d-flex align-items-center gap-2">
+                  <span><i class="bi bi-person me-1 text-muted"></i>{% if event.ambassador %}{{ event.ambassador.get_full_name|default:event.ambassador.username }}{% else %}<span class="text-muted fst-italic">Unassigned</span>{% endif %}</span>
+                  {% if event.is_imported %}<span class="text-muted fst-italic">(IMPORTED DATA)</span>{% endif %}
                 </div>
               </div>
               <div class="text-end ps-2">
-                <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status_badge_class == 'warning' %}dark{% else %}white{% endif %}">
-                  {{ event.get_status_display }}
-                </span>
-                <div class="small text-muted mt-1">{{ event.get_event_type_display }}</div>
+                <div class="small text-muted">{{ event.get_event_type_display }}</div>
               </div>
             </div>
           </div>
@@ -412,15 +399,13 @@
                 <th>Type</th>
                 <th>Duration</th>
                 <th>Ambassador</th>
-                <th>Event Manager</th>
                 <th>Distributor</th>
-                <th>Status</th>
               </tr>
             </thead>
             <tbody>
               {% for group_label, group_key, group_events in paid_groups %}
               <tr class="group-header">
-                <td colspan="9">── {{ group_label }} ──</td>
+                <td colspan="7">── {{ group_label }} ──</td>
               </tr>
               {% for event in group_events %}
               <tr>
@@ -436,6 +421,9 @@
                   {% if event.account %}
                     <a href="{% url 'account_detail' event.account.pk %}" class="text-decoration-none">{{ event.account.name }}</a>
                     <div class="small text-muted">{% if event.account.street %}{{ event.account.street|title }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city|title }}{% endif %}</div>
+                    {% if event.is_imported %}
+                    <div class="text-muted fst-italic small">(IMPORTED DATA)</div>
+                    {% endif %}
                   {% else %}
                     <span class="text-muted fst-italic">Admin Event</span>
                   {% endif %}
@@ -450,15 +438,7 @@
                   {% endif %}
                 </td>
                 <td class="text-muted small">
-                  {% if event.event_manager %}{{ event.event_manager.get_full_name|default:event.event_manager.username }}{% else %}—{% endif %}
-                </td>
-                <td class="text-muted small">
                   {% if event.account and event.account.distributor %}{{ event.account.distributor.name }}{% else %}—{% endif %}
-                </td>
-                <td>
-                  <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status_badge_class == 'warning' %}dark{% else %}white{% endif %}">
-                    {{ event.get_status_display }}
-                  </span>
                 </td>
               </tr>
               {% endfor %}

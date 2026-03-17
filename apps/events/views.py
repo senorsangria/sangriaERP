@@ -13,7 +13,7 @@ from itertools import groupby
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
@@ -675,6 +675,11 @@ def event_detail(request, pk):
     photos = event.photos.all() if show_recap else []
     expenses = list(event.expenses.all()) if show_recap else []
 
+    total_bottles_sold = event.item_recaps.aggregate(
+        Sum('bottles_sold')
+    )['bottles_sold__sum'] or 0
+    has_recap = event.item_recaps.exists()
+
     return render(request, 'events/event_detail.html', {
         'event':                  event,
         'can_edit':               can_edit,
@@ -692,6 +697,8 @@ def event_detail(request, pk):
         'photos':                 photos,
         'expenses':               expenses,
         'return_tab':             return_tab,
+        'total_bottles_sold':     total_bottles_sold,
+        'has_recap':              has_recap,
     })
 
 

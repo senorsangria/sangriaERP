@@ -47,10 +47,10 @@
        ==================================================================== -->
   <div class="col-12">
     <div class="card">
-      <div class="card-header fw-semibold small text-muted">Event Details</div>
+      <div class="card-header fw-semibold small text-muted">Event Details{% if event.is_imported %}<span class="text-muted fst-italic small ms-2">(IMPORTED DATA)</span>{% endif %}</div>
       <div class="card-body">
 
-        <!-- Date / Time / Duration — values only, no labels, above account -->
+        <!-- Date / Time / Duration / Ambassador — values only, no labels, above account -->
         <div class="detail-meta mb-2 d-flex flex-wrap gap-3">
           <div>
             {% if event.date %}{{ event.date|date:"m/d/y" }}{% else %}<span class="text-muted">No date</span>{% endif %}
@@ -61,6 +61,9 @@
           </div>
           {% endif %}
           <div>{{ event.duration_display }}</div>
+          <div>
+            {% if event.legacy_ambassador_name %}{{ event.legacy_ambassador_name }}{% elif event.ambassador %}{{ event.ambassador.get_full_name|default:event.ambassador.username }}{% else %}<span class="text-muted fst-italic">Unassigned</span>{% endif %}
+          </div>
         </div>
 
         <!-- Account name with address and city on separate line -->
@@ -80,25 +83,6 @@
         <div class="text-muted fst-italic mb-1">Admin Event — no account</div>
         {% endif %}
 
-        <!-- Ambassador and Event Manager inline -->
-        <div class="detail-meta mt-3 d-flex flex-wrap gap-4">
-          <div>
-            <span class="info-label d-block">Ambassador</span>
-            {% if event.ambassador %}
-              {{ event.ambassador.get_full_name|default:event.ambassador.username }}
-            {% else %}
-              <span class="text-muted fst-italic">Unassigned</span>
-            {% endif %}
-          </div>
-          <div>
-            <span class="info-label d-block">Event Manager</span>
-            {% if event.event_manager %}
-              {{ event.event_manager.get_full_name|default:event.event_manager.username }}
-            {% else %}
-              <span class="text-muted fst-italic">Not assigned</span>
-            {% endif %}
-          </div>
-        </div>
 
       </div>
     </div>
@@ -382,6 +366,12 @@
             <span class="info-label d-block">QR Codes Scanned</span>
             {% if event.recap_qr_codes_scanned is not None %}{{ event.recap_qr_codes_scanned }}{% else %}<span class="text-muted">—</span>{% endif %}
           </div>
+          {% if has_recap %}
+          <div class="col-6 col-md-4">
+            <div class="text-muted small">TOTAL BOTTLES SOLD</div>
+            <div>{{ total_bottles_sold }}</div>
+          </div>
+          {% endif %}
         </div>
         {% if event.recap_notes %}
         <p class="mb-3" style="white-space: pre-wrap;">{{ event.recap_notes }}</p>
@@ -402,8 +392,7 @@
               {% if recap and recap.bottles_sold != None %}{{ recap.bottles_sold }}{% else %}<span class="text-muted">—</span>{% endif %}
             </div>
             <div class="col-6 col-md-4">
-              <span class="info-label d-block">Bottles for Samples</span>
-              {% if recap and recap.bottles_used_for_samples != None %}{{ recap.bottles_used_for_samples }}{% else %}<span class="text-muted">—</span>{% endif %}
+              Sample Bottle: {% if recap and recap.bottles_used_for_samples != None %}{{ recap.bottles_used_for_samples }}{% else %}—{% endif %}
             </div>
           </div>
         </div>

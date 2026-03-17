@@ -2648,5 +2648,23 @@ Each conflict entry includes:
 
 ---
 
-*Last updated: March 14, 2026 (Add CSV distributor validation report to event import tool)*
+---
+
+## Event List and Detail UI Tweaks (March 2026)
+
+**Event list changes:**
+- Status column removed from both desktop table and mobile card layout — redundant with group headers (SCHEDULED, COMPLETE, etc.)
+- Event Manager column removed from desktop table and mobile layout
+- IMPORTED DATA tag displayed below account address (desktop) and next to ambassador name (mobile) for events where `is_imported=True`
+
+**Event detail changes:**
+- IMPORTED DATA tag shown to the right of the "Event Details" card heading when `event.is_imported` is True
+- Event Manager field removed entirely from the detail view
+- Ambassador moved inline with date/start time/duration on the same row; uses `legacy_ambassador_name` for imported events, ambassador FK name otherwise
+- Total Bottles Sold field added to the read-only recap section (after Samples Poured), computed as the sum of `bottles_sold` across all `EventItemRecap` records; only shown when at least one item recap exists (`has_recap`)
+- "Bottles for Samples" label in per-item recap section replaced with inline format: `Sample Bottle: [value]` (shows `—` if None)
+
+---
+
+*Last updated: March 17, 2026 (Event list and detail tweaks: remove columns, imported tag, total bottles sold, inline ambassador)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

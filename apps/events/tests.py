@@ -2020,3 +2020,37 @@ class EventListTabsTest(TestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.context['return_tab'], 'past')
+
+    def test_event_detail_total_bottles_sold(self):
+        """Event with item recaps shows correct total_bottles_sold in context."""
+        from apps.events.models import EventItemRecap
+        item1 = make_item(self.company, 'Red0750')
+        item2 = make_item(self.company, 'Wht0750')
+        event = self._make_event(Event.Status.COMPLETE)
+        event.items.add(item1, item2)
+        EventItemRecap.objects.create(event=event, item=item1, bottles_sold=5)
+        EventItemRecap.objects.create(event=event, item=item2, bottles_sold=3)
+        resp = self.client.get(reverse('event_detail', args=[event.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['total_bottles_sold'], 8)
+        self.assertTrue(resp.context['has_recap'])
+
+    def test_event_detail_no_recap_hides_total(self):
+        """Event with no item recaps has has_recap=False in context."""
+        event = self._make_event(Event.Status.COMPLETE)
+        resp = self.client.get(reverse('event_detail', args=[event.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context['has_recap'])
+
+    def test_event_detail_imported_flag_in_context(self):
+        """Imported event has is_imported=True accessible in template context."""
+        event = make_event(
+            self.company, self.admin,
+            Event.EventType.TASTING,
+            status=Event.Status.PAID,
+            account=self.account,
+            is_imported=True,
+        )
+        resp = self.client.get(reverse('event_detail', args=[event.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context['event'].is_imported)
