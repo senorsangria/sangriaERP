@@ -237,7 +237,7 @@ def user_edit(request, pk):
         )
         distributors = list(
             Distributor.objects.filter(
-                company=request.user.company, is_active=True
+                company=target.company, is_active=True
             ).order_by('name')
         )
 

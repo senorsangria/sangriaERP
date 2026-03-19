@@ -673,11 +673,6 @@ class CoverageAreaAddViewTest(TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn('distributor', resp.json()['error'].lower())
 
-    def test_missing_distributor_returns_error_for_state_type(self):
-        resp = self._post({'coverage_type': 'state', 'state': 'NJ'})
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn('distributor', resp.json()['error'].lower())
-
     def test_missing_distributor_returns_error_for_county_type(self):
         resp = self._post({'coverage_type': 'county', 'state': 'NJ', 'county': 'Hudson'})
         self.assertEqual(resp.status_code, 400)
@@ -704,33 +699,34 @@ class CoverageAreaAddViewTest(TestCase):
                                           coverage_type='distributor')
         self.assertEqual(ca.distributor, self.distributor)
 
-    def test_state_type_stores_distributor(self):
-        resp = self._post({'coverage_type': 'state', 'state': 'NJ',
-                           'distributor_id': self.distributor.pk})
-        self.assertEqual(resp.status_code, 200)
-        ca = UserCoverageArea.objects.get(user=self.target, coverage_type='state')
-        self.assertEqual(ca.distributor, self.distributor)
-        self.assertEqual(ca.state, 'NJ')
-
     def test_county_type_stores_distributor(self):
-        resp = self._post({'coverage_type': 'county', 'state': 'NJ',
-                           'county': 'Hudson',
+        # Create an account so state can be derived from the accounts table.
+        Account.objects.create(
+            company=self.company, distributor=self.distributor,
+            name='Hudson Store', street='1 Main St',
+            city='Jersey City', state='NJ',
+            county='Hudson',
+            address_normalized='1 MAIN ST', city_normalized='JERSEY CITY',
+            state_normalized='NJ',
+        )
+        resp = self._post({'coverage_type': 'county', 'county': 'Hudson',
                            'distributor_id': self.distributor.pk})
         self.assertEqual(resp.status_code, 200)
         ca = UserCoverageArea.objects.get(user=self.target, coverage_type='county')
         self.assertEqual(ca.distributor, self.distributor)
-        self.assertEqual(ca.state, 'NJ')
         self.assertEqual(ca.county, 'Hudson')
+        self.assertEqual(ca.state, 'NJ')
 
     def test_city_type_stores_distributor(self):
-        resp = self._post({'coverage_type': 'city', 'state': 'NJ',
-                           'city': 'Hoboken',
+        # Create an account so state can be derived from the accounts table.
+        account = make_account(self.company, self.distributor)  # city='Hoboken', state_normalized='NJ'
+        resp = self._post({'coverage_type': 'city', 'city': 'Hoboken',
                            'distributor_id': self.distributor.pk})
         self.assertEqual(resp.status_code, 200)
         ca = UserCoverageArea.objects.get(user=self.target, coverage_type='city')
         self.assertEqual(ca.distributor, self.distributor)
-        self.assertEqual(ca.state, 'NJ')
         self.assertEqual(ca.city, 'Hoboken')
+        self.assertEqual(ca.state, 'NJ')
 
     def test_account_type_stores_distributor(self):
         account = make_account(self.company, self.distributor)

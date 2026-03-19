@@ -58,9 +58,6 @@ def _build_enhanced_coverage_areas(user, company):
         if ct == UserCoverageArea.CoverageType.DISTRIBUTOR:
             display_value = distributor_name
             display_state = ''
-        elif ct == UserCoverageArea.CoverageType.STATE:
-            display_value = US_STATES_DICT.get(ca.state, ca.state)
-            display_state = ''
         elif ct == UserCoverageArea.CoverageType.COUNTY:
             display_value = ca.county or '—'
             display_state = ca.state
@@ -164,8 +161,6 @@ def account_list(request):
                     ct = ca.coverage_type
                     if ct == UserCoverageArea.CoverageType.DISTRIBUTOR and ca.distributor_id:
                         cq |= Q(distributor_id=ca.distributor_id)
-                    elif ct == UserCoverageArea.CoverageType.STATE and ca.state:
-                        cq |= Q(state_normalized=ca.state)
                     elif ct == UserCoverageArea.CoverageType.COUNTY and ca.county and ca.state:
                         cq |= Q(county=ca.county, state_normalized=ca.state)
                     elif ct == UserCoverageArea.CoverageType.CITY and ca.city and ca.state:
@@ -505,42 +500,42 @@ def coverage_area_add(request, user_pk):
             coverage_type=coverage_type, distributor=distributor,
         ).exists()
 
-    elif coverage_type == UserCoverageArea.CoverageType.STATE:
-        state = request.POST.get('state', '').strip().upper()
-        if not state:
-            return JsonResponse({'error': 'Please select a state.'}, status=400)
-        kwargs['state'] = state
-        exists = UserCoverageArea.objects.filter(
-            user=target, company=company,
-            coverage_type=coverage_type, distributor=distributor, state=state,
-        ).exists()
-
     elif coverage_type == UserCoverageArea.CoverageType.COUNTY:
-        state = request.POST.get('state', '').strip().upper()
         county = request.POST.get('county', '').strip()
-        if not state or state not in US_STATES_DICT:
-            return JsonResponse({'error': 'Please select a valid state.'}, status=400)
         if not county:
             return JsonResponse({'error': 'Please select a county.'}, status=400)
-        kwargs['state'] = state
+        # Derive state from accounts so get_accounts_for_user keeps working.
+        state = (
+            Account.active_accounts
+            .filter(company=company, distributor=distributor, county=county)
+            .exclude(state_normalized='')
+            .values_list('state_normalized', flat=True)
+            .first() or ''
+        )
         kwargs['county'] = county
+        kwargs['state'] = state
         exists = UserCoverageArea.objects.filter(
             user=target, company=company,
-            coverage_type=coverage_type, distributor=distributor, state=state, county=county,
+            coverage_type=coverage_type, distributor=distributor, county=county,
         ).exists()
 
     elif coverage_type == UserCoverageArea.CoverageType.CITY:
-        state = request.POST.get('state', '').strip().upper()
         city = request.POST.get('city', '').strip()
-        if not state or state not in US_STATES_DICT:
-            return JsonResponse({'error': 'Please select a valid state.'}, status=400)
         if not city:
             return JsonResponse({'error': 'Please select a city.'}, status=400)
-        kwargs['state'] = state
+        # Derive state from accounts so get_accounts_for_user keeps working.
+        state = (
+            Account.active_accounts
+            .filter(company=company, distributor=distributor, city=city)
+            .exclude(state_normalized='')
+            .values_list('state_normalized', flat=True)
+            .first() or ''
+        )
         kwargs['city'] = city
+        kwargs['state'] = state
         exists = UserCoverageArea.objects.filter(
             user=target, company=company,
-            coverage_type=coverage_type, distributor=distributor, state=state, city=city,
+            coverage_type=coverage_type, distributor=distributor, city=city,
         ).exists()
 
     elif coverage_type == UserCoverageArea.CoverageType.ACCOUNT:
@@ -622,12 +617,23 @@ def ajax_states(request):
 
 def ajax_counties(request):
     """
-    GET /accounts/ajax/counties/?state=NJ
-    Returns distinct county values for the company and state.
+    GET /accounts/ajax/counties/?distributor_id=5
+    Returns distinct county values for the company and distributor.
+    Falls back to ?state=NJ (legacy) if distributor_id is absent.
     """
     if not request.user.is_authenticated:
         return JsonResponse({'error': 'Authentication required.'}, status=403)
 
+    distributor_id = request.GET.get('distributor_id', '').strip()
+    if distributor_id:
+        qs = Account.active_accounts.filter(
+            company=request.user.company,
+            distributor_id=distributor_id,
+        ).exclude(county='').exclude(county='Unknown')
+        counties = list(qs.values_list('county', flat=True).distinct().order_by('county'))
+        return JsonResponse({'counties': counties})
+
+    # Fallback: state-based (existing behaviour, called from elsewhere)
     state = request.GET.get('state', '').strip().upper()
     if not state:
         return JsonResponse({'counties': []})
@@ -641,18 +647,28 @@ def ajax_counties(request):
         .distinct()
         .order_by('county')
     )
-
     return JsonResponse({'counties': list(counties)})
 
 
 def ajax_cities(request):
     """
-    GET /accounts/ajax/cities/?state=NJ
-    Returns distinct city values for the company and state.
+    GET /accounts/ajax/cities/?distributor_id=5
+    Returns distinct city values for the company and distributor.
+    Falls back to ?state=NJ (legacy) if distributor_id is absent.
     """
     if not request.user.is_authenticated:
         return JsonResponse({'error': 'Authentication required.'}, status=403)
 
+    distributor_id = request.GET.get('distributor_id', '').strip()
+    if distributor_id:
+        qs = Account.active_accounts.filter(
+            company=request.user.company,
+            distributor_id=distributor_id,
+        ).exclude(city='')
+        cities = list(qs.values_list('city', flat=True).distinct().order_by('city'))
+        return JsonResponse({'cities': cities})
+
+    # Fallback: state-based (existing behaviour, called from elsewhere)
     state = request.GET.get('state', '').strip().upper()
     if not state:
         return JsonResponse({'cities': []})
@@ -665,7 +681,6 @@ def ajax_cities(request):
         .distinct()
         .order_by('city')
     )
-
     return JsonResponse({'cities': list(cities)})
 
 

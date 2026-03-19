@@ -260,7 +260,6 @@
           <select id="ca-type" class="form-select" style="max-width:280px">
             <option value="">Select type…</option>
             <option value="distributor">Distributor</option>
-            <option value="state">State</option>
             <option value="county">County</option>
             <option value="city">City</option>
             <option value="account">Account</option>
@@ -283,46 +282,20 @@
 
         <!-- County input -->
         <div id="ca-county-section" class="d-none mb-3">
-          <div class="row g-3 align-items-end" style="max-width:560px">
-            <div class="col-sm-6">
-              <label class="form-label fw-medium" for="ca-county-state">Select a state to see available counties</label>
-              <select id="ca-county-state" class="form-select">
-                <option value="">Select state…</option>
-                {% for code, name in us_states %}
-                <option value="{{ code }}">{{ name }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-sm-6">
-              <label class="form-label fw-medium" for="ca-county-select">County</label>
-              <select id="ca-county-select" class="form-select d-none">
-                <option value="">Select county…</option>
-              </select>
-              <div id="ca-county-message" class="text-muted small mt-1 d-none"></div>
-            </div>
-          </div>
+          <label class="form-label fw-medium" for="ca-county-select">County</label>
+          <select id="ca-county-select" class="form-select d-none" style="max-width:280px">
+            <option value="">Select county…</option>
+          </select>
+          <div id="ca-county-message" class="text-muted small mt-1 d-none"></div>
         </div>
 
         <!-- City input -->
         <div id="ca-city-section" class="d-none mb-3">
-          <div class="row g-3 align-items-end" style="max-width:560px">
-            <div class="col-sm-6">
-              <label class="form-label fw-medium" for="ca-city-state">Select a state to see available cities</label>
-              <select id="ca-city-state" class="form-select">
-                <option value="">Select state…</option>
-                {% for code, name in us_states %}
-                <option value="{{ code }}">{{ name }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-sm-6">
-              <label class="form-label fw-medium" for="ca-city-select">City</label>
-              <select id="ca-city-select" class="form-select d-none">
-                <option value="">Select city…</option>
-              </select>
-              <div id="ca-city-message" class="text-muted small mt-1 d-none"></div>
-            </div>
-          </div>
+          <label class="form-label fw-medium" for="ca-city-select">City</label>
+          <select id="ca-city-select" class="form-select d-none" style="max-width:280px">
+            <option value="">Select city…</option>
+          </select>
+          <div id="ca-city-message" class="text-muted small mt-1 d-none"></div>
         </div>
 
         <!-- Account search input -->
@@ -450,12 +423,6 @@
     const stateLoading = document.getElementById('ca-state-loading');
     if (stateLoading) stateLoading.classList.add('d-none');
 
-    // Reset county/city state selects
-    ['ca-county-state', 'ca-city-state'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.value = '';
-    });
-
     // Reset county
     const countySel = document.getElementById('ca-county-select');
     if (countySel) { countySel.innerHTML = '<option value="">Select county…</option>'; countySel.classList.add('d-none'); }
@@ -481,8 +448,29 @@
     clearMsg();
     if (this.value === 'state') {
       fetchStates();
+    } else if (this.value === 'county' || this.value === 'city') {
+      const distSel = document.getElementById('ca-distributor-select');
+      const distributorId = distSel ? distSel.value : '';
+      if (distributorId) {
+        if (this.value === 'county') fetchCounties(distributorId);
+        else fetchCities(distributorId);
+      }
     }
   });
+
+  // ── Distributor selector: re-fetch counties/cities when type already set ───
+  const distSelectEl = document.getElementById('ca-distributor-select');
+  if (distSelectEl) {
+    distSelectEl.addEventListener('change', function () {
+      const type = typeSelect.value;
+      const distributorId = this.value;
+      if (type === 'county' && distributorId) {
+        fetchCounties(distributorId);
+      } else if (type === 'city' && distributorId) {
+        fetchCities(distributorId);
+      }
+    });
+  }
 
   // ── State: load available states via AJAX ─────────────────────────────────
   function fetchStates() {
@@ -520,76 +508,66 @@
       });
   }
 
-  // ── County: load on state change ───────────────────────────────────────────
-  const countyStateEl = document.getElementById('ca-county-state');
-  if (countyStateEl) {
-    countyStateEl.addEventListener('change', function () {
-      const state = this.value;
-      const sel   = document.getElementById('ca-county-select');
-      const msg   = document.getElementById('ca-county-message');
-      sel.innerHTML = '<option value="">Select county…</option>';
-      sel.classList.add('d-none');
-      msg.textContent = '';
-      msg.classList.add('d-none');
-      if (!state) return;
+  // ── County: load on distributor selection ─────────────────────────────────
+  function fetchCounties(distributorId) {
+    const sel = document.getElementById('ca-county-select');
+    const msg = document.getElementById('ca-county-message');
+    sel.innerHTML = '<option value="">Select county…</option>';
+    sel.classList.add('d-none');
+    msg.textContent = '';
+    msg.classList.add('d-none');
 
-      fetch(`${COUNTIES_URL}?state=${encodeURIComponent(state)}`)
-        .then(r => r.json())
-        .then(data => {
-          if (!data.counties || data.counties.length === 0) {
-            msg.textContent = 'No counties available for this state yet. Import sales data or create accounts in this state first.';
-            msg.classList.remove('d-none');
-          } else {
-            data.counties.forEach(c => {
-              const opt = document.createElement('option');
-              opt.value = c;
-              opt.textContent = c;
-              sel.appendChild(opt);
-            });
-            sel.classList.remove('d-none');
-          }
-        })
-        .catch(() => {
-          msg.textContent = 'Error loading counties. Please try again.';
+    fetch(`${COUNTIES_URL}?distributor_id=${encodeURIComponent(distributorId)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (!data.counties || data.counties.length === 0) {
+          msg.textContent = 'No counties available for this distributor yet.';
           msg.classList.remove('d-none');
-        });
-    });
+        } else {
+          data.counties.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c;
+            opt.textContent = c;
+            sel.appendChild(opt);
+          });
+          sel.classList.remove('d-none');
+        }
+      })
+      .catch(() => {
+        msg.textContent = 'Error loading counties. Please try again.';
+        msg.classList.remove('d-none');
+      });
   }
 
-  // ── City: load on state change ─────────────────────────────────────────────
-  const cityStateEl = document.getElementById('ca-city-state');
-  if (cityStateEl) {
-    cityStateEl.addEventListener('change', function () {
-      const state = this.value;
-      const sel   = document.getElementById('ca-city-select');
-      const msg   = document.getElementById('ca-city-message');
-      sel.innerHTML = '<option value="">Select city…</option>';
-      sel.classList.add('d-none');
-      msg.textContent = '';
-      msg.classList.add('d-none');
-      if (!state) return;
+  // ── City: load on distributor selection ───────────────────────────────────
+  function fetchCities(distributorId) {
+    const sel = document.getElementById('ca-city-select');
+    const msg = document.getElementById('ca-city-message');
+    sel.innerHTML = '<option value="">Select city…</option>';
+    sel.classList.add('d-none');
+    msg.textContent = '';
+    msg.classList.add('d-none');
 
-      fetch(`${CITIES_URL}?state=${encodeURIComponent(state)}`)
-        .then(r => r.json())
-        .then(data => {
-          if (!data.cities || data.cities.length === 0) {
-            msg.textContent = 'No cities available for this state yet.';
-            msg.classList.remove('d-none');
-          } else {
-            data.cities.forEach(c => {
-              const opt = document.createElement('option');
-              opt.value = c;
-              opt.textContent = c;
-              sel.appendChild(opt);
-            });
-            sel.classList.remove('d-none');
-          }
-        })
-        .catch(() => {
-          msg.textContent = 'Error loading cities. Please try again.';
+    fetch(`${CITIES_URL}?distributor_id=${encodeURIComponent(distributorId)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (!data.cities || data.cities.length === 0) {
+          msg.textContent = 'No cities available for this distributor yet.';
           msg.classList.remove('d-none');
-        });
-    });
+        } else {
+          data.cities.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c;
+            opt.textContent = c;
+            sel.appendChild(opt);
+          });
+          sel.classList.remove('d-none');
+        }
+      })
+      .catch(() => {
+        msg.textContent = 'Error loading cities. Please try again.';
+        msg.classList.remove('d-none');
+      });
   }
 
   // ── Account live search ────────────────────────────────────────────────────
@@ -689,20 +667,14 @@
         data.state = v;
 
       } else if (type === 'county') {
-        const state  = document.getElementById('ca-county-state').value;
         const county = document.getElementById('ca-county-select').value;
-        if (!state)  { showError('Please select a state.'); return; }
         if (!county) { showError('Please select a county.'); return; }
-        data.state  = state;
         data.county = county;
 
       } else if (type === 'city') {
-        const state = document.getElementById('ca-city-state').value;
-        const city  = document.getElementById('ca-city-select').value;
-        if (!state) { showError('Please select a state.'); return; }
-        if (!city)  { showError('Please select a city.'); return; }
-        data.state = state;
-        data.city  = city;
+        const city = document.getElementById('ca-city-select').value;
+        if (!city) { showError('Please select a city.'); return; }
+        data.city = city;
       }
       // type === 'distributor': no additional fields needed
 

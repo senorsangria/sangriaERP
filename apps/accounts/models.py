@@ -151,10 +151,9 @@ class UserCoverageArea(TimeStampedModel):
 
     class CoverageType(models.TextChoices):
         DISTRIBUTOR = 'distributor', 'Distributor'
-        STATE = 'state', 'State'
-        COUNTY = 'county', 'County'
-        CITY = 'city', 'City'
-        ACCOUNT = 'account', 'Account'
+        COUNTY      = 'county',      'County'
+        CITY        = 'city',        'City'
+        ACCOUNT     = 'account',     'Account'
 
     company = models.ForeignKey(
         'core.Company',
