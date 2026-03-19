@@ -46,27 +46,24 @@
             {% endif %}
           </div>
 
-          <!-- City / State / Zip -->
+          <!-- City / State -->
           <div class="row g-3 mb-3">
-            <div class="col-12 col-sm-5">
-              <label for="{{ form.city.id_for_label }}" class="form-label fw-medium">City</label>
+            <div class="col-12 col-sm-7">
+              <label for="{{ form.city.id_for_label }}" class="form-label fw-medium">
+                City <span class="text-danger">*</span>
+              </label>
               {{ form.city }}
               {% if form.city.errors %}
               <div class="invalid-feedback d-block">{{ form.city.errors|join:", " }}</div>
               {% endif %}
             </div>
-            <div class="col-6 col-sm-4">
-              <label for="{{ form.state.id_for_label }}" class="form-label fw-medium">State</label>
+            <div class="col-12 col-sm-5">
+              <label for="{{ form.state.id_for_label }}" class="form-label fw-medium">
+                State <span class="text-danger">*</span>
+              </label>
               {{ form.state }}
               {% if form.state.errors %}
               <div class="invalid-feedback d-block">{{ form.state.errors|join:", " }}</div>
-              {% endif %}
-            </div>
-            <div class="col-6 col-sm-3">
-              <label for="{{ form.zip_code.id_for_label }}" class="form-label fw-medium">Zip Code</label>
-              {{ form.zip_code }}
-              {% if form.zip_code.errors %}
-              <div class="invalid-feedback d-block">{{ form.zip_code.errors|join:", " }}</div>
               {% endif %}
             </div>
           </div>
@@ -82,7 +79,9 @@
 
           <!-- County -->
           <div class="mb-3">
-            <label for="{{ form.county.id_for_label }}" class="form-label fw-medium">County</label>
+            <label for="{{ form.county.id_for_label }}" class="form-label fw-medium">
+              County <span class="text-danger">*</span>
+            </label>
             {{ form.county }}
             {% if form.county.errors %}
             <div class="invalid-feedback d-block">{{ form.county.errors|join:", " }}</div>
@@ -92,7 +91,7 @@
           <!-- On/Off Premise -->
           <div class="mb-3">
             <label for="{{ form.on_off_premise.id_for_label }}" class="form-label fw-medium">
-              On / Off Premise
+              On / Off Premise <span class="text-danger">*</span>
             </label>
             {{ form.on_off_premise }}
             {% if form.on_off_premise.errors %}
@@ -114,7 +113,7 @@
           <!-- Distributor -->
           <div class="mb-3">
             <label for="{{ form.distributor.id_for_label }}" class="form-label fw-medium">
-              Distributor
+              Distributor <span class="text-danger">*</span>
             </label>
             {{ form.distributor }}
             {% if form.distributor.errors %}

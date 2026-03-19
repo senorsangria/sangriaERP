@@ -737,3 +737,120 @@ class CoverageAreaAddViewTest(TestCase):
         ca = UserCoverageArea.objects.get(user=self.target, coverage_type='account')
         self.assertEqual(ca.distributor, self.distributor)
         self.assertEqual(ca.account, account)
+
+
+# ---------------------------------------------------------------------------
+# Ambassador Manager account list scope
+# ---------------------------------------------------------------------------
+
+class AmbassadorManagerAccountListTest(TestCase):
+    """Ambassador Manager only sees accounts linked to their own events."""
+
+    def setUp(self):
+        from apps.core.rbac import Role
+
+        self.company = make_company('AM List Test Co')
+        self.distributor = make_distributor(self.company, 'Test Dist AM')
+
+        def _make(role, username):
+            u = User.objects.create_user(
+                username=username, password='testpass123', company=self.company,
+            )
+            u.roles.set([Role.objects.get(codename=role)])
+            return u
+
+        self.am = _make('ambassador_manager', 'am_list')
+        self.other = _make('ambassador', 'amb_list')
+
+        # Account linked to AM via event (am is ambassador)
+        self.am_account = make_account(self.company, self.distributor, 'AM Account')
+        # Account not linked to AM
+        self.other_account = make_account(self.company, self.distributor, 'Other Account')
+
+        Event.objects.create(
+            company=self.company,
+            event_type=Event.EventType.TASTING,
+            account=self.am_account,
+            ambassador=self.am,
+            created_by=self.am,
+        )
+
+        self.client = Client()
+        self.client.login(username='am_list', password='testpass123')
+
+    def test_ambassador_manager_account_list_only_own(self):
+        resp = self.client.get(reverse('account_list'))
+        self.assertEqual(resp.status_code, 200)
+        accounts = list(resp.context['accounts'])
+        self.assertIn(self.am_account, accounts)
+        self.assertNotIn(self.other_account, accounts)
+
+
+# ---------------------------------------------------------------------------
+# AccountForm: distributor scope and required fields
+# ---------------------------------------------------------------------------
+
+from apps.accounts.forms import AccountForm
+from apps.accounts.utils import get_distributors_for_user
+
+
+class AccountFormScopeAndRequiredTest(TestCase):
+    """AccountForm: distributor scoped to user; required fields enforced."""
+
+    def setUp(self):
+        from apps.core.rbac import Role
+        from apps.accounts.models import UserCoverageArea
+
+        self.company = make_company('Form Test Co')
+        self.dist_a = make_distributor(self.company, 'Dist Alpha')
+        self.dist_b = make_distributor(self.company, 'Dist Beta')
+
+        def _make(role, username):
+            u = User.objects.create_user(
+                username=username, password='testpass123', company=self.company,
+            )
+            u.roles.set([Role.objects.get(codename=role)])
+            return u
+
+        self.admin = _make('supplier_admin', 'sa_form')
+        self.am = _make('ambassador_manager', 'am_form')
+
+        # Give AM coverage area for dist_a only
+        UserCoverageArea.objects.create(
+            user=self.am, company=self.company,
+            coverage_type=UserCoverageArea.CoverageType.DISTRIBUTOR,
+            distributor=self.dist_a,
+        )
+
+    def _valid_data(self, distributor):
+        return {
+            'name': 'Test Store',
+            'city': 'Hoboken',
+            'state': 'NJ',
+            'county': 'Hudson',
+            'on_off_premise': 'OFF',
+            'distributor': distributor.pk,
+            'is_active': True,
+        }
+
+    def test_account_create_distributor_scoped_to_user(self):
+        form = AccountForm(company=self.company, user=self.am)
+        expected = list(get_distributors_for_user(self.am))
+        actual = list(form.fields['distributor'].queryset)
+        self.assertEqual(actual, expected)
+        self.assertIn(self.dist_a, actual)
+        self.assertNotIn(self.dist_b, actual)
+
+    def test_account_create_requires_distributor(self):
+        data = self._valid_data(self.dist_a)
+        del data['distributor']
+        form = AccountForm(data=data, company=self.company, user=self.admin)
+        self.assertFalse(form.is_valid())
+        self.assertIn('distributor', form.errors)
+
+    def test_account_create_requires_on_off(self):
+        data = self._valid_data(self.dist_a)
+        del data['on_off_premise']
+        form = AccountForm(data=data, company=self.company, user=self.admin)
+        self.assertFalse(form.is_valid())
+        self.assertIn('on_off_premise', form.errors)

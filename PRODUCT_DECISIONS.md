@@ -709,11 +709,15 @@ Event setup fields (set by creator, not ambassador):
 ### Ambassador Manager Role Clarification
 - AM does not visit stores
 - AM coordinates tastings remotely between stores and ambassadors
-- AM reviews sales reports and works with distributors to
-  identify tasting opportunities
 - AM can assign themselves as the working ambassador on an event
   (no special flag needed — this is handled naturally by the role)
 - AM is assigned to accounts/areas similar to Territory Manager
+- AM does NOT have access to the Account Sales by Year report
+  (can_view_report_account_sales permission removed from this role)
+- AM account list is scoped to accounts linked to their own events:
+  accounts where they are the event creator, ambassador, or
+  event_manager. Implemented via events reverse relation in
+  account_list view (not via coverage areas).
 
 ### Territory Manager Role Clarification
 - TM visits stores physically
@@ -862,6 +866,18 @@ Admin:
 - Only Supplier Admin and SaaS Admin can create, edit, and manage users
 - Only Supplier Admin and SaaS Admin can see the Users area in navigation
 - All other roles have no user management access
+
+### Account Create / Edit Form
+- Required fields: name, distributor, city, state, county, on_off_premise
+- Optional fields: street, phone, account_type, is_active
+- zip_code removed from the form entirely (not collected on create or edit)
+- on_off_premise choices: ON and OFF only (Unknown removed)
+- distributor dropdown scoped to get_distributors_for_user(request.user):
+  Supplier Admin and Sales Manager see all company distributors;
+  Territory Manager, Ambassador Manager, and other scoped roles see
+  only distributors they have coverage areas for
+- Both account_create and account_edit pass user=request.user to
+  AccountForm so distributor scope is consistent on create and edit
 
 ### Imported Account Editing
 - Accounts created by sales data import (auto_created=True) cannot be manually edited

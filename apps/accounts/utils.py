@@ -81,8 +81,6 @@ def get_accounts_for_user(user):
         ct = ca.coverage_type
         if ct == UserCoverageArea.CoverageType.DISTRIBUTOR:
             q |= Q(distributor_id=ca.distributor_id)
-        elif ct == UserCoverageArea.CoverageType.STATE and ca.state:
-            q |= Q(state_normalized=ca.state)
         elif ct == UserCoverageArea.CoverageType.COUNTY and ca.county and ca.state:
             q |= Q(county=ca.county, state_normalized=ca.state)
         elif ct == UserCoverageArea.CoverageType.CITY and ca.city and ca.state:

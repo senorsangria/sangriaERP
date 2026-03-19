@@ -13,6 +13,7 @@ from django.template.loader import render_to_string
 
 from apps.core.models import User
 from apps.distribution.models import Distributor
+from apps.events.models import Event
 from utils.normalize import normalize_address
 
 from .models import Account, UserCoverageArea
@@ -139,10 +140,24 @@ def account_list(request):
     active_status = filters.get('active_status', '')
 
     # ---- Base queryset ----
+    # Ambassador Manager: sees only accounts linked to their own events
+    # (created by them, or where they are ambassador or event_manager).
+    if request.user.is_ambassador_manager:
+        ambassador_q = (
+            Q(events__created_by=request.user) |
+            Q(events__ambassador=request.user) |
+            Q(events__event_manager=request.user)
+        )
+        accounts = (
+            Account.active_accounts
+            .filter(company=company)
+            .filter(ambassador_q)
+            .distinct()
+        )
     # For the inactive filter we cannot use the active_accounts manager (it
     # filters is_active=True).  Build the appropriate base queryset, applying
     # the same coverage-area scoping that get_accounts_for_user() provides.
-    if active_status == 'inactive':
+    elif active_status == 'inactive':
         is_privileged = request.user.has_permission('can_view_all_accounts')
         if is_privileged:
             accounts = Account.objects.filter(
@@ -269,7 +284,7 @@ def account_create(request):
         return denied
 
     if request.method == 'POST':
-        form = AccountForm(request.POST, company=request.user.company)
+        form = AccountForm(request.POST, company=request.user.company, user=request.user)
         if form.is_valid():
             account = form.save(commit=False)
             account.company = request.user.company
@@ -281,7 +296,7 @@ def account_create(request):
             messages.success(request, f'Account "{account.name}" created successfully.')
             return redirect('account_detail', pk=account.pk)
     else:
-        form = AccountForm(company=request.user.company)
+        form = AccountForm(company=request.user.company, user=request.user)
 
     return render(request, 'accounts/account_form.html', {
         'form': form,
@@ -305,7 +320,7 @@ def account_edit(request, pk):
         return redirect('account_detail', pk=pk)
 
     if request.method == 'POST':
-        form = AccountForm(request.POST, instance=account, company=request.user.company)
+        form = AccountForm(request.POST, instance=account, company=request.user.company, user=request.user)
         if form.is_valid():
             account = form.save(commit=False)
             account.address_normalized = normalize_address(account.street)
@@ -315,7 +330,7 @@ def account_edit(request, pk):
             messages.success(request, f'Account "{account.name}" updated successfully.')
             return redirect('account_detail', pk=account.pk)
     else:
-        form = AccountForm(instance=account, company=request.user.company)
+        form = AccountForm(instance=account, company=request.user.company, user=request.user)
 
     return render(request, 'accounts/account_form.html', {
         'form': form,

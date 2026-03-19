@@ -1008,3 +1008,22 @@ class AccountDetailTest(TestCase):
         c = Client()
         c.force_login(user)
         return c
+
+
+# ---------------------------------------------------------------------------
+# Ambassador Manager cannot access account sales report
+# ---------------------------------------------------------------------------
+
+class AmbassadorManagerReportAccessTest(TestCase):
+    """Ambassador Manager is redirected away from the account sales report."""
+
+    def setUp(self):
+        self.company = make_company('AM Report Co')
+        self.client = Client()
+
+    def test_ambassador_manager_cannot_see_report(self):
+        user = make_user(self.company, 'ambassador_manager', username='am_report')
+        self.client.force_login(user)
+        response = self.client.get(reverse('report_account_sales_by_year'))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('dashboard'))
