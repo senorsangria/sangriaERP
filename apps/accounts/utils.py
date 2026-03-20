@@ -160,11 +160,6 @@ def get_users_covering_account(account, roles):
             coverage_type=UserCoverageArea.CoverageType.DISTRIBUTOR,
             distributor_id=account.distributor_id,
         )
-    if account.state_normalized:
-        coverage_q |= Q(
-            coverage_type=UserCoverageArea.CoverageType.STATE,
-            state=account.state_normalized,
-        )
     if account.county and account.county not in ('', 'Unknown'):
         coverage_q |= Q(
             coverage_type=UserCoverageArea.CoverageType.COUNTY,
