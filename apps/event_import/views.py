@@ -28,6 +28,7 @@ from apps.distribution.models import Distributor
 from apps.event_import.matching import match_csv_row, normalize_for_match
 from apps.event_import.models import HistoricalImportBatch
 from apps.events.models import Event, EventItemRecap
+from apps.events.views import _apply_price_updates
 
 logger = logging.getLogger(__name__)
 
@@ -556,6 +557,8 @@ def event_import_execute(request):
                         bottles_used_for_samples=used,
                         shelf_price=price,
                     )
+
+        _apply_price_updates(event, supplier_admin)
 
     # Update batch event count
     batch.event_count = Event.objects.filter(historical_batch=batch).count()

@@ -1355,6 +1355,25 @@ class ExecuteImportTest(TestCase):
         self.assertIsNotNone(event)
         self.assertEqual(event.recap_samples_poured, 15)
 
+    def test_execute_updates_account_item_price(self):
+        """After execute, AccountItem.current_price is set from the imported recap's shelf_price."""
+        from decimal import Decimal
+        from apps.accounts.models import AccountItem
+        item = _make_brand_and_item(self.company, 'BWRed0750', 'Classic Red 750ml')
+        rows, matches, confirmed, acct, _ = _make_execute_session(self.company, self.distributor)
+        # Create AccountItem so _apply_price_updates can find it
+        AccountItem.objects.create(
+            account=acct,
+            item=item,
+            date_first_associated=datetime.date(2024, 1, 1),
+        )
+        self._set_session(rows, matches, confirmed)
+
+        self.client.post(reverse('event_import_execute'))
+
+        ai = AccountItem.objects.get(account=acct, item=item)
+        self.assertEqual(ai.current_price, Decimal('12.99'))
+
 
 # ---------------------------------------------------------------------------
 # Delete batch

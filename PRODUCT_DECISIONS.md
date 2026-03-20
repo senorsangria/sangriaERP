@@ -329,7 +329,10 @@ Searchable list for one-off or exception assignments
 3. Creates a `HistoricalImportBatch` immediately
 4. Iterates every raw CSV row; skips rows where confirmed map → None
 5. For each matched row: creates Event + EventItemRecap records for any
-   item code with at least one non-null value (sold, used, or price)
+   item code with at least one non-null value (sold, used, or price);
+   then calls `_apply_price_updates(event, supplier_admin)` so that
+   `AccountItem.current_price` is updated as each event is created.
+   Rows are sorted oldest-first so the most recent price ends up current.
 6. Item lookup: `Item.objects.filter(brand__company=request.user.company)`
 7. Date parsing: tries `%m/%d/%y` then `%m/%d/%Y`; skips row on failure
 8. Updates `batch.event_count` after all events are created
