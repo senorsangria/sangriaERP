@@ -356,11 +356,13 @@
           </a>
         </li>
         <li class="nav-section">Reports</li>
+        {% if user|has_perm:'can_view_report_account_sales' %}
         <li class="nav-item">
           <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
             <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
           </a>
         </li>
+        {% endif %}
         <li class="nav-section">Tools</li>
         <li class="nav-item">
           <a class="nav-link {% if 'event_import' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_import_upload' %}">
@@ -387,11 +389,13 @@
           </a>
         </li>
         <li class="nav-section">Reports</li>
+        {% if user|has_perm:'can_view_report_account_sales' %}
         <li class="nav-item">
           <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
             <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
           </a>
         </li>
+        {% endif %}
 
         {% elif user.is_territory_manager %}
         <!-- ---- Territory Manager ---- -->
@@ -412,11 +416,13 @@
           </a>
         </li>
         <li class="nav-section">Reports</li>
+        {% if user|has_perm:'can_view_report_account_sales' %}
         <li class="nav-item">
           <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
             <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
           </a>
         </li>
+        {% endif %}
 
         {% elif user.is_ambassador_manager %}
         <!-- ---- Ambassador Manager ---- -->
@@ -437,11 +443,13 @@
           </a>
         </li>
         <li class="nav-section">Reports</li>
+        {% if user|has_perm:'can_view_report_account_sales' %}
         <li class="nav-item">
           <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
             <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
           </a>
         </li>
+        {% endif %}
 
         {% elif user.is_ambassador %}
         <!-- ---- Ambassador ---- -->
