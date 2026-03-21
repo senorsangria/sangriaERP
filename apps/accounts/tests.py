@@ -785,6 +785,26 @@ class AmbassadorManagerAccountListTest(TestCase):
         self.assertIn(self.am_account, accounts)
         self.assertNotIn(self.other_account, accounts)
 
+    def test_ambassador_manager_inactive_filter(self):
+        """AM with active_status=inactive sees only inactive accounts linked to
+        their events, not active ones and not inactive accounts from other events."""
+        # Make am_account inactive; other_account stays active
+        self.am_account.is_active = False
+        self.am_account.save()
+
+        # An unrelated inactive account (no link to AM)
+        unrelated_inactive = make_account(self.company, self.distributor, 'Unrelated Inactive')
+        unrelated_inactive.is_active = False
+        unrelated_inactive.save()
+
+        resp = self.client.get(reverse('account_list'), {'active_status': 'inactive'})
+        self.assertEqual(resp.status_code, 200)
+        accounts = list(resp.context['accounts'])
+
+        self.assertIn(self.am_account, accounts)          # inactive + linked to AM
+        self.assertNotIn(self.other_account, accounts)    # active, not linked to AM
+        self.assertNotIn(unrelated_inactive, accounts)    # inactive but not linked to AM
+
 
 # ---------------------------------------------------------------------------
 # AccountForm: distributor scope and required fields

@@ -148,12 +148,23 @@ def account_list(request):
             Q(events__ambassador=request.user) |
             Q(events__event_manager=request.user)
         )
-        accounts = (
-            Account.active_accounts
-            .filter(company=company)
-            .filter(ambassador_q)
-            .distinct()
-        )
+        if active_status == 'inactive':
+            accounts = (
+                Account.objects.filter(
+                    company=company,
+                    is_active=False,
+                    merged_into__isnull=True,
+                )
+                .filter(ambassador_q)
+                .distinct()
+            )
+        else:
+            accounts = (
+                Account.active_accounts
+                .filter(company=company)
+                .filter(ambassador_q)
+                .distinct()
+            )
     # For the inactive filter we cannot use the active_accounts manager (it
     # filters is_active=True).  Build the appropriate base queryset, applying
     # the same coverage-area scoping that get_accounts_for_user() provides.
