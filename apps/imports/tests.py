@@ -134,12 +134,26 @@ class ImportCreatesAccountItemsTest(ImportTestBase):
         self.assertEqual(ai.item, self.item)
         self.assertIsNotNone(ai.account)
 
-    def test_date_first_associated_set_to_today(self):
+    def test_date_first_associated_set_to_sale_date(self):
         rows = [{'date_str': '01/15/2024', 'item_id': 'Red0750'}]
         self._run_import(rows)
 
         ai = AccountItem.objects.get(item=self.item)
-        self.assertEqual(ai.date_first_associated, datetime.date.today())
+        self.assertEqual(ai.date_first_associated, datetime.date(2024, 1, 15))
+
+    def test_account_item_date_uses_earliest_sale_date(self):
+        """When multiple rows exist for the same account+item, date_first_associated
+        is set to the earliest sale_date in the import, not today's date."""
+        rows = [
+            {'date_str': '03/10/2024', 'item_id': 'Red0750'},
+            {'date_str': '01/05/2024', 'item_id': 'Red0750'},
+            {'date_str': '06/20/2024', 'item_id': 'Red0750'},
+        ]
+        self._run_import(rows)
+
+        ai = AccountItem.objects.get(item=self.item)
+        self.assertEqual(ai.date_first_associated, datetime.date(2024, 1, 5))
+        self.assertNotEqual(ai.date_first_associated, datetime.date.today())
 
     def test_current_price_not_set_during_import(self):
         rows = [{'date_str': '01/15/2024', 'item_id': 'Red0750'}]

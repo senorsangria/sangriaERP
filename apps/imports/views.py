@@ -588,6 +588,7 @@ def _execute_import(request, company, distributor, filepath, filename):
         )
 
         sales_records = []
+        earliest_dates = {}   # (account_id, item_id) -> earliest sale_date
         records_skipped = 0
 
         for r in rows:
@@ -616,37 +617,24 @@ def _execute_import(request, company, distributor, filepath, filename):
                 distributor_wholesale_price=r.get('price'),
             ))
 
+            # Track the earliest sale_date seen for each (account, item) pair.
+            pair = (account.pk, item.pk)
+            if pair not in earliest_dates or r['sale_date'] < earliest_dates[pair]:
+                earliest_dates[pair] = r['sale_date']
+
         # Bulk create sales records in batches of 1000
         for i in range(0, len(sales_records), 1000):
             SalesRecord.objects.bulk_create(sales_records[i:i + 1000])
 
-        # Create AccountItem records for each unique (account, item) pair
-        # encountered in this import. Uses get_or_create so re-importing
-        # the same data never duplicates records or overwrites the original
-        # date_first_associated.
-        today = date.today()
+        # Create AccountItem records for each unique (account, item) pair,
+        # using the earliest sale_date from this import as date_first_associated.
+        # get_or_create ensures re-importing never overwrites an existing date.
         account_items_created = 0
-        seen_pairs = set()
-        for r in rows:
-            item = code_to_item.get(r['item_id'])
-            if item is None:
-                continue
-            key = (
-                normalize_address(r['address']),
-                normalize_address(r['city']),
-                normalize_address(r['state']),
-            )
-            account = account_lookup.get(key)
-            if account is None:
-                continue
-            pair = (account.pk, item.pk)
-            if pair in seen_pairs:
-                continue
-            seen_pairs.add(pair)
+        for (account_id, item_id), first_date in earliest_dates.items():
             _, created = AccountItem.objects.get_or_create(
-                account=account,
-                item=item,
-                defaults={'date_first_associated': today},
+                account_id=account_id,
+                item_id=item_id,
+                defaults={'date_first_associated': first_date},
             )
             if created:
                 account_items_created += 1
