@@ -341,7 +341,7 @@
             </td>
             <!-- Account Name -->
             <td class="col-sticky-2 fw-semibold">
-              <a href="{% url 'report_account_detail' account_id=row.account_id %}" class="text-reset text-decoration-none">{{ row.account_name }}</a>
+              <a href="{% url 'account_detail_combined' row.account_id %}?tab=sales&return_to=report" class="text-reset text-decoration-none">{{ row.account_name }}</a>
             </td>
             <!-- City -->
             <td style="max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ row.city }}</td>

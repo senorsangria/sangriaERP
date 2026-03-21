@@ -304,6 +304,275 @@ def account_detail(request, pk):
 
 
 @login_required
+def account_detail_combined(request, pk):
+    """Combined account detail: Account Details tab + Account Sales tab."""
+    if not request.user.has_permission('can_view_accounts'):
+        messages.error(request, 'You do not have permission to view accounts.')
+        return redirect('dashboard')
+
+    account = get_object_or_404(Account, pk=pk, company=request.user.company)
+
+    active_tab = request.GET.get('tab', 'details')
+    if active_tab not in ('details', 'sales'):
+        active_tab = 'details'
+
+    return_to = request.GET.get('return_to', 'accounts')
+    if return_to not in ('accounts', 'report'):
+        return_to = 'accounts'
+
+    can_view_sales = request.user.has_permission('can_view_report_account_sales')
+
+    # Redirect to details tab if sales tab requested without permission
+    if active_tab == 'sales' and not can_view_sales:
+        from django.urls import reverse as _rev
+        url = _rev('account_detail_combined', args=[pk]) + '?tab=details'
+        if return_to != 'accounts':
+            url += f'&return_to={return_to}'
+        return redirect(url)
+
+    # ---- Details tab data -----------------------------------------------
+    account_items_qs = (
+        account.account_items
+        .select_related('item__brand')
+        .order_by('item__brand__name', 'item__sort_order', 'item__name')
+    )
+    items_by_brand = []
+    current_brand = None
+    for ai in account_items_qs:
+        brand = ai.item.brand
+        if brand != current_brand:
+            current_brand = brand
+            items_by_brand.append({'brand': brand, 'items': []})
+        items_by_brand[-1]['items'].append(ai)
+
+    from apps.events.views import _get_visible_events
+    recent_events = list(
+        _get_visible_events(request.user)
+        .filter(account=account)
+        .select_related('ambassador')
+        .order_by('-date', '-pk')[:10]
+    )
+
+    ctx = {
+        'account': account,
+        'active_tab': active_tab,
+        'return_to': return_to,
+        'can_view_sales': can_view_sales,
+        'items_by_brand': items_by_brand,
+        'recent_events': recent_events,
+        'no_sales_data': False,
+    }
+
+    # ---- Sales tab data (only when user has permission) -----------------
+    if can_view_sales:
+        from calendar import monthrange
+        from datetime import date as _date
+        from django.db.models import Max, Sum
+        from apps.catalog.models import Item
+        from apps.sales.models import SalesRecord
+
+        def _mo_add(year, month, delta):
+            month += delta
+            while month > 12: month -= 12; year += 1
+            while month < 1:  month += 12; year -= 1
+            return year, month
+
+        def _last_day(year, month):
+            return monthrange(year, month)[1]
+
+        today = _date.today()
+        current_year = today.year
+        current_month_start = today.replace(day=1)
+        distributor = account.distributor
+
+        max_past_sale = (
+            SalesRecord.objects
+            .filter(
+                account__distributor=distributor,
+                account__company=account.company,
+                sale_date__lt=current_month_start,
+            )
+            .aggregate(Max('sale_date'))['sale_date__max']
+        )
+
+        if max_past_sale is None:
+            ctx['no_sales_data'] = True
+        else:
+            lfm_year = max_past_sale.year
+            lfm_month = max_past_sale.month
+            lfm_end = _date(lfm_year, lfm_month, _last_day(lfm_year, lfm_month))
+            last_full_month_display = _date(lfm_year, lfm_month, 1).strftime('%B %Y')
+            last_full_year = current_year - 1
+
+            if lfm_year == current_year:
+                actual_months = list(range(1, lfm_month + 1))
+                projected_months = list(range(lfm_month + 1, 13))
+            else:
+                actual_months = []
+                projected_months = list(range(1, 13))
+
+            w_year, w_month = _mo_add(lfm_year, lfm_month, -11)
+            window_start = _date(w_year, w_month, 1)
+            window_end = lfm_end
+
+            items = (
+                Item.objects
+                .filter(sales_records__account=account)
+                .distinct()
+                .select_related('brand')
+                .order_by('brand__name', 'sort_order', 'name')
+            )
+
+            lfy_data = {}
+            for r in (
+                SalesRecord.objects
+                .filter(account=account, sale_date__year=last_full_year)
+                .values('item_id', 'sale_date__month')
+                .annotate(units=Sum('quantity'))
+            ):
+                lfy_data[(r['item_id'], r['sale_date__month'])] = r['units']
+
+            actual_data = {}
+            if actual_months:
+                for r in (
+                    SalesRecord.objects
+                    .filter(account=account, sale_date__year=current_year,
+                            sale_date__month__in=actual_months)
+                    .values('item_id', 'sale_date__month')
+                    .annotate(units=Sum('quantity'))
+                ):
+                    actual_data[(r['item_id'], r['sale_date__month'])] = r['units']
+
+            last12_data = {}
+            for r in (
+                SalesRecord.objects
+                .filter(account=account, sale_date__gte=window_start, sale_date__lte=window_end)
+                .values('item_id')
+                .annotate(units=Sum('quantity'))
+            ):
+                last12_data[r['item_id']] = r['units']
+
+            all_months = list(range(1, 13))
+            rows = []
+            for item in items:
+                iid = item.pk
+                lfy_by_m = {m: lfy_data.get((iid, m), 0) for m in all_months}
+                act_by_m = {m: actual_data.get((iid, m), 0) for m in actual_months}
+                lfy_total = sum(lfy_by_m.values())
+                l12 = last12_data.get(iid, 0)
+
+                multiplier = None if lfy_total == 0 else l12 / lfy_total
+
+                proj_by_m = {}
+                for m in projected_months:
+                    if multiplier is None:
+                        proj_by_m[m] = None
+                    else:
+                        proj_by_m[m] = max(0, round(lfy_by_m[m] * multiplier))
+
+                act_total  = sum(act_by_m.values())
+                proj_total = sum(v for v in proj_by_m.values() if v is not None)
+                comb_total = act_total + proj_total
+
+                if lfy_total == 0 and l12 == 0:
+                    continue
+
+                if lfy_total > 0 and l12 == 0:
+                    status, spri = 'non_buy', 1
+                elif l12 < lfy_total:
+                    status, spri = 'declining', 2
+                elif l12 == lfy_total:
+                    status, spri = 'steady', 3
+                elif lfy_total == 0 and l12 > 0:
+                    status, spri = 'new', 5
+                else:
+                    status, spri = 'growing', 4
+
+                rows.append({
+                    'item_name': item.name, 'item_code': item.item_code,
+                    'brand_name': item.brand.name, 'sort_order': item.sort_order,
+                    'last_full_year_by_month': lfy_by_m,
+                    'current_actual_by_month': act_by_m,
+                    'current_projected_by_month': proj_by_m,
+                    'last_full_year_total': lfy_total,
+                    'current_actual_total': act_total,
+                    'current_projected_total': proj_total,
+                    'current_combined_total': comb_total,
+                    'last_12_units': l12,
+                    'diff_last_12_vs_last_year': l12 - lfy_total,
+                    'diff_current_vs_last_year': comb_total - lfy_total,
+                    'status': status, 'status_priority': spri,
+                    'change_pct': (
+                        round((l12 - lfy_total) / lfy_total * 100, 1)
+                        if lfy_total > 0 else None
+                    ),
+                    'status_icon': {
+                        'non_buy': '⚫', 'declining': '🔴', 'steady': '⚪',
+                        'growing': '🟢', 'new': '🟡',
+                    }[status],
+                })
+
+            rows.sort(key=lambda r: (
+                r['status_priority'], r['brand_name'], r['sort_order'], r['item_name']
+            ))
+            prev_pri = None
+            for row in rows:
+                row['first_in_group'] = (row['status_priority'] != prev_pri)
+                prev_pri = row['status_priority']
+
+            status_counts = {
+                s: sum(1 for r in rows if r['status'] == s)
+                for s in ('non_buy', 'declining', 'steady', 'growing', 'new')
+            }
+            _pl12 = sum(r['last_12_units'] for r in rows)
+            _ppr  = sum(r['last_full_year_total'] for r in rows)
+
+            ctx.update({
+                'rows': rows,
+                'last_full_year': last_full_year,
+                'current_year': current_year,
+                'all_months': all_months,
+                'actual_months': actual_months,
+                'projected_months': projected_months,
+                'last_full_month_display': last_full_month_display,
+                'last_reported': last_full_month_display,
+                'month_names': {i: _date(2000, i, 1).strftime('%b') for i in all_months},
+                'totals': {
+                    'last_full_year_by_month': {
+                        m: sum(r['last_full_year_by_month'][m] for r in rows)
+                        for m in all_months
+                    },
+                    'current_actual_by_month': {
+                        m: sum(r['current_actual_by_month'].get(m, 0) for r in rows)
+                        for m in actual_months
+                    },
+                    'current_projected_by_month': {
+                        m: sum((r['current_projected_by_month'].get(m) or 0) for r in rows)
+                        for m in projected_months
+                    },
+                    'last_full_year_total': sum(r['last_full_year_total'] for r in rows),
+                    'current_actual_total': sum(r['current_actual_total'] for r in rows),
+                    'current_projected_total': sum(r['current_projected_total'] for r in rows),
+                    'current_combined_total': sum(r['current_combined_total'] for r in rows),
+                    'last_12_total': _pl12,
+                    'diff_last_12_vs_last_year': sum(r['diff_last_12_vs_last_year'] for r in rows),
+                    'diff_current_vs_last_year': sum(r['diff_current_vs_last_year'] for r in rows),
+                },
+                'current_year_colspan': len(actual_months) + len(projected_months),
+                'status_counts': status_counts,
+                'portfolio_totals': {
+                    'last_12_total': _pl12, 'prior_year_total': _ppr,
+                    'change_total': _pl12 - _ppr,
+                    'total_change_pct': (
+                        round((_pl12 - _ppr) / _ppr * 100, 1) if _ppr > 0 else None
+                    ),
+                },
+            })
+
+    return render(request, 'accounts/account_detail_combined.html', ctx)
+
+
+@login_required
 def account_create(request):
     denied = _require_account_access(request)
     if denied:

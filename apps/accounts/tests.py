@@ -807,6 +807,75 @@ class AmbassadorManagerAccountListTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Combined Account Detail page
+# ---------------------------------------------------------------------------
+
+class AccountDetailCombinedTest(TestCase):
+    """Tests for the account_detail_combined view."""
+
+    def setUp(self):
+        from apps.core.rbac import Role
+
+        self.company = make_company('Combined Test Co')
+        self.other_company = make_company('Other Co')
+        self.distributor = make_distributor(self.company, 'Test Dist')
+
+        def _make(role, username):
+            u = User.objects.create_user(
+                username=username, password='testpass123', company=self.company,
+            )
+            u.roles.set([Role.objects.get(codename=role)])
+            return u
+
+        self.admin = _make('supplier_admin', 'cdc_admin')
+        self.no_role_user = User.objects.create_user(
+            username='cdc_norole', password='testpass123', company=self.company,
+        )
+        # ambassador_manager has can_view_accounts but not can_view_report_account_sales
+        self.am = _make('ambassador_manager', 'cdc_am')
+
+        self.account = make_account(self.company, self.distributor, 'Combined Test Store')
+        self.other_account = make_account(self.other_company, None, 'Other Store')
+
+        self.url = reverse('account_detail_combined', args=[self.account.pk])
+
+    def test_combined_requires_can_view_accounts(self):
+        """User without can_view_accounts is redirected to dashboard."""
+        self.client.login(username='cdc_norole', password='testpass123')
+        resp = self.client.get(self.url)
+        self.assertRedirects(resp, reverse('dashboard'), fetch_redirect_response=False)
+
+    def test_combined_defaults_to_details_tab(self):
+        """No tab param → active_tab='details' in context."""
+        self.client.login(username='cdc_admin', password='testpass123')
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_tab'], 'details')
+
+    def test_combined_sales_tab_requires_permission(self):
+        """User without can_view_report_account_sales is redirected to details tab."""
+        self.client.login(username='cdc_am', password='testpass123')
+        resp = self.client.get(self.url + '?tab=sales')
+        # Should redirect to details tab, not render the sales tab
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('tab=details', resp['Location'])
+
+    def test_combined_return_to_in_context(self):
+        """return_to param is passed through to template context."""
+        self.client.login(username='cdc_admin', password='testpass123')
+        resp = self.client.get(self.url + '?return_to=report')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['return_to'], 'report')
+
+    def test_combined_404_for_wrong_company(self):
+        """Account belonging to a different company returns 404."""
+        self.client.login(username='cdc_admin', password='testpass123')
+        url = reverse('account_detail_combined', args=[self.other_account.pk])
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 404)
+
+
+# ---------------------------------------------------------------------------
 # AccountForm: distributor scope and required fields
 # ---------------------------------------------------------------------------
 

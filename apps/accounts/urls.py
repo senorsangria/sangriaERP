@@ -9,6 +9,7 @@ urlpatterns = [
     path('accounts/bulk-delete/', views.account_bulk_delete, name='account_bulk_delete'),
     path('accounts/create/', views.account_create, name='account_create'),
     path('accounts/<int:pk>/', views.account_detail, name='account_detail'),
+    path('accounts/<int:pk>/detail/', views.account_detail_combined, name='account_detail_combined'),
     path('accounts/<int:pk>/edit/', views.account_edit, name='account_edit'),
     path('accounts/<int:pk>/toggle/', views.account_toggle, name='account_toggle'),
     path('accounts/<int:pk>/delete/', views.account_delete, name='account_delete'),

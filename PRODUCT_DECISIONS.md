@@ -2709,5 +2709,40 @@ Each conflict entry includes:
 
 ---
 
-*Last updated: March 21, 2026 (Dynamic filter options, hidden Reports header)*
+## Account Detail Combined Page
+
+- **URL:** `/accounts/<pk>/detail/` — name `account_detail_combined`
+- **View:** `apps/accounts/views.py` — `account_detail_combined`
+- **Template:** `templates/accounts/account_detail_combined.html`
+
+### Tabs
+- **Account Details** — always visible to users with `can_view_accounts`
+  - Sub-sections: Associated Items (grouped by brand), Recent Events (last 10,
+    linked to event_detail), Import Data card (third_party_id, account_type,
+    distributor_route — only shown when at least one has a value)
+- **Account Sales** — only shown when user has `can_view_report_account_sales`
+  - Contains Portfolio Status card and Full Sales History (collapsed) — same
+    content as `reports/account_detail_sales.html`
+  - If no sales data: shows "No sales data available for this account."
+  - If sales tab requested without permission: redirected to details tab
+
+### Parameters
+- `tab` query param: `'details'` (default) or `'sales'` — drives server-side
+  active tab and is updated client-side via `history.replaceState` on tab switch
+- `return_to` query param: `'accounts'` (default) or `'report'` — controls
+  whether the back link points to the Account List or the Account Sales by Year
+  report
+
+### Navigation links updated
+- `templates/accounts/account_list.html` — account name link → `account_detail_combined`
+- `templates/reports/account_sales_by_year.html` — account name link →
+  `account_detail_combined` with `?tab=sales&return_to=report`
+
+### Old views kept as fallback
+- `account_detail` (accounts app) and `account_detail_sales` / `report_account_detail`
+  (reports app) remain in place and are not yet removed
+
+---
+
+*Last updated: March 21, 2026 (Combined Account Detail page with Details and Sales tabs)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

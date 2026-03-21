@@ -1,0 +1,495 @@
+{% extends "base.html" %}
+{% load rbac reports_tags humanize %}
+
+{% block title %}{{ account.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* ---- Portfolio / Sales table ---------------------------------------- */
+  .portfolio-group-divider {
+    border-top: 2px solid #adb5bd !important;
+  }
+  .detail-table {
+    white-space: nowrap;
+  }
+  .detail-table thead tr:first-child th {
+    position: sticky; top: 0; z-index: 4;
+    background: #1a2d42; color: #c8d8e8;
+    border-bottom: 1px solid #0d1a26;
+  }
+  .detail-table thead tr:last-child th {
+    position: sticky; top: 33px; z-index: 4;
+    background: #1a2d42; color: #c8d8e8;
+    border-bottom: 2px solid #0d1a26;
+  }
+  .detail-table th.sticky-col,
+  .detail-table td.sticky-col {
+    position: sticky; left: 0; z-index: 3;
+    background: inherit;
+    min-width: 140px; max-width: 180px;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .detail-table thead th.sticky-col {
+    background: #1a2d42; z-index: 5;
+  }
+  .detail-table tbody tr:nth-child(odd)  td.sticky-col { background: #fff; }
+  .detail-table tbody tr:nth-child(even) td.sticky-col { background: #f8f9fa; }
+  #detailTotalsBody td.sticky-col { background: #e8edf2 !important; }
+  .proj-cell { background: #f8f9fa; font-style: italic; color: #6c757d; }
+  .diff-positive { color: #198754; }
+  .diff-negative { color: #dc3545; }
+  .diff-zero     { color: #6c757d; }
+  #detailTotalsBody tr {
+    background: #e8edf2 !important; font-weight: bold;
+    border-top: 2px solid #1a2d42; border-bottom: 2px solid #1a2d42;
+  }
+  .detail-table thead tr:first-child th.lfy-header { background: #1a3a5c; }
+  .detail-table thead tr:first-child th.cy-header  { background: #1e3a2a; }
+  .detail-table thead tr:last-child th.proj-month-header {
+    background: #2a3a2a; font-style: italic; color: #aac8aa;
+  }
+  @media (max-width: 767.98px) {
+    .detail-table { font-size: .78rem; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ================================================================
+     Top bar: back link (right-aligned)
+     ================================================================ -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <span></span>
+  {% if return_to == 'report' %}
+  <a href="{% url 'report_account_sales_by_year' %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back to Report
+  </a>
+  {% else %}
+  <a href="{% url 'account_list' %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back to Accounts
+  </a>
+  {% endif %}
+</div>
+
+<!-- ================================================================
+     Compact account header card
+     ================================================================ -->
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body py-2 px-3">
+    <h5 class="mb-1 fw-bold">{{ account.name|title }}</h5>
+    {% if account.street or account.city or account.state %}
+    <p class="text-muted mb-0 small">
+      {% if account.street %}{{ account.street }}, {% endif %}{{ account.city }}{% if account.city and account.state %}, {% endif %}{{ account.state }}
+    </p>
+    {% endif %}
+    {% if account.distributor %}
+    <p class="text-muted mb-0 small">{{ account.distributor.name }}</p>
+    {% endif %}
+    <div class="mt-1 d-flex flex-wrap gap-1">
+      {% if account.on_off_premise %}
+      <span class="badge bg-secondary bg-opacity-10 text-secondary border">{{ account.on_off_premise }}</span>
+      {% endif %}
+      {% if account.account_type %}
+      <span class="badge bg-secondary bg-opacity-10 text-secondary border">{{ account.account_type }}</span>
+      {% endif %}
+      {% if account.auto_created %}
+      <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 small">IMPORTED</span>
+      {% endif %}
+      {% if not account.is_active %}
+      <span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25">INACTIVE</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================
+     Navigation tabs
+     ================================================================ -->
+<ul class="nav nav-tabs mb-3" id="accountDetailTabs">
+  <li class="nav-item">
+    <a class="nav-link {% if active_tab == 'details' %}active{% endif %}"
+       href="#tab-details" data-bs-toggle="tab">Account Details</a>
+  </li>
+  {% if can_view_sales %}
+  <li class="nav-item">
+    <a class="nav-link {% if active_tab == 'sales' %}active{% endif %}"
+       href="#tab-sales" data-bs-toggle="tab">Account Sales</a>
+  </li>
+  {% endif %}
+</ul>
+
+<!-- ================================================================
+     Tab panes
+     ================================================================ -->
+<div class="tab-content">
+
+  <!-- ---- DETAILS TAB ------------------------------------------------- -->
+  <div class="tab-pane fade {% if active_tab == 'details' %}show active{% endif %}" id="tab-details">
+
+    <!-- Sub-section A: Associated Items -->
+    <h6 class="fw-semibold text-muted text-uppercase small mb-2">Associated Items</h6>
+    {% if items_by_brand %}
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Item</th>
+              <th class="d-none d-sm-table-cell">Current Price</th>
+              <th class="d-none d-md-table-cell">First Associated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for group in items_by_brand %}
+            <tr class="table-secondary">
+              <td colspan="3" class="fw-semibold small text-muted py-1 px-3">
+                {{ group.brand.name }}
+              </td>
+            </tr>
+            {% for ai in group.items %}
+            <tr>
+              <td>
+                <div class="fw-medium">{{ ai.item.name }}</div>
+                <div class="d-sm-none mt-1 text-muted small">
+                  {% if ai.current_price %}${{ ai.current_price }}{% else %}No price recorded{% endif %}
+                  &middot; {{ ai.date_first_associated|date:"m/d/y" }}
+                </div>
+              </td>
+              <td class="d-none d-sm-table-cell small">
+                {% if ai.current_price %}
+                ${{ ai.current_price }}
+                {% else %}
+                <span class="text-muted">No price recorded</span>
+                {% endif %}
+              </td>
+              <td class="d-none d-md-table-cell small text-muted">
+                {{ ai.date_first_associated|date:"m/d/y" }}
+              </td>
+            </tr>
+            {% endfor %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-body text-center py-4 text-muted">
+        <i class="bi bi-upc fs-2 d-block mb-2"></i>
+        No items associated yet.
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Sub-section B: Recent Events -->
+    <h6 class="fw-semibold text-muted text-uppercase small mb-2">Recent Events</h6>
+    {% if recent_events %}
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle small">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th class="d-none d-sm-table-cell">Ambassador</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for event in recent_events %}
+            <tr>
+              <td>
+                <a href="{% url 'event_detail' event.pk %}" class="text-decoration-none">
+                  {{ event.date|date:"m/d/y"|default:"—" }}
+                </a>
+              </td>
+              <td>{{ event.get_event_type_display }}</td>
+              <td>
+                <span class="badge
+                  {% if event.status == 'DRAFT' %}bg-secondary
+                  {% elif event.status == 'SCHEDULED' %}bg-primary
+                  {% elif event.status == 'RECAP_SUBMITTED' %}bg-success
+                  {% elif event.status == 'CANCELLED' %}bg-danger
+                  {% else %}bg-secondary{% endif %}
+                  bg-opacity-10 text-dark border small">
+                  {{ event.get_status_display }}
+                </span>
+              </td>
+              <td class="d-none d-sm-table-cell">
+                {{ event.ambassador.get_full_name|default:event.ambassador.username|default:"—" }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-body text-center py-4 text-muted">
+        <i class="bi bi-calendar-event fs-2 d-block mb-2"></i>
+        No events yet.
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Sub-section C: Import Data (only if any values present) -->
+    {% if account.third_party_id or account.account_type or account.distributor_route %}
+    <h6 class="fw-semibold text-muted text-uppercase small mb-2">Import Data</h6>
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-body">
+        <dl class="mb-0">
+          {% if account.account_type %}
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Account Type</dt>
+            <dd class="col-7 mb-0 small">{{ account.account_type }}</dd>
+          </div>
+          {% endif %}
+          {% if account.third_party_id %}
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Third Party ID</dt>
+            <dd class="col-7 mb-0 small">{{ account.third_party_id }}</dd>
+          </div>
+          {% endif %}
+          {% if account.distributor_route %}
+          <div class="row mb-2">
+            <dt class="col-5 text-muted fw-normal small">Distributor Route</dt>
+            <dd class="col-7 mb-0 small">{{ account.distributor_route }}</dd>
+          </div>
+          {% endif %}
+        </dl>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>{# /tab-details #}
+
+  <!-- ---- SALES TAB ---------------------------------------------------- -->
+  {% if can_view_sales %}
+  <div class="tab-pane fade {% if active_tab == 'sales' %}show active{% endif %}" id="tab-sales">
+
+    {% if no_sales_data %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center py-5">
+        <i class="bi bi-bar-chart text-muted" style="font-size:3rem;"></i>
+        <p class="mt-3 mb-1 fw-semibold text-muted">No sales data available for this account.</p>
+      </div>
+    </div>
+
+    {% else %}
+
+    <!-- Portfolio Status Card -->
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header fw-semibold py-2">Portfolio Status</div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0" id="portfolioTable">
+            <thead class="table-dark">
+              <tr>
+                <th>Item Code</th>
+                <th class="text-end">{{ last_full_year }}</th>
+                <th class="text-end">Last 12m</th>
+                <th class="text-end">Change</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody class="fw-bold table-active">
+              <tr>
+                <td>TOTAL</td>
+                <td class="text-end" data-value="{{ portfolio_totals.prior_year_total }}">{{ portfolio_totals.prior_year_total|intcomma }}</td>
+                <td class="text-end" data-value="{{ portfolio_totals.last_12_total }}">{{ portfolio_totals.last_12_total|intcomma }}</td>
+                <td class="text-end" data-value="{{ portfolio_totals.change_total }}">
+                  <span class="{% if portfolio_totals.change_total > 0 %}text-success{% elif portfolio_totals.change_total < 0 %}text-danger{% else %}text-muted{% endif %}">
+                    {% if portfolio_totals.change_total > 0 %}+{% endif %}{{ portfolio_totals.change_total|intcomma }}
+                  </span>
+                  {% if portfolio_totals.total_change_pct is not None %}
+                  <span class="small ms-1 {% if portfolio_totals.total_change_pct > 0 %}text-success{% elif portfolio_totals.total_change_pct < 0 %}text-danger{% else %}text-muted{% endif %}">
+                    {% if portfolio_totals.total_change_pct > 0 %}+{% endif %}{{ portfolio_totals.total_change_pct }}%
+                  </span>
+                  {% endif %}
+                </td>
+                <td></td>
+              </tr>
+            </tbody>
+            <tbody>
+              {% for row in rows %}
+              <tr{% if row.first_in_group and not forloop.first %} class="portfolio-group-divider"{% endif %}>
+                <td>{{ row.item_code }}</td>
+                <td class="text-end" data-value="{{ row.last_full_year_total }}">{{ row.last_full_year_total|intcomma }}</td>
+                <td class="text-end" data-value="{{ row.last_12_units }}">{{ row.last_12_units|intcomma }}</td>
+                <td class="text-end" data-value="{{ row.diff_last_12_vs_last_year }}">
+                  <span class="{% if row.diff_last_12_vs_last_year > 0 %}text-success{% elif row.diff_last_12_vs_last_year < 0 %}text-danger{% else %}text-muted{% endif %}">
+                    {% if row.diff_last_12_vs_last_year > 0 %}+{% endif %}{{ row.diff_last_12_vs_last_year|intcomma }}
+                  </span>
+                  {% if row.change_pct is not None %}
+                  <span class="small ms-1 {% if row.change_pct > 0 %}text-success{% elif row.change_pct < 0 %}text-danger{% else %}text-muted{% endif %}">
+                    {% if row.change_pct > 0 %}+{% endif %}{{ row.change_pct }}%
+                  </span>
+                  {% endif %}
+                  <span class="ms-1">{{ row.status_icon }}</span>
+                </td>
+                <td>
+                  {% if row.status == 'non_buy' %}<span class="badge bg-dark text-white">⚫ Non-buy</span>
+                  {% elif row.status == 'declining' %}<span class="badge bg-danger text-white">🔴 Declining</span>
+                  {% elif row.status == 'steady' %}<span class="badge bg-secondary text-white">⚪ Steady</span>
+                  {% elif row.status == 'growing' %}<span class="badge bg-success text-white">🟢 Growing</span>
+                  {% elif row.status == 'new' %}<span class="badge bg-warning text-dark">🟡 New</span>{% endif %}
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="5" class="text-center text-muted py-4">No items to display.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Full Sales History (collapsed by default) -->
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">Full Sales History</span>
+        <button class="btn btn-sm btn-outline-secondary" type="button"
+                data-bs-toggle="collapse" data-bs-target="#salesHistoryCollapse"
+                aria-expanded="false" aria-controls="salesHistoryCollapse">
+          <i class="bi bi-chevron-down" id="salesHistoryChevron"></i>
+        </button>
+      </div>
+      <div class="collapse" id="salesHistoryCollapse">
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-striped table-hover table-sm mb-0 detail-table" id="detailTable">
+              <thead>
+                <tr>
+                  <th class="sticky-col" rowspan="2">Item</th>
+                  <th class="text-center lfy-header" colspan="12">{{ last_full_year }}</th>
+                  {% if current_year_colspan > 0 %}
+                  <th class="text-center cy-header" colspan="{{ current_year_colspan }}">{{ current_year }}</th>
+                  {% endif %}
+                </tr>
+                <tr>
+                  {% for m in all_months %}
+                  <th class="text-end">{{ month_names|get_item:m }}</th>
+                  {% endfor %}
+                  {% for m in actual_months %}
+                  <th class="text-end">{{ month_names|get_item:m }}</th>
+                  {% endfor %}
+                  {% for m in projected_months %}
+                  <th class="text-end proj-month-header">{{ month_names|get_item:m }}<br><small>(proj)</small></th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody id="detailTotalsBody">
+                <tr>
+                  <td class="sticky-col fw-bold">Total</td>
+                  {% for m in all_months %}
+                  {% with val=totals.last_full_year_by_month|get_item:m %}
+                  <td class="text-end" data-value="{{ val|default:0 }}">{{ val|default:0|intcomma }}</td>
+                  {% endwith %}
+                  {% endfor %}
+                  {% for m in actual_months %}
+                  {% with val=totals.current_actual_by_month|get_item:m %}
+                  <td class="text-end" data-value="{{ val|default:0 }}">{{ val|default:0|intcomma }}</td>
+                  {% endwith %}
+                  {% endfor %}
+                  {% for m in projected_months %}
+                  {% with val=totals.current_projected_by_month|get_item:m %}
+                  <td class="text-end proj-cell" data-value="{{ val|default:0 }}">{{ val|default:0|intcomma }}</td>
+                  {% endwith %}
+                  {% endfor %}
+                </tr>
+              </tbody>
+              <tbody id="detailDataBody">
+                {% for row in rows %}
+                <tr>
+                  <td class="sticky-col">{{ row.item_code }}</td>
+                  {% for m in all_months %}
+                  {% with val=row.last_full_year_by_month|get_item:m %}
+                  <td class="text-end" data-value="{{ val|default:0 }}">
+                    {% if val %}{{ val|intcomma }}{% endif %}
+                  </td>
+                  {% endwith %}
+                  {% endfor %}
+                  {% for m in actual_months %}
+                  {% with val=row.current_actual_by_month|get_item:m %}
+                  <td class="text-end" data-value="{{ val|default:0 }}">
+                    {% if val %}{{ val|intcomma }}{% endif %}
+                  </td>
+                  {% endwith %}
+                  {% endfor %}
+                  {% for m in projected_months %}
+                  {% with val=row.current_projected_by_month|get_item:m %}
+                  <td class="text-end proj-cell" data-value="{{ val|default:0 }}">
+                    {% if val %}{{ val|intcomma }}{% endif %}
+                  </td>
+                  {% endwith %}
+                  {% endfor %}
+                </tr>
+                {% empty %}
+                <tr>
+                  <td colspan="100" class="text-center text-muted py-4">No sales data found.</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card-footer text-muted small py-2 px-3">
+          {{ rows|length }} item{{ rows|length|pluralize }}
+        </div>
+      </div>
+    </div>
+
+    {% endif %}{# /no_sales_data #}
+
+  </div>{# /tab-sales #}
+  {% endif %}
+
+</div>{# /tab-content #}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  /* ---- Update URL when switching tabs --------------------------------- */
+  document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function (tab) {
+    tab.addEventListener('shown.bs.tab', function (e) {
+      var tabId = e.target.getAttribute('href').replace('#tab-', '');
+      var url = new URL(window.location.href);
+      url.searchParams.set('tab', tabId);
+      window.history.replaceState({}, '', url);
+    });
+  });
+
+  /* ---- Negative value coloring ---------------------------------------- */
+  function applyNegativeColors() {
+    document.querySelectorAll('td[data-value]').forEach(function (td) {
+      var val = parseInt(td.getAttribute('data-value'), 10);
+      if (isNaN(val)) return;
+      if (val < 0) td.classList.add('text-danger');
+    });
+    document.querySelectorAll('.diff-col').forEach(function (td) {
+      var val = parseInt(td.getAttribute('data-value'), 10);
+      if (isNaN(val)) return;
+      td.classList.remove('diff-positive', 'diff-negative', 'diff-zero');
+      if (val > 0)      td.classList.add('diff-positive');
+      else if (val < 0) td.classList.add('diff-negative');
+      else              td.classList.add('diff-zero');
+    });
+  }
+  document.addEventListener('DOMContentLoaded', applyNegativeColors);
+
+  /* ---- Rotate chevron when Full Sales History expands/collapses ------- */
+  var salesCollapse = document.getElementById('salesHistoryCollapse');
+  var salesChevron  = document.getElementById('salesHistoryChevron');
+  if (salesCollapse && salesChevron) {
+    salesCollapse.addEventListener('show.bs.collapse', function () {
+      salesChevron.classList.replace('bi-chevron-down', 'bi-chevron-up');
+    });
+    salesCollapse.addEventListener('hide.bs.collapse', function () {
+      salesChevron.classList.replace('bi-chevron-up', 'bi-chevron-down');
+    });
+  }
+</script>
+{% endblock %}
