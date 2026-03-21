@@ -225,10 +225,22 @@ def account_list(request):
     elif source == 'imported':
         accounts = accounts.filter(auto_created=True)
 
-    distributors = (
-        Distributor.objects.filter(company=company, is_active=True)
-        .order_by('name')
+    # Dynamic filter options from visible accounts
+    filter_distributors = (
+        Distributor.objects.filter(
+            pk__in=accounts.values('distributor_id').distinct()
+        ).order_by('name')
     )
+
+    on_off_values = list(
+        accounts.exclude(on_off_premise='')
+        .values_list('on_off_premise', flat=True)
+        .distinct()
+        .order_by('on_off_premise')
+    )
+
+    has_manual = accounts.filter(auto_created=False).exists()
+    has_imported = accounts.filter(auto_created=True).exists()
 
     filters_active = bool(search or distributor_id or on_off or source or active_status)
 
@@ -239,7 +251,10 @@ def account_list(request):
 
     return render(request, 'accounts/account_list.html', {
         'accounts':            accounts,
-        'distributors':        distributors,
+        'filter_distributors': filter_distributors,
+        'on_off_values':       on_off_values,
+        'has_manual':          has_manual,
+        'has_imported':        has_imported,
         'filters':             filters,
         'filters_active':      filters_active,
         'show_no_coverage_message': show_no_coverage_message,

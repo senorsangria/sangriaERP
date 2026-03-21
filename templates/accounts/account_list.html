@@ -42,9 +42,8 @@
       <div class="col-12 col-sm-6 col-lg-3">
         <label class="form-label small text-muted mb-1">Distributor</label>
         <select name="distributor" class="form-select form-select-sm">
-          <option value="">All Distributors</option>
-          <option value="none" {% if filters.distributor == 'none' %}selected{% endif %}>None assigned</option>
-          {% for dist in distributors %}
+          <option value="">All</option>
+          {% for dist in filter_distributors %}
           <option value="{{ dist.pk }}" {% if filters.distributor == dist.pk|stringformat:"s" %}selected{% endif %}>
             {{ dist.name }}
           </option>
@@ -57,9 +56,15 @@
         <label class="form-label small text-muted mb-1">On / Off Premise</label>
         <select name="on_off" class="form-select form-select-sm">
           <option value="">All</option>
+          {% if 'ON' in on_off_values %}
           <option value="ON" {% if filters.on_off == 'ON' %}selected{% endif %}>ON</option>
+          {% endif %}
+          {% if 'OFF' in on_off_values %}
           <option value="OFF" {% if filters.on_off == 'OFF' %}selected{% endif %}>OFF</option>
+          {% endif %}
+          {% if 'Unknown' in on_off_values %}
           <option value="Unknown" {% if filters.on_off == 'Unknown' %}selected{% endif %}>Unknown</option>
+          {% endif %}
         </select>
       </div>
 
@@ -68,8 +73,12 @@
         <label class="form-label small text-muted mb-1">Source</label>
         <select name="source" class="form-select form-select-sm">
           <option value="">All</option>
+          {% if has_manual %}
           <option value="manual" {% if filters.source == 'manual' %}selected{% endif %}>Manual</option>
+          {% endif %}
+          {% if has_imported %}
           <option value="imported" {% if filters.source == 'imported' %}selected{% endif %}>Imported</option>
+          {% endif %}
         </select>
       </div>
 

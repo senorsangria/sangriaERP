@@ -355,8 +355,8 @@
             <i class="bi bi-clock-history me-2"></i>Import History
           </a>
         </li>
-        <li class="nav-section">Reports</li>
         {% if user|has_perm:'can_view_report_account_sales' %}
+        <li class="nav-section">Reports</li>
         <li class="nav-item">
           <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
             <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
@@ -388,8 +388,8 @@
             <i class="bi bi-calendar-event me-2"></i>Events
           </a>
         </li>
-        <li class="nav-section">Reports</li>
         {% if user|has_perm:'can_view_report_account_sales' %}
+        <li class="nav-section">Reports</li>
         <li class="nav-item">
           <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
             <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
@@ -415,8 +415,8 @@
             <i class="bi bi-calendar-event me-2"></i>Events
           </a>
         </li>
-        <li class="nav-section">Reports</li>
         {% if user|has_perm:'can_view_report_account_sales' %}
+        <li class="nav-section">Reports</li>
         <li class="nav-item">
           <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
             <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
@@ -442,8 +442,8 @@
             <i class="bi bi-calendar-event me-2"></i>Events
           </a>
         </li>
-        <li class="nav-section">Reports</li>
         {% if user|has_perm:'can_view_report_account_sales' %}
+        <li class="nav-section">Reports</li>
         <li class="nav-item">
           <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
             <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
@@ -486,6 +486,7 @@
             <i class="bi bi-speedometer2 me-2"></i>Dashboard
           </a>
         </li>
+        {% if user|has_perm:'can_view_report_account_sales' %}
         <li class="nav-section">Reports</li>
         <li class="nav-item">
           <a class="nav-link placeholder-link" href="#" tabindex="-1">
@@ -493,6 +494,7 @@
             <span class="soon-badge">Soon</span>
           </a>
         </li>
+        {% endif %}
         {% endif %}
 
         <!-- Django Admin link (staff only) -->

@@ -2692,5 +2692,22 @@ Each conflict entry includes:
 
 ---
 
-*Last updated: March 17, 2026 (Expenses section reorder, total expense, CSV export tab-awareness)*
+## Dynamic Filter Options and Reports Section Visibility (March 2026)
+
+**Reports section header hidden when no report permissions:**
+- The `<li class="nav-section">Reports</li>` sidebar heading for every role (Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager, Distributor Contact) is now wrapped in `{% if user|has_perm:'can_view_report_account_sales' %}`. The section header no longer appears for users who have no access to any report.
+
+**Account list filter options dynamically populated from visible accounts:**
+- Distributor dropdown: populated from distributors actually present in the user's visible account set (replacing the previous company-wide active distributor list). "None assigned" option removed; label changed to "All".
+- On/Off Premise dropdown: options (ON, OFF, Unknown) shown only if at least one visible account has that value.
+- Source dropdown: Manual/Imported options shown only if at least one visible account has that source type.
+- Active Status dropdown: remains hardcoded (active/inactive always valid regardless of current set).
+- Filter options are computed from `accounts` after all user-applied filters are resolved, ensuring the dropdown reflects what is actually browsable.
+
+**Event list distributor filter scoped to distributors of visible events:**
+- The distributor dropdown in the event list filter is now populated from the union of distributor PKs appearing in the user's visible active events (`qs`) and past/paid events (`paid_qs`), rather than all active distributors for the company. Null distributor PKs are discarded.
+
+---
+
+*Last updated: March 21, 2026 (Dynamic filter options, hidden Reports header)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

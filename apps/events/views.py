@@ -9,7 +9,7 @@ Access rules:
   - Ambassador:        sees only their assigned events (no Drafts)
 """
 from datetime import date as date_type
-from itertools import groupby
+from itertools import chain, groupby
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -425,7 +425,20 @@ def event_list(request):
     )
     creators = User.objects.filter(pk__in=creator_pks).order_by('last_name', 'first_name')
 
-    distributors = Distributor.objects.filter(company=company, is_active=True).order_by('name')
+    # Scope distributors to those appearing in visible events
+    active_dist_pks = qs.values_list(
+        'account__distributor_id', flat=True
+    ).distinct()
+    past_dist_pks = paid_qs.values_list(
+        'account__distributor_id', flat=True
+    ).distinct()
+
+    all_dist_pks = set(chain(active_dist_pks, past_dist_pks))
+    all_dist_pks.discard(None)
+
+    distributors = Distributor.objects.filter(
+        pk__in=all_dist_pks
+    ).order_by('name')
 
     # ---- Group and sort ----
     event_groups, _ = _sort_events(active_qs)
