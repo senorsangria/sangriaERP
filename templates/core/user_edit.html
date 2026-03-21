@@ -744,6 +744,22 @@
   }
 
 })();
+
+/* ── Activate tab from ?tab= query param or URL hash on page load ──────── */
+document.addEventListener('DOMContentLoaded', function () {
+  var params  = new URLSearchParams(window.location.search);
+  var tabParam = params.get('tab');
+  var hash    = window.location.hash.replace('#', '');
+  var tabId   = tabParam || hash;
+
+  if (tabId) {
+    var tabBtn = document.getElementById(tabId + '-tab-btn');
+    if (tabBtn) {
+      var tab = new bootstrap.Tab(tabBtn);
+      tab.show();
+    }
+  }
+});
 </script>
 {% endif %}
 {% endblock %}

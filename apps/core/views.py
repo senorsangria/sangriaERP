@@ -200,7 +200,7 @@ def user_create(request):
             user = form.save()
             name = user.get_full_name() or user.username
             messages.success(request, f'{name} has been created successfully.')
-            return redirect(reverse('user_edit', kwargs={'pk': user.pk}) + '#coverage')
+            return redirect(reverse('user_edit', kwargs={'pk': user.pk}) + '?tab=coverage')
     else:
         form = UserCreateForm(creator=request.user, requesting_user=request.user)
 
