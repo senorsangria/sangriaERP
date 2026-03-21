@@ -2,6 +2,7 @@
 Core views: authentication, dashboard, user management, profile.
 """
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.contrib.auth import login, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import AuthenticationForm
@@ -199,7 +200,7 @@ def user_create(request):
             user = form.save()
             name = user.get_full_name() or user.username
             messages.success(request, f'{name} has been created successfully.')
-            return redirect('user_list')
+            return redirect(reverse('user_edit', kwargs={'pk': user.pk}) + '#coverage')
     else:
         form = UserCreateForm(creator=request.user, requesting_user=request.user)
 
