@@ -74,7 +74,7 @@ def route_save(request):
         if Route.objects.filter(
             created_by=user,
             distributor=distributor,
-            name=route_name,
+            name__iexact=route_name,
         ).exists():
             return JsonResponse({'error': 'A route with this name already exists.'}, status=400)
 

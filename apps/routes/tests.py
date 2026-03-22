@@ -184,20 +184,21 @@ class RouteViewTests(TestCase):
     # test_route_save_duplicate_name_returns_error
     # ------------------------------------------------------------------
     def test_route_save_duplicate_name_returns_error(self):
-        make_route(self.company, self.distributor, self.user, name='Taken Name')
+        make_route(self.company, self.distributor, self.user, name='My Route')
         account = make_account(self.company, self.distributor)
 
-        payload = {
-            'account_ids': [account.pk],
-            'distributor_id': self.distributor.pk,
-            'action': 'new',
-            'route_name': 'Taken Name',
-        }
-        resp = self._post_save(payload)
-        self.assertEqual(resp.status_code, 400)
-        data = resp.json()
-        self.assertIn('error', data)
-        self.assertEqual(data['error'], 'A route with this name already exists.')
+        for variant in ['My Route', 'my route', 'MY ROUTE']:
+            payload = {
+                'account_ids': [account.pk],
+                'distributor_id': self.distributor.pk,
+                'action': 'new',
+                'route_name': variant,
+            }
+            resp = self._post_save(payload)
+            self.assertEqual(resp.status_code, 400, msg=f'Expected 400 for name={variant!r}')
+            data = resp.json()
+            self.assertEqual(data['error'], 'A route with this name already exists.',
+                             msg=f'Wrong error for name={variant!r}')
 
     # ------------------------------------------------------------------
     # test_route_list_returns_user_routes
