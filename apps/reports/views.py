@@ -14,6 +14,7 @@ from django.shortcuts import redirect, render
 from apps.accounts.models import Account
 from apps.accounts.utils import get_accounts_for_user, get_distributors_for_user
 from apps.catalog.models import Item
+from apps.routes.models import Route
 from apps.sales.models import SalesRecord
 
 
@@ -167,6 +168,7 @@ def account_sales_by_year(request):
     county_filter = request.GET.getlist('county')
     class_of_trade_filter = request.GET.getlist('class_of_trade')
     distributor_route_filter = request.GET.getlist('distributor_route')
+    route_id = request.GET.get('route_id', '')
 
     current_filters = {
         'item_name': item_name_filter,
@@ -175,6 +177,7 @@ def account_sales_by_year(request):
         'county': county_filter,
         'class_of_trade': class_of_trade_filter,
         'distributor_route': distributor_route_filter,
+        'route_id': route_id,
     }
 
     # ---- Apply account-level filters ------------------------------------
@@ -188,6 +191,23 @@ def account_sales_by_year(request):
         accounts_qs = accounts_qs.filter(account_type__in=class_of_trade_filter)
     if distributor_route_filter:
         accounts_qs = accounts_qs.filter(distributor_route__in=distributor_route_filter)
+    if route_id:
+        try:
+            route = Route.objects.get(
+                pk=route_id,
+                created_by=request.user,
+                distributor=selected_distributor,
+            )
+            route_account_ids = route.route_accounts.values_list('account_id', flat=True)
+            accounts_qs = accounts_qs.filter(pk__in=route_account_ids)
+        except Route.DoesNotExist:
+            pass  # invalid route_id — ignore filter
+
+    # ---- Routes for this user + distributor ----------------------------
+    user_routes = Route.objects.filter(
+        created_by=request.user,
+        distributor=selected_distributor,
+    ).order_by('name')
 
     # ---- Determine last full month --------------------------------------
     today = date.today()
@@ -210,6 +230,7 @@ def account_sales_by_year(request):
             'multiple_distributors': multiple_distributors,
             'filter_options': filter_options,
             'current_filters': current_filters,
+            'user_routes': user_routes,
         })
 
     lfm_year = max_past_sale.year
@@ -285,6 +306,7 @@ def account_sales_by_year(request):
             'multiple_distributors': multiple_distributors,
             'filter_options': filter_options,
             'current_filters': current_filters,
+            'user_routes': user_routes,
         })
 
     # ---- Fetch account objects ------------------------------------------
@@ -336,6 +358,7 @@ def account_sales_by_year(request):
         'total_by_year': total_by_year,
         'total_last_12': total_last_12,
         'total_diff': total_diff,
+        'user_routes': user_routes,
     })
 
 
@@ -391,6 +414,7 @@ def account_sales_by_year_csv(request):
     county_filter = request.GET.getlist('county')
     class_of_trade_filter = request.GET.getlist('class_of_trade')
     distributor_route_filter = request.GET.getlist('distributor_route')
+    route_id = request.GET.get('route_id', '')
 
     # ---- Apply account-level filters ------------------------------------
     if on_off_filter in ('ON', 'OFF'):
@@ -403,6 +427,17 @@ def account_sales_by_year_csv(request):
         accounts_qs = accounts_qs.filter(account_type__in=class_of_trade_filter)
     if distributor_route_filter:
         accounts_qs = accounts_qs.filter(distributor_route__in=distributor_route_filter)
+    if route_id:
+        try:
+            route = Route.objects.get(
+                pk=route_id,
+                created_by=request.user,
+                distributor=selected_distributor,
+            )
+            route_account_ids = route.route_accounts.values_list('account_id', flat=True)
+            accounts_qs = accounts_qs.filter(pk__in=route_account_ids)
+        except Route.DoesNotExist:
+            pass  # invalid route_id — ignore filter
 
     # ---- Determine last full month --------------------------------------
     today = date.today()

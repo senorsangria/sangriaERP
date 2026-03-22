@@ -16,6 +16,7 @@ urlpatterns = [
     path('', include('apps.accounts.urls')),
     path('', include('apps.events.urls')),
     path('reports/', include('apps.reports.urls')),
+    path('routes/', include('apps.routes.urls')),
     path('event-import/', include('apps.event_import.urls')),
 ]
 

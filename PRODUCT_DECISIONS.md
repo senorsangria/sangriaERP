@@ -2745,4 +2745,78 @@ Each conflict entry includes:
 ---
 
 *Last updated: March 21, 2026 (Combined Account Detail page with Details and Sales tabs)*
+
+---
+
+## Routes
+
+Routes allow users to group accounts into named lists for planning and filtering.
+
+### Models
+
+**Route**
+- `company` (FK → core.Company)
+- `distributor` (FK → distribution.Distributor)
+- `created_by` (FK → core.User)
+- `name` (CharField, max 100)
+- Inherits `created_at` / `updated_at` from TimeStampedModel
+- **Unique constraint:** `(created_by, distributor, name)` — a user cannot
+  have two routes with the same name for the same distributor
+
+**RouteAccount**
+- `route` (FK → Route)
+- `account` (FK → accounts.Account)
+- `position` (PositiveIntegerField, default 0) — reserved for future
+  display ordering within the route; lower values appear first
+- Unique constraint: `(route, account)` — an account can only appear
+  once per route
+
+### Scoping and Privacy
+- Routes are **private to their creator** — only `created_by` can view or
+  modify a route
+- Routes are **scoped to a single distributor** — a route created for
+  Distributor A cannot include accounts from Distributor B
+
+### API Endpoints
+- `GET /routes/?distributor_id=X` — returns the requesting user's routes
+  for the given distributor; requires `can_view_report_account_sales`
+- `POST /routes/save/` — adds accounts to a new or existing route;
+  requires `can_view_report_account_sales`; validates distributor belongs
+  to user's company and all accounts belong to user's company
+
+### Route Filter in Account Sales by Year Report
+- A `route_id` GET param filters the report to only accounts in that route
+- The route must belong to the requesting user and the selected distributor;
+  invalid route IDs are silently ignored (no error)
+- The filter is respected by both the HTML report view and the CSV export
+- The user's routes for the current distributor are passed as `user_routes`
+  to the template context
+
+### Save to Route UI
+- Data rows in the Account Sales by Year report have a checkbox column
+- A "select all" checkbox in the header checks/unchecks all rows
+- When one or more rows are checked, a floating action bar appears above
+  the table showing the count and a "Save to Route" button
+- Clicking "Save to Route" opens a modal with two options:
+  - **Create new route** — user enters a name; returns error if name
+    already exists for that user + distributor
+  - **Add to existing route** — dropdown of the user's existing routes
+    (only shown if the user has at least one route)
+- After a successful save, all checkboxes are unchecked and a success
+  message is shown in the modal
+
+### Roles
+- All roles with `can_view_report_account_sales` can create and use routes:
+  - Supplier Admin
+  - Sales Manager
+  - Territory Manager
+
+### Future Considerations
+- Standalone Route management section (view, rename, delete, reorder
+  accounts within a route)
+- Visit planning — route as an ordered stop list with map integration
+- Route sharing — allow a TM to share a route with a colleague
+- Route templates — copy a route as starting point for a new one
+
+*Last updated: March 22, 2026 (Routes feature: models, API, report integration)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
