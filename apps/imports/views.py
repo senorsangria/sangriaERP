@@ -17,7 +17,9 @@ Batch history:
 """
 
 import csv
+import json
 import os
+import tempfile
 import uuid
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -73,6 +75,43 @@ def _cleanup_temp_file(filepath):
             os.remove(filepath)
         except OSError:
             pass
+
+
+def _write_combined_csv(rows):
+    """
+    Write pre-parsed rows (list of dicts from _read_csv_rows) to a canonical
+    temp CSV file that _execute_import can re-parse.  Returns the file path.
+    """
+    headers = [
+        'Retail Accounts', 'Address', 'City', 'State', 'Zip Code',
+        'VIP Outlet ID', 'Counties', 'OnOff Premises', 'Dates',
+        'Item Names', 'Item Name ID', 'Price', 'Quantity',
+    ]
+    tmp = tempfile.NamedTemporaryFile(
+        mode='w', suffix='.csv', delete=False,
+        encoding='utf-8-sig', dir=_temp_import_dir(),
+    )
+    writer = csv.writer(tmp)
+    writer.writerow(headers)
+    for r in rows:
+        writer.writerow([
+            r['account_name'],
+            r['address'],
+            r['city'],
+            r['state'],
+            r['zip_code'],
+            r['vip_outlet_id'],
+            r['county'],
+            r['on_off_premise'],
+            r['sale_date'].isoformat(),  # YYYY-MM-DD — supported by _parse_date
+            '',                          # Item Names — not used during execution
+            r['item_id'],
+            '' if r.get('price') is None else str(r['price']),
+            r['quantity'],
+        ])
+    tmp.flush()
+    tmp.close()
+    return tmp.name
 
 
 def _parse_csv_headers(headers):
@@ -248,41 +287,64 @@ def import_upload(request):
         form = ImportUploadForm(request.POST, request.FILES, company=company)
         if form.is_valid():
             distributor = form.cleaned_data['distributor']
-            uploaded_file = request.FILES['csv_file']
+            uploaded_files = request.FILES.getlist('csv_file')
 
-            # Save file to temp storage
-            filepath = _save_temp_file(uploaded_file)
+            temp_filepaths = []
+            combined_filepath = None
 
             try:
-                # Parse headers
-                with open(filepath, newline='', encoding='utf-8-sig') as f:
-                    reader = csv.reader(f)
-                    header_row = next(reader)
+                all_rows = []
+                all_errors = []
 
-                cols = _parse_csv_headers(header_row)
+                _required_cols = [
+                    'Retail Accounts', 'Address', 'City', 'State',
+                    'Zip Code', 'VIP Outlet ID', 'Dates', 'Item Names', 'Item Name ID',
+                ]
 
-                # Read all rows
-                rows, row_errors = _read_csv_rows(filepath, cols)
+                for uploaded_file in uploaded_files:
+                    filepath = _save_temp_file(uploaded_file)
+                    temp_filepaths.append(filepath)
 
-                if not rows:
-                    _cleanup_temp_file(filepath)
-                    if row_errors:
-                        # Every row failed to parse — show the first few errors so
-                        # the user can diagnose the actual problem (e.g. date format).
-                        sample = row_errors[:3]
+                    with open(filepath, newline='', encoding='utf-8-sig') as f:
+                        reader = csv.reader(f)
+                        header_row = next(reader)
+
+                    header_set = {h.strip() for h in header_row}
+                    missing = [c for c in _required_cols if c not in header_set]
+                    if missing:
+                        raise ValueError(
+                            f'File "{uploaded_file.name}": missing required columns: {missing}'
+                        )
+
+                    cols = _parse_csv_headers(header_row)
+                    file_rows, file_errors = _read_csv_rows(filepath, cols)
+                    all_rows.extend(file_rows)
+                    all_errors.extend(file_errors)
+
+                # Individual temp files are no longer needed
+                for fp in temp_filepaths:
+                    _cleanup_temp_file(fp)
+                temp_filepaths = []
+
+                if not all_rows:
+                    if all_errors:
+                        sample = all_errors[:3]
                         detail = ' | '.join(sample)
                         messages.error(
                             request,
-                            f'Could not read any data rows from this file '
-                            f'({len(row_errors)} rows failed). '
+                            f'Could not read any data rows from the file(s) '
+                            f'({len(all_errors)} rows failed). '
                             f'First errors: {detail}',
                         )
                     else:
-                        messages.error(request, 'The CSV file contains no data rows.')
+                        messages.error(request, 'The CSV file(s) contain no data rows.')
                     return render(request, 'imports/upload.html', {'form': form})
 
+                # Sort combined rows by date before validation
+                all_rows = sorted(all_rows, key=lambda r: r['sale_date'])
+
                 # --- Validation 1: Duplicate date check ---
-                all_dates = {r['sale_date'] for r in rows}
+                all_dates = {r['sale_date'] for r in all_rows}
                 conflicting_dates = set(
                     SalesRecord.objects.filter(
                         company=company,
@@ -291,7 +353,6 @@ def import_upload(request):
                     ).values_list('sale_date', flat=True).distinct()
                 )
                 if conflicting_dates:
-                    _cleanup_temp_file(filepath)
                     sorted_dates = sorted(conflicting_dates)
                     date_list = ', '.join(d.strftime('%m/%d/%Y') for d in sorted_dates)
                     messages.error(
@@ -303,7 +364,7 @@ def import_upload(request):
                     return render(request, 'imports/upload.html', {'form': form})
 
                 # --- Validation 2: Unknown item code check ---
-                all_item_ids = {r['item_id'] for r in rows}
+                all_item_ids = {r['item_id'] for r in all_rows}
                 known_codes = set(
                     ItemMapping.objects.filter(
                         company=company,
@@ -314,7 +375,6 @@ def import_upload(request):
                 )
                 unknown_codes = all_item_ids - known_codes
                 if unknown_codes:
-                    _cleanup_temp_file(filepath)
                     code_list = ', '.join(sorted(unknown_codes))
                     messages.error(
                         request,
@@ -329,7 +389,6 @@ def import_upload(request):
                 min_date = min(all_dates)
                 max_date = max(all_dates)
 
-                # Existing accounts for this distributor (in-memory lookup)
                 existing_accounts = list(
                     Account.active_accounts.filter(
                         company=company,
@@ -343,7 +402,7 @@ def import_upload(request):
 
                 unique_account_keys = set()
                 new_account_keys = set()
-                for r in rows:
+                for r in all_rows:
                     key = (
                         normalize_address(r['address']),
                         normalize_address(r['city']),
@@ -355,7 +414,6 @@ def import_upload(request):
 
                 existing_count = len(unique_account_keys) - len(new_account_keys)
 
-                # Item code → mapped item info
                 mapping_qs = ItemMapping.objects.filter(
                     company=company,
                     distributor=distributor,
@@ -377,16 +435,20 @@ def import_upload(request):
                     })
                 item_mappings.sort(key=lambda x: x['code'])
 
-                # Store pending import in session
+                # Write all combined rows to a single temp file
+                combined_filepath = _write_combined_csv(all_rows)
+
+                filenames = [f.name for f in uploaded_files]
                 request.session['pending_import'] = {
                     'distributor_id': distributor.pk,
                     'distributor_name': distributor.name,
-                    'filename': uploaded_file.name,
-                    'temp_file_path': filepath,
+                    'filename': json.dumps(filenames),
+                    'files_count': len(uploaded_files),
+                    'temp_file_path': combined_filepath,
                     'preview': {
                         'date_range_start': min_date.isoformat(),
                         'date_range_end': max_date.isoformat(),
-                        'total_records': len(rows),
+                        'total_records': len(all_rows),
                         'unique_accounts': len(unique_account_keys),
                         'existing_accounts': existing_count,
                         'new_accounts': len(new_account_keys),
@@ -397,10 +459,14 @@ def import_upload(request):
                 return redirect('import_preview')
 
             except ValueError as exc:
-                _cleanup_temp_file(filepath)
+                for fp in temp_filepaths:
+                    _cleanup_temp_file(fp)
+                _cleanup_temp_file(combined_filepath)
                 messages.error(request, f'CSV file error: {exc}')
             except Exception as exc:
-                _cleanup_temp_file(filepath)
+                for fp in temp_filepaths:
+                    _cleanup_temp_file(fp)
+                _cleanup_temp_file(combined_filepath)
                 messages.error(request, f'Unexpected error reading file: {exc}')
 
     return render(request, 'imports/upload.html', {'form': form})
@@ -460,9 +526,19 @@ def import_preview(request):
                 messages.error(request, f'Import failed: {exc}')
                 return redirect('import_upload')
 
+    filenames = json.loads(pending.get('filename', '[]'))
+    if isinstance(filenames, list):
+        if len(filenames) == 1:
+            filename_display = filenames[0]
+        else:
+            filename_display = f'{len(filenames)} files: ' + ', '.join(filenames)
+    else:
+        filename_display = filenames  # legacy plain string
+
     context = {
         'pending': pending,
         'preview': preview,
+        'filename_display': filename_display,
     }
     return render(request, 'imports/preview.html', context)
 

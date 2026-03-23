@@ -232,6 +232,19 @@ Searchable list for one-off or exception assignments
 - The user receives a clear error message in both cases
 - A clean file with all items pre-mapped is required before
   an import will be accepted
+- Sales import accepts multiple CSV files in a single upload;
+  all files must be for the same distributor
+- Rows from all uploaded files are combined and sorted by date
+  before validation and import run
+- Validation (duplicate date check, unknown item code check) is
+  all-or-none across all uploaded files — if any file fails,
+  the entire import is aborted
+- The combined rows from all files are written to a single temp
+  file before being committed; `ImportBatch.filename` stores the
+  original filenames as a JSON list (e.g. `["jan.csv", "feb.csv"]`)
+- `ImportBatch.filename_display` is a property that formats the
+  filename field for display — handles both the new JSON list
+  format and legacy plain-string filenames from older imports
 
 ### Account Import
 - Account lists also come from distributors

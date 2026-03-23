@@ -7,6 +7,20 @@ from apps.catalog.models import Brand, Item
 from apps.imports.models import ItemMapping
 
 
+class MultipleFileInput(forms.FileInput):
+    """
+    FileInput that renders with the multiple attribute so the browser allows
+    selecting several files.  allow_multiple_selected suppresses Django's
+    built-in guard against multiple files.  value_from_datadict returns a
+    single file so the parent FileField.to_python() still works normally;
+    clean_csv_file() then calls self.files.getlist() to retrieve all files.
+    """
+    allow_multiple_selected = True
+
+    def value_from_datadict(self, data, files, name):
+        return files.get(name)
+
+
 class ImportUploadForm(forms.Form):
     """Step 1 of sales data import: select distributor and upload CSV."""
 
@@ -17,9 +31,14 @@ class ImportUploadForm(forms.Form):
         widget=forms.Select(attrs={'class': 'form-select'}),
     )
     csv_file = forms.FileField(
-        label='CSV File',
-        help_text='Upload a VIP sales data export CSV file.',
-        widget=forms.ClearableFileInput(attrs={'class': 'form-control', 'accept': '.csv'}),
+        label='CSV Files',
+        help_text=(
+            'You may select multiple CSV files. '
+            'All files must be for the same distributor.'
+        ),
+        widget=MultipleFileInput(
+            attrs={'class': 'form-control', 'accept': '.csv', 'multiple': True}
+        ),
     )
 
     def __init__(self, *args, company=None, **kwargs):
@@ -31,12 +50,18 @@ class ImportUploadForm(forms.Form):
             )
 
     def clean_csv_file(self):
-        f = self.cleaned_data.get('csv_file')
-        if f:
-            name = f.name.lower()
-            if not name.endswith('.csv'):
-                raise forms.ValidationError('Only CSV files are accepted.')
-        return f
+        files = self.files.getlist('csv_file')
+        if not files:
+            raise forms.ValidationError(
+                'Please select at least one CSV file.'
+            )
+        for f in files:
+            if not f.name.lower().endswith('.csv'):
+                raise forms.ValidationError(
+                    f'"{f.name}" is not a CSV file. '
+                    f'Please upload .csv files only.'
+                )
+        return files
 
 
 class ItemMappingForm(forms.ModelForm):

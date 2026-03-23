@@ -462,3 +462,180 @@ class ImportWholesalePriceTest(ImportTestBase):
         self._run_import_with_price([{'date_str': '01/15/2024', 'price': 'N/A'}])
         record = SalesRecord.objects.get(company=self.company)
         self.assertIsNone(record.distributor_wholesale_price)
+
+
+# ---------------------------------------------------------------------------
+# Multiple file upload — view tests
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import Client
+from django.urls import reverse
+
+from apps.core.rbac import Role
+
+
+def _make_supplier_admin(company, username='admin'):
+    """Create and return a supplier_admin user for the given company."""
+    from apps.core.models import User
+    user = User.objects.create_user(
+        username=username, password='testpass', company=company,
+    )
+    role = Role.objects.get(codename='supplier_admin')
+    user.roles.set([role])
+    return user
+
+
+def _csv_bytes(rows, headers=None):
+    """Return CSV content as bytes for SimpleUploadedFile."""
+    if headers is None:
+        headers = _CSV_HEADERS
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(headers)
+    for r in rows:
+        writer.writerow([
+            r.get('account_name', 'Test Store'),
+            r.get('address', '1 Main St'),
+            r.get('city', 'Hoboken'),
+            r.get('state', 'NJ'),
+            r.get('zip_code', '07030'),
+            r.get('vip_outlet_id', '12345'),
+            r.get('county', 'Hudson, NJ'),
+            r.get('on_off', 'OFF'),
+            r.get('date_str', '01/15/2024'),
+            r.get('item_name', 'Classic Red 750ml'),
+            r.get('item_id', 'Red0750'),
+            r.get('quantity', '10'),
+        ])
+    return buf.getvalue().encode('utf-8-sig')
+
+
+class MultipleFileUploadViewTest(ImportTestBase):
+    """View-level tests for multiple CSV file upload."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = _make_supplier_admin(self.company)
+        self.client = Client()
+        self.client.login(username='admin', password='testpass')
+        self.url = reverse('import_upload')
+
+    def _post_files(self, file_list):
+        """POST to import_upload with the given list of SimpleUploadedFile objects."""
+        return self.client.post(
+            self.url,
+            data={'distributor': str(self.distributor.pk), 'csv_file': file_list},
+        )
+
+    def test_upload_multiple_files_combined(self):
+        """Rows from two valid CSV files are combined and sorted by date."""
+        file1 = SimpleUploadedFile(
+            'jan.csv',
+            _csv_bytes([{'date_str': '01/15/2024', 'item_id': 'Red0750'}]),
+            content_type='text/csv',
+        )
+        file2 = SimpleUploadedFile(
+            'feb.csv',
+            _csv_bytes([
+                {'date_str': '02/10/2024', 'item_id': 'Red0750'},
+                {'date_str': '02/20/2024', 'item_id': 'Red0750'},
+            ]),
+            content_type='text/csv',
+        )
+        response = self._post_files([file1, file2])
+
+        # Should redirect to preview
+        self.assertEqual(response.status_code, 302)
+        session = self.client.session
+        pending = session['pending_import']
+        # All 3 rows combined
+        self.assertEqual(pending['preview']['total_records'], 3)
+        # Date range spans both files
+        self.assertEqual(pending['preview']['date_range_start'], '2024-01-15')
+        self.assertEqual(pending['preview']['date_range_end'], '2024-02-20')
+
+    def test_upload_one_bad_header_aborts_all(self):
+        """If one file has a missing required column the entire import is aborted."""
+        file1 = SimpleUploadedFile(
+            'good.csv',
+            _csv_bytes([{'date_str': '01/15/2024', 'item_id': 'Red0750'}]),
+            content_type='text/csv',
+        )
+        # Build a CSV with a missing required column (no 'Dates' column)
+        bad_headers = [
+            'Retail Accounts', 'Address', 'City', 'State', 'Zip Code',
+            'VIP Outlet ID', 'Counties', 'OnOff Premises',
+            'Item Names', 'Item Name ID', 'Quantity',  # 'Dates' deliberately omitted
+        ]
+        bad_content = io.StringIO()
+        csv.writer(bad_content).writerow(bad_headers)
+        file2 = SimpleUploadedFile(
+            'bad.csv',
+            bad_content.getvalue().encode('utf-8-sig'),
+            content_type='text/csv',
+        )
+        response = self._post_files([file1, file2])
+
+        # Should stay on upload page (200) with an error message
+        self.assertEqual(response.status_code, 200)
+        messages_list = list(response.wsgi_request._messages)
+        self.assertTrue(
+            any('bad.csv' in str(m) for m in messages_list),
+            msg='Error message should mention the bad filename',
+        )
+        self.assertNotIn('pending_import', self.client.session)
+
+    def test_upload_filename_stored_as_json_list(self):
+        """After a successful upload the session filename is a JSON list."""
+        file1 = SimpleUploadedFile(
+            'jan.csv',
+            _csv_bytes([{'date_str': '01/15/2024', 'item_id': 'Red0750'}]),
+            content_type='text/csv',
+        )
+        file2 = SimpleUploadedFile(
+            'feb.csv',
+            _csv_bytes([{'date_str': '02/15/2024', 'item_id': 'Red0750'}]),
+            content_type='text/csv',
+        )
+        response = self._post_files([file1, file2])
+
+        self.assertEqual(response.status_code, 302)
+        session = self.client.session
+        raw_filename = session['pending_import']['filename']
+        parsed = _json.loads(raw_filename)
+        self.assertIsInstance(parsed, list)
+        self.assertEqual(sorted(parsed), ['feb.csv', 'jan.csv'])
+
+
+# ---------------------------------------------------------------------------
+# ImportBatch.filename_display property
+# ---------------------------------------------------------------------------
+
+class ImportBatchFilenameDisplayTest(ImportTestBase):
+    """filename_display property handles JSON lists and legacy plain strings."""
+
+    def _make_batch(self, filename_value):
+        return ImportBatch(
+            company=self.company,
+            distributor=self.distributor,
+            import_type=ImportBatch.ImportType.SALES_DATA,
+            filename=filename_value,
+        )
+
+    def test_filename_display_single(self):
+        """JSON list with one filename displays just the filename."""
+        batch = self._make_batch(_json.dumps(['sales_jan.csv']))
+        self.assertEqual(batch.filename_display, 'sales_jan.csv')
+
+    def test_filename_display_multiple(self):
+        """JSON list with multiple filenames displays 'X files: ...'."""
+        batch = self._make_batch(_json.dumps(['jan.csv', 'feb.csv']))
+        self.assertEqual(batch.filename_display, '2 files: jan.csv, feb.csv')
+
+    def test_filename_display_legacy(self):
+        """A plain string (legacy) is returned as-is."""
+        batch = self._make_batch('old_import.csv')
+        self.assertEqual(batch.filename_display, 'old_import.csv')

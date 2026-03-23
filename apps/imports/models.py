@@ -72,6 +72,19 @@ class ImportBatch(TimeStampedModel):
         verbose_name_plural = 'Import Batches'
         ordering = ['-import_date', '-created_at']
 
+    @property
+    def filename_display(self):
+        import json
+        try:
+            names = json.loads(self.filename)
+            if isinstance(names, list):
+                if len(names) == 1:
+                    return names[0]
+                return f'{len(names)} files: ' + ', '.join(names)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return self.filename  # legacy plain string
+
     def __str__(self):
         return f'{self.filename} ({self.get_status_display()}) — {self.import_date}'
 
