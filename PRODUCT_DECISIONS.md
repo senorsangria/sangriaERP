@@ -2232,14 +2232,25 @@ The totals row is not affected by client-side column sorting.
 
 | Parameter | Type | Maps to |
 |---|---|---|
+| `account_name` | string | `account.name` — word search (all words must match, case-insensitive) |
 | `item_name` | list of item names | `item.name` (narrows which sales contribute to totals) |
 | `on_off` | `'ON'` or `'OFF'` | `account.on_off_premise` |
 | `city` | list of city names | `account.city` |
-| `county` | list of county names | `account.county` |
+| `county` | list of county names | `account.county` — OR logic across selected values |
 | `class_of_trade` | list of values | `account.account_type` |
+| `account_type` | list of values | `account.account_type` — OR logic across selected values |
 | `distributor_route` | list of route strings | `account.distributor_route` |
 
-Filter options are populated from accounts in scope **before** applying user-selected filters.
+Filter options (`available_counties`, `available_account_types`) are computed from the
+**base unfiltered accounts_qs** (distributor-scoped only, before any user filters) to prevent
+the "disappearing options" problem where selecting one filter removes valid options from
+another filter's dropdown.
+
+All filters including `account_name`, `county`, and `account_type` are persisted in the
+session under key `report_account_sales_filters`. On page load with no GET filter params,
+filters are restored from session. Submitting the filter form saves the current selection
+to session. `county` and `account_type` are stored as lists; `account_name` as a string.
+
 Every multi-select filter includes an "All" option (first choice); selecting "All" clears
 specific selections. The filter panel is collapsed by default on all screen sizes.
 

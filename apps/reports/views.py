@@ -46,6 +46,24 @@ def _truncate(s, max_len):
 
 
 # ---------------------------------------------------------------------------
+# Filter session helpers
+# ---------------------------------------------------------------------------
+
+_REPORT_FILTER_SESSION_KEY = 'report_account_sales_filters'
+_REPORT_FILTER_DEFAULTS = {
+    'item_name': [],
+    'on_off': '',
+    'city': [],
+    'county': [],
+    'class_of_trade': [],
+    'distributor_route': [],
+    'route_id': '',
+    'account_name': '',
+    'account_type': [],
+}
+
+
+# ---------------------------------------------------------------------------
 # Distributor selector
 # ---------------------------------------------------------------------------
 
@@ -133,10 +151,28 @@ def account_sales_by_year(request):
             distributor=selected_distributor,
         )
 
-    # ---- Build filter options (before applying user filters) ------------
+    # ---- Base queryset for filter options (unfiltered by user filters) --
+    base_accounts_qs = accounts_qs
+
+    # ---- Build filter options from unfiltered base ----------------------
+    available_counties = list(
+        base_accounts_qs
+        .exclude(county='')
+        .exclude(county='Unknown')
+        .values_list('county', flat=True)
+        .distinct()
+        .order_by('county')
+    )
+    available_account_types = list(
+        base_accounts_qs
+        .exclude(account_type='')
+        .values_list('account_type', flat=True)
+        .distinct()
+        .order_by('account_type')
+    )
     items_in_scope_qs = (
         Item.objects
-        .filter(sales_records__account__in=accounts_qs)
+        .filter(sales_records__account__in=base_accounts_qs)
         .values_list('name', flat=True)
         .distinct()
         .order_by('name')
@@ -144,43 +180,57 @@ def account_sales_by_year(request):
     filter_options = {
         'items': list(items_in_scope_qs),
         'cities': list(
-            accounts_qs.exclude(city='')
+            base_accounts_qs.exclude(city='')
             .values_list('city', flat=True).distinct().order_by('city')
         ),
-        'counties': list(
-            accounts_qs.exclude(county='').exclude(county='Unknown')
-            .values_list('county', flat=True).distinct().order_by('county')
-        ),
+        'counties': available_counties,
         'classes_of_trade': list(
-            accounts_qs.exclude(account_type='')
+            base_accounts_qs.exclude(account_type='')
             .values_list('account_type', flat=True).distinct().order_by('account_type')
         ),
         'distributor_routes': list(
-            accounts_qs.exclude(distributor_route='')
+            base_accounts_qs.exclude(distributor_route='')
             .values_list('distributor_route', flat=True).distinct().order_by('distributor_route')
         ),
     }
 
-    # ---- Parse GET filters ----------------------------------------------
-    item_name_filter = request.GET.getlist('item_name')
-    on_off_filter = request.GET.get('on_off', '')
-    city_filter = request.GET.getlist('city')
-    county_filter = request.GET.getlist('county')
-    class_of_trade_filter = request.GET.getlist('class_of_trade')
-    distributor_route_filter = request.GET.getlist('distributor_route')
-    route_id = request.GET.get('route_id', '')
+    # ---- Parse filters (GET params → session; no GET → restore session) -
+    _filter_keys = list(_REPORT_FILTER_DEFAULTS.keys())
+    is_filter_submit = any(k in request.GET for k in _filter_keys)
 
-    current_filters = {
-        'item_name': item_name_filter,
-        'on_off': on_off_filter,
-        'city': city_filter,
-        'county': county_filter,
-        'class_of_trade': class_of_trade_filter,
-        'distributor_route': distributor_route_filter,
-        'route_id': route_id,
-    }
+    if 'clear_filters' in request.GET:
+        request.session.pop(_REPORT_FILTER_SESSION_KEY, None)
+        filters = dict(_REPORT_FILTER_DEFAULTS)
+    elif is_filter_submit:
+        filters = {
+            'item_name': request.GET.getlist('item_name'),
+            'on_off': request.GET.get('on_off', ''),
+            'city': request.GET.getlist('city'),
+            'county': request.GET.getlist('county'),
+            'class_of_trade': request.GET.getlist('class_of_trade'),
+            'distributor_route': request.GET.getlist('distributor_route'),
+            'route_id': request.GET.get('route_id', ''),
+            'account_name': request.GET.get('account_name', ''),
+            'account_type': request.GET.getlist('account_type'),
+        }
+        request.session[_REPORT_FILTER_SESSION_KEY] = filters
+    else:
+        stored = request.session.get(_REPORT_FILTER_SESSION_KEY, {})
+        filters = {**_REPORT_FILTER_DEFAULTS, **stored}
+
+    current_filters = filters
 
     # ---- Apply account-level filters ------------------------------------
+    on_off_filter = filters.get('on_off', '')
+    city_filter = filters.get('city', [])
+    county_filter = filters.get('county', [])
+    class_of_trade_filter = filters.get('class_of_trade', [])
+    distributor_route_filter = filters.get('distributor_route', [])
+    route_id = filters.get('route_id', '')
+    item_name_filter = filters.get('item_name', [])
+    account_name_query = filters.get('account_name', '').strip()
+    account_type_filter = filters.get('account_type', [])
+
     if on_off_filter in ('ON', 'OFF'):
         accounts_qs = accounts_qs.filter(on_off_premise=on_off_filter)
     if city_filter:
@@ -202,6 +252,12 @@ def account_sales_by_year(request):
             accounts_qs = accounts_qs.filter(pk__in=route_account_ids)
         except Route.DoesNotExist:
             pass  # invalid route_id — ignore filter
+    if account_name_query:
+        words = account_name_query.split()
+        for word in words:
+            accounts_qs = accounts_qs.filter(name__icontains=word)
+    if account_type_filter:
+        accounts_qs = accounts_qs.filter(account_type__in=account_type_filter)
 
     # ---- Routes for this user + distributor ----------------------------
     user_routes = Route.objects.filter(
@@ -230,6 +286,8 @@ def account_sales_by_year(request):
             'multiple_distributors': multiple_distributors,
             'filter_options': filter_options,
             'current_filters': current_filters,
+            'available_counties': available_counties,
+            'available_account_types': available_account_types,
             'user_routes': user_routes,
         })
 
@@ -306,6 +364,8 @@ def account_sales_by_year(request):
             'multiple_distributors': multiple_distributors,
             'filter_options': filter_options,
             'current_filters': current_filters,
+            'available_counties': available_counties,
+            'available_account_types': available_account_types,
             'user_routes': user_routes,
         })
 
@@ -353,6 +413,8 @@ def account_sales_by_year(request):
         'last_full_month_display': last_full_month_display,
         'filter_options': filter_options,
         'current_filters': current_filters,
+        'available_counties': available_counties,
+        'available_account_types': available_account_types,
         'selected_distributor': selected_distributor,
         'multiple_distributors': multiple_distributors,
         'total_by_year': total_by_year,
@@ -407,14 +469,35 @@ def account_sales_by_year_csv(request):
             distributor=selected_distributor,
         )
 
-    # ---- Parse GET filters ----------------------------------------------
-    item_name_filter = request.GET.getlist('item_name')
-    on_off_filter = request.GET.get('on_off', '')
-    city_filter = request.GET.getlist('city')
-    county_filter = request.GET.getlist('county')
-    class_of_trade_filter = request.GET.getlist('class_of_trade')
-    distributor_route_filter = request.GET.getlist('distributor_route')
-    route_id = request.GET.get('route_id', '')
+    # ---- Parse filters from GET or session ------------------------------
+    _filter_keys = list(_REPORT_FILTER_DEFAULTS.keys())
+    is_filter_submit = any(k in request.GET for k in _filter_keys)
+
+    if is_filter_submit:
+        filters = {
+            'item_name': request.GET.getlist('item_name'),
+            'on_off': request.GET.get('on_off', ''),
+            'city': request.GET.getlist('city'),
+            'county': request.GET.getlist('county'),
+            'class_of_trade': request.GET.getlist('class_of_trade'),
+            'distributor_route': request.GET.getlist('distributor_route'),
+            'route_id': request.GET.get('route_id', ''),
+            'account_name': request.GET.get('account_name', ''),
+            'account_type': request.GET.getlist('account_type'),
+        }
+    else:
+        stored = request.session.get(_REPORT_FILTER_SESSION_KEY, {})
+        filters = {**_REPORT_FILTER_DEFAULTS, **stored}
+
+    item_name_filter = filters.get('item_name', [])
+    on_off_filter = filters.get('on_off', '')
+    city_filter = filters.get('city', [])
+    county_filter = filters.get('county', [])
+    class_of_trade_filter = filters.get('class_of_trade', [])
+    distributor_route_filter = filters.get('distributor_route', [])
+    route_id = filters.get('route_id', '')
+    account_name_query = filters.get('account_name', '').strip()
+    account_type_filter = filters.get('account_type', [])
 
     # ---- Apply account-level filters ------------------------------------
     if on_off_filter in ('ON', 'OFF'):
@@ -438,6 +521,12 @@ def account_sales_by_year_csv(request):
             accounts_qs = accounts_qs.filter(pk__in=route_account_ids)
         except Route.DoesNotExist:
             pass  # invalid route_id — ignore filter
+    if account_name_query:
+        words = account_name_query.split()
+        for word in words:
+            accounts_qs = accounts_qs.filter(name__icontains=word)
+    if account_type_filter:
+        accounts_qs = accounts_qs.filter(account_type__in=account_type_filter)
 
     # ---- Determine last full month --------------------------------------
     today = date.today()

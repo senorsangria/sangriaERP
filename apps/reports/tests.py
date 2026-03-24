@@ -468,6 +468,100 @@ class FilterTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# New filter tests (account_name, county OR, account_type OR, session)
+# ---------------------------------------------------------------------------
+
+class NewFilterTest(TestCase):
+    """Tests for account_name (word search), county OR, account_type OR, session persistence."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.distributor = make_distributor(self.company)
+        self.item = make_item(self.company)
+        self.batch = make_batch(self.company, self.distributor)
+
+        # Account with "Wine" and "Total" in name — Essex county, Bar type
+        self.acc_wine = make_account(
+            self.company, self.distributor, name='Wine Total Shop',
+            county='Essex', account_type='Bar',
+        )
+        # Account with "Beer" in name — Mercer county, Retail type
+        self.acc_beer = make_account(
+            self.company, self.distributor, name='Beer Garden',
+            county='Mercer', account_type='Retail',
+        )
+        # Third account — Hudson county, Restaurant type
+        self.acc_third = make_account(
+            self.company, self.distributor, name='Spirit House',
+            county='Hudson', account_type='Restaurant',
+        )
+
+        make_sale(self.company, self.batch, self.acc_wine, self.item, date(2024, 6, 1), 10)
+        make_sale(self.company, self.batch, self.acc_beer, self.item, date(2024, 6, 1), 20)
+        make_sale(self.company, self.batch, self.acc_third, self.item, date(2024, 6, 1), 15)
+
+        self.user = make_user(self.company, 'supplier_admin', username='sa_nf')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _get_rows(self, params):
+        response = self.client.get(reverse('report_account_sales_by_year'), params)
+        self.assertEqual(response.status_code, 200)
+        return response.context['rows'], response
+
+    def test_account_name_filter_single_word(self):
+        """Filtering by one word returns only accounts containing that word (case-insensitive)."""
+        rows, _ = self._get_rows({'account_name': 'wine'})
+        self.assertEqual(len(rows), 1)
+        self.assertIn('Wine', rows[0]['account_name'])
+
+    def test_account_name_filter_multiple_words(self):
+        """Filtering by 'wine total' returns accounts containing both words in any order."""
+        rows, _ = self._get_rows({'account_name': 'wine total'})
+        self.assertEqual(len(rows), 1)
+        # Wine Total Shop has both; Beer Garden has neither
+        self.assertIn('Wine', rows[0]['account_name'])
+
+    def test_county_filter_or_logic(self):
+        """Selecting two counties returns accounts in either county."""
+        rows, _ = self._get_rows({'county': ['Essex', 'Mercer']})
+        self.assertEqual(len(rows), 2)
+        names = [r['account_name'] for r in rows]
+        self.assertTrue(any('Wine' in n for n in names))
+        self.assertTrue(any('Beer' in n for n in names))
+        self.assertFalse(any('Spirit' in n for n in names))
+
+    def test_account_type_filter_or_logic(self):
+        """Selecting two account types returns accounts of either type."""
+        rows, _ = self._get_rows({'account_type': ['Bar', 'Retail']})
+        self.assertEqual(len(rows), 2)
+        names = [r['account_name'] for r in rows]
+        self.assertTrue(any('Wine' in n for n in names))
+        self.assertTrue(any('Beer' in n for n in names))
+        self.assertFalse(any('Spirit' in n for n in names))
+
+    def test_new_filters_persisted_in_session(self):
+        """Applying new filters saves them to session correctly."""
+        self.client.get(
+            reverse('report_account_sales_by_year'),
+            {'account_name': 'wine', 'county': ['Essex'], 'account_type': ['Bar']},
+        )
+        session = self.client.session
+        saved = session.get('report_account_sales_filters')
+        self.assertIsNotNone(saved, 'Filters were not saved to session')
+        self.assertEqual(saved['account_name'], 'wine')
+        self.assertIn('Essex', saved['county'])
+        self.assertIn('Bar', saved['account_type'])
+
+    def test_totals_reflect_filtered_rows(self):
+        """Totals row matches sum of visible rows after filtering."""
+        rows, response = self._get_rows({'county': 'Essex'})
+        total_last_12 = response.context['total_last_12']
+        expected = sum(r['last_12_units'] for r in rows)
+        self.assertEqual(total_last_12, expected)
+
+
+# ---------------------------------------------------------------------------
 # Account Detail Sales view tests
 # ---------------------------------------------------------------------------
 
