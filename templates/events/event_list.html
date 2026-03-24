@@ -41,7 +41,7 @@
 <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
   <h4 class="mb-0 fw-semibold"><i class="bi bi-calendar-event me-2"></i>Events</h4>
   <div class="d-flex gap-2 align-items-center">
-    {% if filters_active %}
+    {% if filters.status or filters.year or filters.month or filters.event_type or filters.creator or filters.distributor or filters.account_name or filters.city or filters.county %}
     <a href="?tab={{ active_tab }}" class="badge bg-warning text-dark text-decoration-none">
       <i class="bi bi-funnel-fill me-1"></i>Filters Active
     </a>
@@ -158,6 +158,33 @@
                  value="{{ filters.city }}"
                  autocomplete="off">
         </div>
+
+        <!-- County -->
+        {% if available_counties %}
+        <div class="col-6 col-md-3 col-lg-3">
+          <div class="mb-2">
+            <label class="form-label small fw-semibold mb-1">
+              County
+            </label>
+            <select name="county"
+                    class="form-select form-select-sm"
+                    multiple
+                    autocomplete="off"
+                    size="4">
+              {% for county in available_counties %}
+              <option value="{{ county }}"
+                {% if county in filters.county %}
+                selected{% endif %}>
+                {{ county }}
+              </option>
+              {% endfor %}
+            </select>
+            <div class="form-text small">
+              Hold Ctrl/Cmd to select multiple
+            </div>
+          </div>
+        </div>
+        {% endif %}
 
         <!-- Buttons -->
         <div class="col-12 d-flex gap-2 mt-1 flex-wrap">

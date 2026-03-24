@@ -339,6 +339,10 @@ def _apply_event_filters(qs, filters):
     if filters.get('city'):
         qs = qs.filter(account__city__icontains=filters['city'])
 
+    county_filter = filters.get('county', [])
+    if county_filter:
+        qs = qs.filter(account__county__in=county_filter)
+
     return qs
 
 
@@ -363,7 +367,7 @@ def event_list(request):
 
     if request.method == 'GET' and any(k in request.GET for k in (
         'status', 'year', 'month', 'event_type', 'creator',
-        'distributor', 'account_name', 'city',
+        'distributor', 'account_name', 'city', 'county',
     )):
         # User submitted filters — save to session
         filters = {
@@ -375,6 +379,7 @@ def event_list(request):
             'distributor':  request.GET.get('distributor', ''),
             'account_name': request.GET.get('account_name', ''),
             'city':         request.GET.get('city', ''),
+            'county':       request.GET.getlist('county'),
         }
         request.session[SESSION_KEY] = filters
     else:
@@ -382,6 +387,7 @@ def event_list(request):
         filters = request.session.get(SESSION_KEY, {
             'status': [], 'year': '', 'month': '', 'event_type': '',
             'creator': '', 'distributor': '', 'account_name': '', 'city': '',
+            'county': [],
         })
 
     active_tab = request.GET.get('tab', 'active')
@@ -440,6 +446,16 @@ def event_list(request):
         pk__in=all_dist_pks
     ).order_by('name')
 
+    available_counties = list(
+        all_events
+        .exclude(account__county='')
+        .exclude(account__county='Unknown')
+        .exclude(account__isnull=True)
+        .values_list('account__county', flat=True)
+        .distinct()
+        .order_by('account__county')
+    )
+
     # ---- Group and sort ----
     event_groups, _ = _sort_events(active_qs)
 
@@ -453,7 +469,7 @@ def event_list(request):
         filters.get('status') or filters.get('year') or filters.get('month')
         or filters.get('event_type') or filters.get('creator')
         or filters.get('distributor') or filters.get('account_name')
-        or filters.get('city')
+        or filters.get('city') or filters.get('county')
     )
 
     return render(request, 'events/event_list.html', {
@@ -466,7 +482,8 @@ def event_list(request):
         'filters_active':   filters_active,
         'years':            years,
         'creators':         creators,
-        'distributors':     distributors,
+        'distributors':       distributors,
+        'available_counties': available_counties,
         'event_type_choices': Event.EventType.choices,
         'status_choices':     Event.Status.choices,
         'months': [

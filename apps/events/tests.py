@@ -2127,3 +2127,114 @@ class CsvExportTabFilterTest(TestCase):
         header = rows[0]
         data = rows[1]
         self.assertEqual(data[header.index('Event Status')], Event.Status.PAID.label)
+
+
+# ---------------------------------------------------------------------------
+# County filter tests
+# ---------------------------------------------------------------------------
+
+def make_account_with_county(company, name, county, distributor=None):
+    return Account.objects.create(
+        company=company,
+        distributor=distributor,
+        name=name,
+        city='Testville',
+        state='NJ',
+        county=county,
+        is_active=True,
+    )
+
+
+class CountyFilterTest(TestCase):
+    """County filter on the event list — single, OR logic, admin events, session."""
+
+    def setUp(self):
+        self.company = make_company('County Filter Co')
+        self.manager = make_user(self.company, 'supplier_admin', username='cf_manager')
+        self.client = Client()
+        self.client.login(username='cf_manager', password='testpass123')
+
+        self.acc_essex  = make_account_with_county(self.company, 'Essex Store',  'Essex')
+        self.acc_mercer = make_account_with_county(self.company, 'Mercer Store', 'Mercer')
+        self.acc_hudson = make_account_with_county(self.company, 'Hudson Store', 'Hudson')
+
+        self.evt_essex = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=self.acc_essex,
+            date=date(2025, 6, 1),
+        )
+        self.evt_mercer = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=self.acc_mercer,
+            date=date(2025, 6, 2),
+        )
+        self.evt_hudson = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=self.acc_hudson,
+            date=date(2025, 6, 3),
+        )
+        self.evt_admin = make_event(
+            self.company, self.manager, Event.EventType.ADMIN,
+            status=Event.Status.SCHEDULED,
+            account=None,
+            date=date(2025, 6, 4),
+        )
+
+    def _all_event_ids(self, response):
+        """Collect all event PKs from active event_groups in the response context."""
+        event_ids = set()
+        for _label, _slug, events in response.context['event_groups']:
+            for e in events:
+                event_ids.add(e.pk)
+        return event_ids
+
+    def test_county_filter_single(self):
+        """Filtering by one county returns only events for accounts in that county."""
+        response = self.client.get(
+            reverse('event_list'),
+            {'county': 'Essex'},
+        )
+        self.assertEqual(response.status_code, 200)
+        ids = self._all_event_ids(response)
+        self.assertIn(self.evt_essex.pk, ids)
+        self.assertNotIn(self.evt_mercer.pk, ids)
+        self.assertNotIn(self.evt_hudson.pk, ids)
+        self.assertNotIn(self.evt_admin.pk, ids)
+
+    def test_county_filter_or_logic(self):
+        """Filtering by two counties returns events for accounts in either county."""
+        response = self.client.get(
+            reverse('event_list'),
+            {'county': ['Essex', 'Mercer']},
+        )
+        self.assertEqual(response.status_code, 200)
+        ids = self._all_event_ids(response)
+        self.assertIn(self.evt_essex.pk, ids)
+        self.assertIn(self.evt_mercer.pk, ids)
+        self.assertNotIn(self.evt_hudson.pk, ids)
+        self.assertNotIn(self.evt_admin.pk, ids)
+
+    def test_county_filter_excludes_admin_events(self):
+        """Admin events (account=None) are excluded when a county filter is active."""
+        response = self.client.get(
+            reverse('event_list'),
+            {'county': 'Essex'},
+        )
+        self.assertEqual(response.status_code, 200)
+        ids = self._all_event_ids(response)
+        self.assertNotIn(self.evt_admin.pk, ids)
+
+    def test_county_filter_persisted_in_session(self):
+        """County filter is saved to and restored from session."""
+        self.client.get(
+            reverse('event_list'),
+            {'county': ['Essex', 'Mercer']},
+        )
+        session = self.client.session
+        saved = session.get('event_list_filters')
+        self.assertIsNotNone(saved, 'Filters were not saved to session')
+        self.assertIn('Essex', saved['county'])
+        self.assertIn('Mercer', saved['county'])

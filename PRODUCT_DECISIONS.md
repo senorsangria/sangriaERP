@@ -1268,7 +1268,10 @@ Admin:
 - Collapsible filter bar with session persistence (key: 'event_list_filters');
   filters restored on return visit, cleared via Clear Filters button
 - Filters: status (multi-select), year, month, event type, creator,
-  distributor, account name, city
+  distributor, account name, city, county (multi-select OR)
+- County filter: goes through `account__county` FK; OR logic across selected values;
+  options populated from visible events excluding blank and 'Unknown' values;
+  admin events (account=None) are automatically excluded when county filter is active
 - "Filters Active" badge when any filter is applied
 - Ambassadors do not see Draft events
 - "New Event" button opens a Bootstrap modal prompting the user to select
@@ -1634,7 +1637,7 @@ Light red background (#fff5f5) applies to any event requiring user action:
 - "Export CSV" button in the event list filter bar submits the current
   filter state as GET parameters to GET /events/export-csv/
 - Export respects all event list filters: status, event type, year,
-  month, creator, distributor, account name, city
+  month, creator, distributor, account name, city, county
 - Access gated to viewer roles (same as event list); Distributor Contact
   is excluded
 - File download: `events_export_YYYY-MM-DD.csv`
