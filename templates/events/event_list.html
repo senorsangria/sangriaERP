@@ -457,6 +457,17 @@
             </div>
           </div>
 
+          {# ACCOUNT NAME #}
+          <div class="mb-3">
+            <div class="filter-section-label">Account Name</div>
+            <input type="text"
+                   name="account_name"
+                   class="form-control form-control-sm"
+                   placeholder="Search by name..."
+                   value="{{ filters.account_name }}"
+                   autocomplete="off">
+          </div>
+
           {# YEAR and MONTH side by side #}
           <div class="row g-2 mb-3">
             <div class="col-6">
@@ -581,16 +592,6 @@
           </div>
           {% endif %}
 
-          {# ACCOUNT NAME #}
-          <div class="mb-3">
-            <div class="filter-section-label">Account Name</div>
-            <input type="text"
-                   name="account_name"
-                   class="form-control form-control-sm"
-                   placeholder="Search by name..."
-                   value="{{ filters.account_name }}"
-                   autocomplete="off">
-          </div>
 
         </form>
       </div>
