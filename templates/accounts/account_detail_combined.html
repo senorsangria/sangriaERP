@@ -217,7 +217,13 @@
                 </span>
               </td>
               <td class="d-none d-sm-table-cell">
-                {{ event.ambassador.get_full_name|default:event.ambassador.username|default:"—" }}
+                {% if event.ambassador %}
+                  {{ event.ambassador.get_full_name|default:event.ambassador.username|default:"—" }}
+                {% elif event.legacy_ambassador_name %}
+                  {{ event.legacy_ambassador_name }}
+                {% else %}
+                  —
+                {% endif %}
               </td>
             </tr>
             {% endfor %}
