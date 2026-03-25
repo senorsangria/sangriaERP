@@ -5,7 +5,7 @@
 {% block content %}
 
 <div class="mb-4">
-  <a href="{% if account %}{% url 'account_detail' account.pk %}{% else %}{% url 'account_list' %}{% endif %}"
+  <a href="{% if account %}{% url 'account_detail_combined' account.pk %}{% else %}{% url 'account_list' %}{% endif %}"
      class="text-muted text-decoration-none small">
     <i class="bi bi-arrow-left me-1"></i>
     {% if account %}Back to {{ account.name }}{% else %}Back to Accounts{% endif %}
@@ -138,7 +138,7 @@
             <button type="submit" class="btn btn-primary">
               <i class="bi bi-check-lg me-1"></i>Save Account
             </button>
-            <a href="{% if account %}{% url 'account_detail' account.pk %}{% else %}{% url 'account_list' %}{% endif %}"
+            <a href="{% if account %}{% url 'account_detail_combined' account.pk %}{% else %}{% url 'account_list' %}{% endif %}"
                class="btn btn-outline-secondary">
               Cancel
             </a>

@@ -69,7 +69,7 @@
         <!-- Account name with address and city on separate line -->
         {% if event.account %}
         <div class="fw-semibold mb-1">
-          {{ event.account.name }}
+          <a href="{% url 'account_detail_combined' event.account.pk %}?return_to=event" class="text-decoration-none text-dark">{{ event.account.name }}</a>
         </div>
         {% if event.account.street or event.account.city %}
         <div class="text-muted small mb-1">

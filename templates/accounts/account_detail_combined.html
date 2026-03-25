@@ -90,7 +90,7 @@
     </div>
     {% if account.street or account.city or account.state %}
     <p class="text-muted mb-0 small">
-      {% if account.street %}{{ account.street }}, {% endif %}{{ account.city }}{% if account.city and account.state %}, {% endif %}{{ account.state }}
+      {% if account.street %}{{ account.street }}, {% endif %}{{ account.city }}{% if account.city and account.state %}, {% endif %}{{ account.state }}{% if account.zip_code %} {{ account.zip_code }}{% endif %}
     </p>
     {% endif %}
     {% if account.distributor %}
@@ -246,35 +246,6 @@
       <div class="card-body text-center py-4 text-muted">
         <i class="bi bi-calendar-event fs-2 d-block mb-2"></i>
         No events yet.
-      </div>
-    </div>
-    {% endif %}
-
-    <!-- Sub-section C: Import Data (only if any values present) -->
-    {% if account.third_party_id or account.account_type or account.distributor_route %}
-    <h6 class="fw-semibold text-muted text-uppercase small mb-2">Import Data</h6>
-    <div class="card border-0 shadow-sm mb-4">
-      <div class="card-body">
-        <dl class="mb-0">
-          {% if account.account_type %}
-          <div class="row mb-2">
-            <dt class="col-5 text-muted fw-normal small">Account Type</dt>
-            <dd class="col-7 mb-0 small">{{ account.account_type }}</dd>
-          </div>
-          {% endif %}
-          {% if account.third_party_id %}
-          <div class="row mb-2">
-            <dt class="col-5 text-muted fw-normal small">Third Party ID</dt>
-            <dd class="col-7 mb-0 small">{{ account.third_party_id }}</dd>
-          </div>
-          {% endif %}
-          {% if account.distributor_route %}
-          <div class="row mb-2">
-            <dt class="col-5 text-muted fw-normal small">Distributor Route</dt>
-            <dd class="col-7 mb-0 small">{{ account.distributor_route }}</dd>
-          </div>
-          {% endif %}
-        </dl>
       </div>
     </div>
     {% endif %}

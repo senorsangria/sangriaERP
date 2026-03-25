@@ -232,7 +232,7 @@
                 </td>
                 <td>
                   {% if event.account %}
-                    <a href="{% url 'account_detail' event.account.pk %}" class="text-decoration-none">{{ event.account.name }}</a>
+                    <a href="{% url 'account_detail_combined' event.account.pk %}" class="text-decoration-none">{{ event.account.name }}</a>
                     <div class="small text-muted">{% if event.account.street %}{{ event.account.street|title }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city|title }}{% endif %}</div>
                     {% if event.is_imported %}
                     <div class="text-muted fst-italic small">(IMPORTED DATA)</div>
@@ -359,7 +359,7 @@
                 </td>
                 <td>
                   {% if event.account %}
-                    <a href="{% url 'account_detail' event.account.pk %}" class="text-decoration-none">{{ event.account.name }}</a>
+                    <a href="{% url 'account_detail_combined' event.account.pk %}" class="text-decoration-none">{{ event.account.name }}</a>
                     <div class="small text-muted">{% if event.account.street %}{{ event.account.street|title }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city|title }}{% endif %}</div>
                     {% if event.is_imported %}
                     <div class="text-muted fst-italic small">(IMPORTED DATA)</div>
@@ -422,9 +422,9 @@
           {# STATUS #}
           <div class="mb-3" id="status-filter-section">
             <div class="filter-section-label">Status</div>
-            <div class="filter-checkbox-inline">
+            <div class="filter-checkbox-scroll">
               {% for value, label in status_choices %}
-              <div class="form-check form-check-inline">
+              <div class="form-check">
                 <input class="form-check-input"
                        type="checkbox"
                        name="status"

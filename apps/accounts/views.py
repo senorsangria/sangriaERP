@@ -671,7 +671,7 @@ def account_create(request):
             account.state_normalized = normalize_address(account.state)
             account.save()
             messages.success(request, f'Account "{account.name}" created successfully.')
-            return redirect('account_detail', pk=account.pk)
+            return redirect('account_detail_combined', pk=account.pk)
     else:
         form = AccountForm(company=request.user.company, user=request.user)
 
@@ -694,7 +694,7 @@ def account_edit(request, pk):
             request,
             'This account was created from a sales data import and cannot be edited manually.',
         )
-        return redirect('account_detail', pk=pk)
+        return redirect('account_detail_combined', pk=pk)
 
     if request.method == 'POST':
         form = AccountForm(request.POST, instance=account, company=request.user.company, user=request.user)
@@ -705,7 +705,7 @@ def account_edit(request, pk):
             account.state_normalized = normalize_address(account.state)
             account.save()
             messages.success(request, f'Account "{account.name}" updated successfully.')
-            return redirect('account_detail', pk=account.pk)
+            return redirect('account_detail_combined', pk=account.pk)
     else:
         form = AccountForm(instance=account, company=request.user.company, user=request.user)
 
@@ -731,9 +731,9 @@ def account_toggle(request, pk):
             messages.success(request, f'Account "{account.name}" has been reactivated.')
         else:
             messages.success(request, f'Account "{account.name}" has been deactivated.')
-        return redirect('account_detail', pk=account.pk)
+        return redirect('account_detail_combined', pk=account.pk)
 
-    return redirect('account_detail', pk=account.pk)
+    return redirect('account_detail_combined', pk=account.pk)
 
 
 @login_required
@@ -747,7 +747,7 @@ def account_delete(request, pk):
 
     if account.auto_created:
         messages.error(request, 'Imported accounts cannot be deleted.')
-        return redirect('account_detail', pk=pk)
+        return redirect('account_detail_combined', pk=pk)
 
     if request.method == 'POST':
         associations = get_account_associations(account)
@@ -765,14 +765,14 @@ def account_delete(request, pk):
                 + ', '.join(blocking)
                 + '. You can deactivate the account instead.',
             )
-            return redirect('account_detail', pk=pk)
+            return redirect('account_detail_combined', pk=pk)
 
         account_name = account.name
         account.delete()
         messages.success(request, f'Account "{account_name}" has been deleted.')
         return redirect('account_list')
 
-    return redirect('account_detail', pk=pk)
+    return redirect('account_detail_combined', pk=pk)
 
 
 # ---------------------------------------------------------------------------
