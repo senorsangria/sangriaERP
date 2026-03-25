@@ -238,6 +238,46 @@ class AccountItem(models.Model):
         return f'{self.account} — {self.item}'
 
 
+class AccountContact(models.Model):
+    """
+    A contact person at an Account (owner, manager, employee, etc.).
+    """
+
+    class Title(models.TextChoices):
+        OWNER    = 'owner',    'Owner'
+        MANAGER  = 'manager',  'Manager'
+        EMPLOYEE = 'employee', 'Employee'
+        OTHER    = 'other',    'Other'
+
+    account = models.ForeignKey(
+        Account,
+        on_delete=models.CASCADE,
+        related_name='contacts',
+    )
+    title = models.CharField(
+        max_length=20,
+        choices=Title.choices,
+        default=Title.OTHER,
+    )
+    name = models.CharField(max_length=200)
+    email = models.EmailField(blank=True, default='')
+    phone = models.CharField(max_length=30, blank=True, default='')
+    note = models.TextField(blank=True, default='')
+    is_tasting_contact = models.BooleanField(
+        default=False,
+        help_text='Primary contact for booking tastings',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = 'accounts'
+        ordering = ['-is_tasting_contact', 'name']
+
+    def __str__(self):
+        return f'{self.name} ({self.account.name})'
+
+
 class AccountItemPriceHistory(models.Model):
     """
     Historical record of shelf prices for an AccountItem.

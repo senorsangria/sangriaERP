@@ -2932,5 +2932,44 @@ Routes allow users to group accounts into named lists for planning and filtering
   the Past Events tab is active, both on tab switch (`shown.bs.tab`) and on
   initial page load if `active_tab == 'past'`
 
-*Last updated: March 25, 2026 (Filter modal redesign: standard pattern, checkbox groups, multi-value fields)*
+---
+
+## Account Contacts (March 2026)
+
+### Model — `AccountContact`
+- Fields: `account` (FK), `title`, `name`, `email`, `phone`, `note`,
+  `is_tasting_contact`, `created_at`, `updated_at`
+- Title choices: Owner, Manager, Employee, Other (default: Other)
+- Ordered by: `is_tasting_contact` desc, `name` asc (tasting contacts appear first)
+
+### Permission
+- `can_manage_contacts` — assigned to: supplier_admin, sales_manager,
+  territory_manager, ambassador_manager
+- Ambassador role does NOT have this permission and cannot create/update/delete contacts
+- All roles with `can_view_accounts` can view the contact list (read-only)
+
+### UI — Account Detail Combined Page
+- A "N contacts" button sits next to the account name in the compact header card
+- Clicking it opens `#contactsModal` (Bootstrap modal, `modal-lg`, scrollable)
+- The modal loads contacts via AJAX (`GET /accounts/<pk>/contacts/`) on
+  `show.bs.modal`; the count badge updates after every create/update/delete
+- The add/edit form is always visible at the bottom of the modal (not hidden
+  behind a separate button); switching to edit mode is triggered by the "Edit"
+  button on each contact card
+- Delete is inside the edit form (shown only in edit mode), separated visually
+  with a `border-top`, and requires a `confirm()` dialog
+
+### API Endpoints
+- `GET  /accounts/<pk>/contacts/` — list contacts (requires `can_view_accounts`)
+- `POST /accounts/<pk>/contacts/create/` — create (requires `can_manage_contacts`)
+- `POST /accounts/<pk>/contacts/<cpk>/update/` — update (requires `can_manage_contacts`)
+- `POST /accounts/<pk>/contacts/<cpk>/delete/` — delete (requires `can_manage_contacts`)
+- All POST endpoints require `X-Requested-With: XMLHttpRequest`; all are
+  scoped to `request.user.company`
+
+### Future
+- Contact badge on account name in event create form
+- Contact badge on accounts in route planning view
+
+*Last updated: March 25, 2026 (AccountContact model, API, and contacts modal on account detail)*
 *Maintained by: Drink Up Life, Inc / productERP project team*

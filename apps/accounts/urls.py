@@ -26,6 +26,12 @@ urlpatterns = [
         name='coverage_area_remove',
     ),
 
+    # Contact API
+    path('accounts/<int:pk>/contacts/', views.contact_list, name='contact_list'),
+    path('accounts/<int:pk>/contacts/create/', views.contact_create, name='contact_create'),
+    path('accounts/<int:pk>/contacts/<int:cpk>/update/', views.contact_update, name='contact_update'),
+    path('accounts/<int:pk>/contacts/<int:cpk>/delete/', views.contact_delete, name='contact_delete'),
+
     # AJAX endpoints
     path('accounts/ajax/states/', views.ajax_states, name='ajax_states'),
     path('accounts/ajax/counties/', views.ajax_counties, name='ajax_counties'),

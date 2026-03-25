@@ -16,7 +16,7 @@ from apps.distribution.models import Distributor
 from apps.events.models import Event
 from utils.normalize import normalize_address
 
-from .models import Account, UserCoverageArea
+from .models import Account, AccountContact, UserCoverageArea
 from .forms import AccountForm
 from .constants import US_STATES, US_STATES_DICT
 from .utils import get_account_associations
@@ -361,6 +361,8 @@ def account_detail_combined(request, pk):
         'items_by_brand': items_by_brand,
         'recent_events': recent_events,
         'no_sales_data': False,
+        'contact_count': account.contacts.count(),
+        'can_manage_contacts': request.user.has_permission('can_manage_contacts'),
     }
 
     # ---- Sales tab data (only when user has permission) -----------------
@@ -1120,3 +1122,104 @@ def ajax_accounts_search(request):
     ]
 
     return JsonResponse({'accounts': result})
+
+
+# ---------------------------------------------------------------------------
+# Contact API views
+# ---------------------------------------------------------------------------
+
+def _contact_to_dict(c):
+    return {
+        'id': c.pk,
+        'name': c.name,
+        'title': c.title,
+        'title_display': c.get_title_display(),
+        'email': c.email,
+        'phone': c.phone,
+        'note': c.note,
+        'is_tasting_contact': c.is_tasting_contact,
+    }
+
+
+@login_required
+def contact_list(request, pk):
+    """GET /accounts/<pk>/contacts/ — list contacts for an account."""
+    if not request.user.has_permission('can_view_accounts'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    account = get_object_or_404(Account, pk=pk, company=request.user.company)
+    contacts = [_contact_to_dict(c) for c in account.contacts.all()]
+    return JsonResponse({'contacts': contacts})
+
+
+@login_required
+def contact_create(request, pk):
+    """POST /accounts/<pk>/contacts/create/ — create a new contact."""
+    if not request.user.has_permission('can_manage_contacts'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    if request.method != 'POST' or request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'error': 'Bad request'}, status=400)
+    account = get_object_or_404(Account, pk=pk, company=request.user.company)
+
+    import json
+    try:
+        data = json.loads(request.body)
+    except (ValueError, KeyError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    name = (data.get('name') or '').strip()
+    if not name:
+        return JsonResponse({'success': False, 'error': 'Name is required.'})
+
+    contact = AccountContact.objects.create(
+        account=account,
+        name=name,
+        title=data.get('title', AccountContact.Title.OTHER),
+        email=(data.get('email') or '').strip(),
+        phone=(data.get('phone') or '').strip(),
+        note=(data.get('note') or '').strip(),
+        is_tasting_contact=bool(data.get('is_tasting_contact', False)),
+    )
+    return JsonResponse({'success': True, 'contact': _contact_to_dict(contact)})
+
+
+@login_required
+def contact_update(request, pk, cpk):
+    """POST /accounts/<pk>/contacts/<cpk>/update/ — update a contact."""
+    if not request.user.has_permission('can_manage_contacts'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    if request.method != 'POST' or request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'error': 'Bad request'}, status=400)
+    account = get_object_or_404(Account, pk=pk, company=request.user.company)
+    contact = get_object_or_404(AccountContact, pk=cpk, account=account)
+
+    import json
+    try:
+        data = json.loads(request.body)
+    except (ValueError, KeyError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    name = (data.get('name') or '').strip()
+    if not name:
+        return JsonResponse({'success': False, 'error': 'Name is required.'})
+
+    contact.name = name
+    contact.title = data.get('title', contact.title)
+    contact.email = (data.get('email') or '').strip()
+    contact.phone = (data.get('phone') or '').strip()
+    contact.note = (data.get('note') or '').strip()
+    contact.is_tasting_contact = bool(data.get('is_tasting_contact', False))
+    contact.save()
+    return JsonResponse({'success': True, 'contact': _contact_to_dict(contact)})
+
+
+@login_required
+def contact_delete(request, pk, cpk):
+    """POST /accounts/<pk>/contacts/<cpk>/delete/ — delete a contact."""
+    if not request.user.has_permission('can_manage_contacts'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    if request.method != 'POST' or request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'error': 'Bad request'}, status=400)
+    account = get_object_or_404(Account, pk=pk, company=request.user.company)
+    contact = get_object_or_404(AccountContact, pk=cpk, account=account)
+    contact.delete()
+    return JsonResponse({'success': True})

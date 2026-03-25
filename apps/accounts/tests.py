@@ -943,3 +943,154 @@ class AccountFormScopeAndRequiredTest(TestCase):
         form = AccountForm(data=data, company=self.company, user=self.admin)
         self.assertFalse(form.is_valid())
         self.assertIn('on_off_premise', form.errors)
+
+
+# ---------------------------------------------------------------------------
+# AccountContact API tests
+# ---------------------------------------------------------------------------
+
+import json as _json
+from apps.accounts.models import AccountContact
+
+
+class ContactAPITest(TestCase):
+    """Tests for the AccountContact CRUD API views."""
+
+    def setUp(self):
+        self.company = make_company('Contact Test Co')
+        self.admin   = make_user(self.company, 'supplier_admin', username='ct_admin')
+        self.amb     = make_user(self.company, 'ambassador',     username='ct_amb')
+        self.dist    = make_distributor(self.company, 'CT Dist')
+        self.account = make_account(self.company, self.dist, 'CT Store')
+
+        self.client = Client()
+        self.client.login(username='ct_admin', password='testpass123')
+
+    def _post(self, url, data):
+        return self.client.post(
+            url,
+            data=_json.dumps(data),
+            content_type='application/json',
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+
+    def test_contact_create(self):
+        """POST creates an AccountContact with correct fields."""
+        url = reverse('contact_create', args=[self.account.pk])
+        resp = self._post(url, {
+            'name': 'Jane Smith',
+            'title': 'manager',
+            'phone': '555-1234',
+            'email': 'jane@example.com',
+            'note': 'Great contact',
+            'is_tasting_contact': True,
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        self.assertTrue(data['success'])
+        self.assertEqual(data['contact']['name'], 'Jane Smith')
+        self.assertEqual(data['contact']['title'], 'manager')
+        self.assertEqual(data['contact']['phone'], '555-1234')
+        self.assertEqual(data['contact']['email'], 'jane@example.com')
+        self.assertTrue(data['contact']['is_tasting_contact'])
+        self.assertEqual(AccountContact.objects.filter(account=self.account).count(), 1)
+
+    def test_contact_create_requires_name(self):
+        """POST without name returns success=False with error message."""
+        url = reverse('contact_create', args=[self.account.pk])
+        resp = self._post(url, {'name': '', 'title': 'other'})
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        self.assertFalse(data['success'])
+        self.assertIn('error', data)
+        self.assertEqual(AccountContact.objects.filter(account=self.account).count(), 0)
+
+    def test_contact_update(self):
+        """POST to update endpoint updates existing contact."""
+        contact = AccountContact.objects.create(
+            account=self.account, name='Old Name', title='other',
+        )
+        url = reverse('contact_update', args=[self.account.pk, contact.pk])
+        resp = self._post(url, {'name': 'New Name', 'title': 'owner', 'is_tasting_contact': False})
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        self.assertTrue(data['success'])
+        contact.refresh_from_db()
+        self.assertEqual(contact.name, 'New Name')
+        self.assertEqual(contact.title, 'owner')
+
+    def test_contact_delete(self):
+        """POST to delete endpoint removes the contact."""
+        contact = AccountContact.objects.create(
+            account=self.account, name='To Delete', title='other',
+        )
+        url = reverse('contact_delete', args=[self.account.pk, contact.pk])
+        resp = self.client.post(
+            url, HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        self.assertTrue(data['success'])
+        self.assertFalse(AccountContact.objects.filter(pk=contact.pk).exists())
+
+    def test_contact_list_scoped_to_account(self):
+        """GET returns only contacts for the requested account."""
+        other_account = make_account(self.company, self.dist, 'Other Store')
+        AccountContact.objects.create(account=self.account, name='Mine', title='other')
+        AccountContact.objects.create(account=other_account, name='Theirs', title='other')
+
+        url = reverse('contact_list', args=[self.account.pk])
+        resp = self.client.get(url, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        names = [c['name'] for c in data['contacts']]
+        self.assertIn('Mine', names)
+        self.assertNotIn('Theirs', names)
+
+    def test_contact_requires_permission(self):
+        """User without can_manage_contacts gets 403 on create."""
+        no_perm_user = make_user(self.company, 'ambassador', username='no_perm')
+        c = Client()
+        c.login(username='no_perm', password='testpass123')
+        url = reverse('contact_create', args=[self.account.pk])
+        resp = c.post(
+            url,
+            data=_json.dumps({'name': 'Test', 'title': 'other'}),
+            content_type='application/json',
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_ambassador_cannot_manage_contacts(self):
+        """Ambassador cannot create, update, or delete contacts."""
+        contact = AccountContact.objects.create(
+            account=self.account, name='Existing', title='other',
+        )
+        amb_client = Client()
+        amb_client.login(username='ct_amb', password='testpass123')
+
+        for url in [
+            reverse('contact_create', args=[self.account.pk]),
+            reverse('contact_update', args=[self.account.pk, contact.pk]),
+            reverse('contact_delete', args=[self.account.pk, contact.pk]),
+        ]:
+            resp = amb_client.post(
+                url,
+                data=_json.dumps({'name': 'X', 'title': 'other'}),
+                content_type='application/json',
+                HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+            )
+            self.assertEqual(resp.status_code, 403, f'Expected 403 for {url}')
+
+    def test_contact_wrong_company_returns_404(self):
+        """Contact from a different company's account returns 404."""
+        other_company  = make_company('Other Co')
+        other_dist     = make_distributor(other_company, 'Other Dist')
+        other_account  = make_account(other_company, other_dist, 'Other Store')
+        other_contact  = AccountContact.objects.create(
+            account=other_account, name='Not Mine', title='other',
+        )
+        url = reverse('contact_update', args=[other_account.pk, other_contact.pk])
+        resp = self._post(url, {'name': 'Hacked', 'title': 'other'})
+        # account.pk is in other company — should 404
+        self.assertEqual(resp.status_code, 404)
