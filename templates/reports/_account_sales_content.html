@@ -1,0 +1,236 @@
+{% load reports_tags humanize %}
+<!-- ================================================================
+     Portfolio Status Card
+     ================================================================ -->
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header fw-semibold py-2">Portfolio Status</div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0" id="portfolioTable">
+        <thead class="table-dark">
+          <tr>
+            <th>Item Code</th>
+            <th class="text-end">{{ last_full_year }}</th>
+            <th class="text-end">Last 12m</th>
+            <th class="text-end">Change</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody class="fw-bold table-active">
+          <tr>
+            <td>TOTAL</td>
+            <td class="text-end" data-value="{{ portfolio_totals.prior_year_total }}">{{ portfolio_totals.prior_year_total|intcomma }}</td>
+            <td class="text-end" data-value="{{ portfolio_totals.last_12_total }}">{{ portfolio_totals.last_12_total|intcomma }}</td>
+            <td class="text-end" data-value="{{ portfolio_totals.change_total }}">
+              <span class="{% if portfolio_totals.change_total > 0 %}text-success{% elif portfolio_totals.change_total < 0 %}text-danger{% else %}text-muted{% endif %}">
+                {% if portfolio_totals.change_total > 0 %}+{% endif %}{{ portfolio_totals.change_total|intcomma }}
+              </span>
+              {% if portfolio_totals.total_change_pct is not None %}
+              <span class="small ms-1 {% if portfolio_totals.total_change_pct > 0 %}text-success{% elif portfolio_totals.total_change_pct < 0 %}text-danger{% else %}text-muted{% endif %}">
+                {% if portfolio_totals.total_change_pct > 0 %}+{% endif %}{{ portfolio_totals.total_change_pct }}%
+              </span>
+              {% endif %}
+            </td>
+            <td></td>
+          </tr>
+        </tbody>
+        <tbody>
+          {% for row in rows %}
+          <tr{% if row.first_in_group and not forloop.first %} class="portfolio-group-divider"{% endif %}>
+            <td>{{ row.item_code }}</td>
+            <td class="text-end" data-value="{{ row.last_full_year_total }}">{{ row.last_full_year_total|intcomma }}</td>
+            <td class="text-end" data-value="{{ row.last_12_units }}">{{ row.last_12_units|intcomma }}</td>
+            <td class="text-end" data-value="{{ row.diff_last_12_vs_last_year }}">
+              <span class="{% if row.diff_last_12_vs_last_year > 0 %}text-success{% elif row.diff_last_12_vs_last_year < 0 %}text-danger{% else %}text-muted{% endif %}">
+                {% if row.diff_last_12_vs_last_year > 0 %}+{% endif %}{{ row.diff_last_12_vs_last_year|intcomma }}
+              </span>
+              {% if row.change_pct is not None %}
+              <span class="small ms-1 {% if row.change_pct > 0 %}text-success{% elif row.change_pct < 0 %}text-danger{% else %}text-muted{% endif %}">
+                {% if row.change_pct > 0 %}+{% endif %}{{ row.change_pct }}%
+              </span>
+              {% endif %}
+            </td>
+            <td>
+              {% if row.status == 'non_buy' %}<span class="badge bg-dark text-white">Non-buy</span>
+              {% elif row.status == 'declining' %}<span class="badge bg-danger text-white">Declining</span>
+              {% elif row.status == 'steady' %}<span class="badge bg-secondary text-white">Steady</span>
+              {% elif row.status == 'growing' %}<span class="badge bg-success text-white">Growing</span>
+              {% elif row.status == 'new' %}<span class="badge bg-warning text-dark">New</span>{% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" class="text-center text-muted py-4">No items to display.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================
+     Full Sales History (collapsed by default)
+     ================================================================ -->
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-header py-2 d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">Full Sales History</span>
+    <button class="btn btn-sm btn-outline-secondary" type="button"
+            data-bs-toggle="collapse" data-bs-target="#salesHistoryCollapse"
+            aria-expanded="false" aria-controls="salesHistoryCollapse">
+      <i class="bi bi-chevron-down" id="salesHistoryChevron"></i>
+    </button>
+  </div>
+  <div class="collapse" id="salesHistoryCollapse">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-striped table-hover table-sm mb-0 detail-table" id="detailTable">
+
+          <thead>
+            <!-- Row 1: Year group spans -->
+            <tr>
+              <th class="sticky-col" rowspan="2">Item</th>
+              <th class="text-center lfy-header" colspan="12">{{ last_full_year }}</th>
+              {% if current_year_colspan > 0 %}
+              <th class="text-center cy-header" colspan="{{ current_year_colspan }}">{{ current_year }}</th>
+              {% endif %}
+            </tr>
+            <!-- Row 2: Month abbreviations -->
+            <tr>
+              {% for m in all_months %}
+              <th class="text-end">{{ month_names|get_item:m }}</th>
+              {% endfor %}
+              {% for m in actual_months %}
+              <th class="text-end">{{ month_names|get_item:m }}</th>
+              {% endfor %}
+              {% for m in projected_months %}
+              <th class="text-end proj-month-header">{{ month_names|get_item:m }}<br><small>(proj)</small></th>
+              {% endfor %}
+            </tr>
+          </thead>
+
+          <!-- Events row -->
+          <tbody id="detailEventsBody">
+            <tr class="table-info fw-semibold">
+              <td class="sticky-col small">Events</td>
+              {% for m in all_months %}
+              <td class="text-end small"
+                  data-value="{{ lfy_events_by_month|get_item:m|default:0 }}">
+                {% with val=lfy_events_by_month|get_item:m %}
+                {% if val %}{{ val }}{% endif %}
+                {% endwith %}
+              </td>
+              {% endfor %}
+              {% for m in actual_months %}
+              <td class="text-end small"
+                  data-value="{{ cy_events_by_month|get_item:m|default:0 }}">
+                {% with val=cy_events_by_month|get_item:m %}
+                {% if val %}{{ val }}{% endif %}
+                {% endwith %}
+              </td>
+              {% endfor %}
+              {% for m in projected_months %}
+              <td class="text-end small text-muted">—</td>
+              {% endfor %}
+            </tr>
+          </tbody>
+
+          <!-- Totals row (pinned) -->
+          <tbody id="detailTotalsBody">
+            <tr>
+              <td class="sticky-col fw-bold">Total</td>
+              {% for m in all_months %}
+              {% with val=totals.last_full_year_by_month|get_item:m %}
+              <td class="text-end" data-value="{{ val|default:0 }}">{{ val|default:0|intcomma }}</td>
+              {% endwith %}
+              {% endfor %}
+              {% for m in actual_months %}
+              {% with val=totals.current_actual_by_month|get_item:m %}
+              <td class="text-end" data-value="{{ val|default:0 }}">{{ val|default:0|intcomma }}</td>
+              {% endwith %}
+              {% endfor %}
+              {% for m in projected_months %}
+              {% with val=totals.current_projected_by_month|get_item:m %}
+              <td class="text-end proj-cell" data-value="{{ val|default:0 }}">{{ val|default:0|intcomma }}</td>
+              {% endwith %}
+              {% endfor %}
+            </tr>
+          </tbody>
+
+          <!-- Diff row -->
+          <tbody id="detailDiffBody">
+            <tr class="fw-semibold">
+              <td class="sticky-col small">Diff</td>
+              {% for m in all_months %}
+              {% with val=totals.diff_lfy_by_month|get_item:m %}
+              <td class="text-end small diff-col"
+                  data-value="{{ val|default:0 }}">
+                {% if val %}
+                  {% if val > 0 %}+{% endif %}{{ val|intcomma }}
+                {% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+              {% for m in actual_months %}
+              {% with val=totals.diff_cy_actual_by_month|get_item:m %}
+              <td class="text-end small diff-col"
+                  data-value="{{ val|default:0 }}">
+                {% if val %}
+                  {% if val > 0 %}+{% endif %}{{ val|intcomma }}
+                {% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+              {% for m in projected_months %}
+              {% with val=totals.diff_cy_projected_by_month|get_item:m %}
+              <td class="text-end small proj-cell diff-col"
+                  data-value="{{ val|default:0 }}">
+                {% if val is not None %}
+                  {% if val > 0 %}+{% endif %}{{ val|intcomma }}
+                {% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+            </tr>
+          </tbody>
+
+          <!-- Data rows -->
+          <tbody id="detailDataBody">
+            {% for row in rows %}
+            <tr>
+              <td class="sticky-col">{{ row.item_code }}</td>
+              {% for m in all_months %}
+              {% with val=row.last_full_year_by_month|get_item:m %}
+              <td class="text-end" data-value="{{ val|default:0 }}">
+                {% if val %}{{ val|intcomma }}{% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+              {% for m in actual_months %}
+              {% with val=row.current_actual_by_month|get_item:m %}
+              <td class="text-end" data-value="{{ val|default:0 }}">
+                {% if val %}{{ val|intcomma }}{% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+              {% for m in projected_months %}
+              {% with val=row.current_projected_by_month|get_item:m %}
+              <td class="text-end proj-cell" data-value="{{ val|default:0 }}">
+                {% if val %}{{ val|intcomma }}{% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="100" class="text-center text-muted py-4">No sales data found.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+
+        </table>
+      </div>
+    </div>
+    <div class="card-footer text-muted small py-2 px-3">
+      {{ rows|length }} item{{ rows|length|pluralize }}
+    </div>
+  </div>
+</div>

@@ -367,7 +367,8 @@ def account_detail_combined(request, pk):
     if can_view_sales:
         from calendar import monthrange
         from datetime import date as _date
-        from django.db.models import Max, Sum
+        from django.db.models import Count, Max, Sum
+        from django.db.models.functions import ExtractMonth
         from apps.catalog.models import Item
         from apps.sales.models import SalesRecord
 
@@ -452,6 +453,44 @@ def account_detail_combined(request, pk):
             ):
                 last12_data[r['item_id']] = r['units']
 
+            prior_year = last_full_year - 1
+
+            prior_year_qs = SalesRecord.objects.filter(
+                account=account,
+                sale_date__year=prior_year,
+            ).values(
+                'item_id',
+                month=ExtractMonth('sale_date'),
+            ).annotate(total=Sum('quantity'))
+
+            prior_year_data = {
+                (r['item_id'], r['month']): r['total']
+                for r in prior_year_qs
+            }
+
+            lfy_events = Event.objects.filter(
+                account=account,
+                date__year=last_full_year,
+            ).values(
+                month=ExtractMonth('date')
+            ).annotate(count=Count('id'))
+
+            lfy_events_by_month = {
+                r['month']: r['count'] for r in lfy_events
+            }
+
+            cy_events = Event.objects.filter(
+                account=account,
+                date__year=current_year,
+                date__month__in=actual_months,
+            ).values(
+                month=ExtractMonth('date')
+            ).annotate(count=Count('id'))
+
+            cy_events_by_month = {
+                r['month']: r['count'] for r in cy_events
+            }
+
             all_months = list(range(1, 13))
             rows = []
             for item in items:
@@ -488,12 +527,38 @@ def account_detail_combined(request, pk):
                 else:
                     status, spri = 'growing', 4
 
+                prior_by_m = {
+                    m: prior_year_data.get((iid, m), 0)
+                    for m in all_months
+                }
+
+                diff_lfy_by_m = {
+                    m: lfy_by_m[m] - prior_by_m[m]
+                    for m in all_months
+                }
+
+                diff_act_by_m = {
+                    m: act_by_m[m] - lfy_by_m[m]
+                    for m in actual_months
+                }
+
+                diff_proj_by_m = {
+                    m: (proj_by_m[m] - lfy_by_m[m])
+                       if proj_by_m[m] is not None
+                       else None
+                    for m in projected_months
+                }
+
                 rows.append({
                     'item_name': item.name, 'item_code': item.item_code,
                     'brand_name': item.brand.name, 'sort_order': item.sort_order,
                     'last_full_year_by_month': lfy_by_m,
                     'current_actual_by_month': act_by_m,
                     'current_projected_by_month': proj_by_m,
+                    'prior_year_by_month': prior_by_m,
+                    'diff_lfy_by_month': diff_lfy_by_m,
+                    'diff_cy_actual_by_month': diff_act_by_m,
+                    'diff_cy_projected_by_month': diff_proj_by_m,
                     'last_full_year_total': lfy_total,
                     'current_actual_total': act_total,
                     'current_projected_total': proj_total,
@@ -506,10 +571,6 @@ def account_detail_combined(request, pk):
                         round((l12 - lfy_total) / lfy_total * 100, 1)
                         if lfy_total > 0 else None
                     ),
-                    'status_icon': {
-                        'non_buy': '⚫', 'declining': '🔴', 'steady': '⚪',
-                        'growing': '🟢', 'new': '🟡',
-                    }[status],
                 })
 
             rows.sort(key=lambda r: (
@@ -527,6 +588,43 @@ def account_detail_combined(request, pk):
             _pl12 = sum(r['last_12_units'] for r in rows)
             _ppr  = sum(r['last_full_year_total'] for r in rows)
 
+            totals = {
+                'last_full_year_by_month': {
+                    m: sum(r['last_full_year_by_month'][m] for r in rows)
+                    for m in all_months
+                },
+                'current_actual_by_month': {
+                    m: sum(r['current_actual_by_month'].get(m, 0) for r in rows)
+                    for m in actual_months
+                },
+                'current_projected_by_month': {
+                    m: sum((r['current_projected_by_month'].get(m) or 0) for r in rows)
+                    for m in projected_months
+                },
+                'last_full_year_total': sum(r['last_full_year_total'] for r in rows),
+                'current_actual_total': sum(r['current_actual_total'] for r in rows),
+                'current_projected_total': sum(r['current_projected_total'] for r in rows),
+                'current_combined_total': sum(r['current_combined_total'] for r in rows),
+                'last_12_total': _pl12,
+                'diff_last_12_vs_last_year': sum(r['diff_last_12_vs_last_year'] for r in rows),
+                'diff_current_vs_last_year': sum(r['diff_current_vs_last_year'] for r in rows),
+            }
+            totals['diff_lfy_by_month'] = {
+                m: sum(r['diff_lfy_by_month'][m] for r in rows)
+                for m in all_months
+            }
+            totals['diff_cy_actual_by_month'] = {
+                m: sum(r['diff_cy_actual_by_month'][m] for r in rows)
+                for m in actual_months
+            }
+            totals['diff_cy_projected_by_month'] = {
+                m: sum(
+                    v for v in [r['diff_cy_projected_by_month'][m] for r in rows]
+                    if v is not None
+                )
+                for m in projected_months
+            }
+
             ctx.update({
                 'rows': rows,
                 'last_full_year': last_full_year,
@@ -537,28 +635,10 @@ def account_detail_combined(request, pk):
                 'last_full_month_display': last_full_month_display,
                 'last_reported': last_full_month_display,
                 'month_names': {i: _date(2000, i, 1).strftime('%b') for i in all_months},
-                'totals': {
-                    'last_full_year_by_month': {
-                        m: sum(r['last_full_year_by_month'][m] for r in rows)
-                        for m in all_months
-                    },
-                    'current_actual_by_month': {
-                        m: sum(r['current_actual_by_month'].get(m, 0) for r in rows)
-                        for m in actual_months
-                    },
-                    'current_projected_by_month': {
-                        m: sum((r['current_projected_by_month'].get(m) or 0) for r in rows)
-                        for m in projected_months
-                    },
-                    'last_full_year_total': sum(r['last_full_year_total'] for r in rows),
-                    'current_actual_total': sum(r['current_actual_total'] for r in rows),
-                    'current_projected_total': sum(r['current_projected_total'] for r in rows),
-                    'current_combined_total': sum(r['current_combined_total'] for r in rows),
-                    'last_12_total': _pl12,
-                    'diff_last_12_vs_last_year': sum(r['diff_last_12_vs_last_year'] for r in rows),
-                    'diff_current_vs_last_year': sum(r['diff_current_vs_last_year'] for r in rows),
-                },
+                'totals': totals,
                 'current_year_colspan': len(actual_months) + len(projected_months),
+                'lfy_events_by_month': lfy_events_by_month,
+                'cy_events_by_month': cy_events_by_month,
                 'status_counts': status_counts,
                 'portfolio_totals': {
                     'last_12_total': _pl12, 'prior_year_total': _ppr,
