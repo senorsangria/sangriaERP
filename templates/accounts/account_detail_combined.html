@@ -335,15 +335,7 @@
           <input type="hidden" id="editing-contact-id" value="">
 
           <div class="row g-2 mb-2">
-            <div class="col-12 col-sm-6">
-              <label class="form-label small fw-medium">
-                Name <span class="text-danger">*</span>
-              </label>
-              <input type="text" id="contact-name"
-                     class="form-control form-control-sm"
-                     placeholder="Full name">
-            </div>
-            <div class="col-12 col-sm-6">
+            <div class="col-12">
               <label class="form-label small fw-medium">Title</label>
               <select id="contact-title" class="form-select form-select-sm">
                 <option value="owner">Owner</option>
@@ -351,6 +343,27 @@
                 <option value="employee">Employee</option>
                 <option value="other" selected>Other</option>
               </select>
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <div class="form-check">
+              <input type="checkbox" class="form-check-input"
+                     id="contact-tasting">
+              <label class="form-check-label small" for="contact-tasting">
+                Tasting Contact
+              </label>
+            </div>
+          </div>
+
+          <div class="row g-2 mb-2">
+            <div class="col-12">
+              <label class="form-label small fw-medium">
+                Name <span class="text-danger">*</span>
+              </label>
+              <input type="text" id="contact-name"
+                     class="form-control form-control-sm"
+                     placeholder="Full name">
             </div>
           </div>
 
@@ -375,16 +388,6 @@
                       class="form-control form-control-sm"
                       rows="2"
                       placeholder="Optional note"></textarea>
-          </div>
-
-          <div class="mb-3">
-            <div class="form-check">
-              <input type="checkbox" class="form-check-input"
-                     id="contact-tasting">
-              <label class="form-check-label small" for="contact-tasting">
-                Tasting Contact
-              </label>
-            </div>
           </div>
 
           <div id="contact-form-error"
