@@ -232,7 +232,7 @@
                 </td>
                 <td>
                   {% if event.account %}
-                    <a href="{% url 'account_detail_combined' event.account.pk %}" class="text-decoration-none">{{ event.account.name }}</a>
+                    <a href="{% url 'account_detail_combined' event.account.pk %}?return_to=event_list" class="text-decoration-none">{{ event.account.name }}</a>
                     <div class="small text-muted">{% if event.account.street %}{{ event.account.street|title }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city|title }}{% endif %}</div>
                     {% if event.is_imported %}
                     <div class="text-muted fst-italic small">(IMPORTED DATA)</div>
@@ -359,7 +359,7 @@
                 </td>
                 <td>
                   {% if event.account %}
-                    <a href="{% url 'account_detail_combined' event.account.pk %}" class="text-decoration-none">{{ event.account.name }}</a>
+                    <a href="{% url 'account_detail_combined' event.account.pk %}?return_to=event_list" class="text-decoration-none">{{ event.account.name }}</a>
                     <div class="small text-muted">{% if event.account.street %}{{ event.account.street|title }}{% endif %}{% if event.account.street and event.account.city %}, {% endif %}{% if event.account.city %}{{ event.account.city|title }}{% endif %}</div>
                     {% if event.is_imported %}
                     <div class="text-muted fst-italic small">(IMPORTED DATA)</div>

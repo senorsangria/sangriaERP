@@ -65,6 +65,14 @@
   <a href="{% url 'report_account_sales_by_year' %}" class="btn btn-sm btn-outline-secondary">
     <i class="bi bi-arrow-left me-1"></i>Back to Report
   </a>
+  {% elif return_to == 'event_list' %}
+  <a href="{% url 'event_list' %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back to Events
+  </a>
+  {% elif return_to == 'event_detail' and return_pk %}
+  <a href="{% url 'event_detail' return_pk %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back to Event
+  </a>
   {% else %}
   <a href="{% url 'account_list' %}" class="btn btn-sm btn-outline-secondary">
     <i class="bi bi-arrow-left me-1"></i>Back to Accounts

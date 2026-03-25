@@ -317,8 +317,10 @@ def account_detail_combined(request, pk):
         active_tab = 'details'
 
     return_to = request.GET.get('return_to', 'accounts')
-    if return_to not in ('accounts', 'report'):
+    if return_to not in ('accounts', 'report', 'event_list', 'event_detail'):
         return_to = 'accounts'
+
+    return_pk = request.GET.get('return_pk', '')
 
     can_view_sales = request.user.has_permission('can_view_report_account_sales')
 
@@ -357,6 +359,7 @@ def account_detail_combined(request, pk):
         'account': account,
         'active_tab': active_tab,
         'return_to': return_to,
+        'return_pk': return_pk,
         'can_view_sales': can_view_sales,
         'items_by_brand': items_by_brand,
         'recent_events': recent_events,
