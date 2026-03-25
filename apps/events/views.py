@@ -302,37 +302,61 @@ def get_filtered_event_queryset(base_qs, filters):
     This is the single authoritative place for
     event filtering logic. Both the event list
     view and CSV export use this function.
+
+    All multi-value fields (status, year, month, event_type,
+    creator, distributor, city, county) accept either a list
+    or a legacy string value.
     """
     qs = base_qs
 
     if filters.get('status'):
         qs = qs.filter(status__in=filters['status'])
 
-    if filters.get('year'):
+    # Year — multi-select list
+    year_filter = filters.get('year', [])
+    if isinstance(year_filter, str):
+        year_filter = [year_filter] if year_filter else []
+    if year_filter:
         try:
-            qs = qs.filter(date__year=int(filters['year']))
+            qs = qs.filter(date__year__in=[int(y) for y in year_filter])
         except (ValueError, TypeError):
             pass
 
-    if filters.get('month'):
+    # Month — multi-select list
+    month_filter = filters.get('month', [])
+    if isinstance(month_filter, str):
+        month_filter = [month_filter] if month_filter else []
+    if month_filter:
         try:
-            qs = qs.filter(date__month=int(filters['month']))
+            qs = qs.filter(date__month__in=[int(m) for m in month_filter])
         except (ValueError, TypeError):
             pass
 
-    if filters.get('event_type'):
-        qs = qs.filter(event_type=filters['event_type'])
+    # Event type — multi-select list
+    event_type_filter = filters.get('event_type', [])
+    if isinstance(event_type_filter, str):
+        event_type_filter = [event_type_filter] if event_type_filter else []
+    if event_type_filter:
+        qs = qs.filter(event_type__in=event_type_filter)
 
-    if filters.get('creator'):
+    # Creator — multi-select list
+    creator_filter = filters.get('creator', [])
+    if isinstance(creator_filter, str):
+        creator_filter = [creator_filter] if creator_filter else []
+    if creator_filter:
         try:
-            qs = qs.filter(created_by_id=int(filters['creator']))
+            qs = qs.filter(created_by_id__in=[int(c) for c in creator_filter])
         except (ValueError, TypeError):
             pass
 
-    if filters.get('distributor'):
+    # Distributor — multi-select list
+    distributor_filter = filters.get('distributor', [])
+    if isinstance(distributor_filter, str):
+        distributor_filter = [distributor_filter] if distributor_filter else []
+    if distributor_filter:
         try:
             qs = qs.filter(
-                account__distributor_id=int(filters['distributor'])
+                account__distributor_id__in=[int(d) for d in distributor_filter]
             )
         except (ValueError, TypeError):
             pass
@@ -390,11 +414,11 @@ def event_list(request):
         # User submitted filters — save to session
         filters = {
             'status':       request.GET.getlist('status'),
-            'year':         request.GET.get('year', ''),
-            'month':        request.GET.get('month', ''),
-            'event_type':   request.GET.get('event_type', ''),
-            'creator':      request.GET.get('creator', ''),
-            'distributor':  request.GET.get('distributor', ''),
+            'year':         request.GET.getlist('year'),
+            'month':        request.GET.getlist('month'),
+            'event_type':   request.GET.getlist('event_type'),
+            'creator':      request.GET.getlist('creator'),
+            'distributor':  request.GET.getlist('distributor'),
             'account_name': request.GET.get('account_name', ''),
             'city':         request.GET.getlist('city'),
             'county':       request.GET.getlist('county'),
@@ -403,14 +427,15 @@ def event_list(request):
     else:
         # Restore from session
         filters = request.session.get(SESSION_KEY, {
-            'status': [], 'year': '', 'month': '', 'event_type': '',
-            'creator': '', 'distributor': '', 'account_name': '', 'city': [],
+            'status': [], 'year': [], 'month': [], 'event_type': [],
+            'creator': [], 'distributor': [], 'account_name': '', 'city': [],
             'county': [],
         })
-        # Backward compatibility: city may have been stored as a string
-        if isinstance(filters.get('city'), str):
-            city_str = filters['city']
-            filters['city'] = [city_str] if city_str else []
+        # Backward compatibility: legacy string values → lists
+        for _field in ('year', 'month', 'event_type', 'creator', 'distributor', 'city'):
+            if isinstance(filters.get(_field), str):
+                _val = filters[_field]
+                filters[_field] = [_val] if _val else []
 
     active_tab = request.GET.get('tab', 'active')
 
@@ -512,6 +537,19 @@ def event_list(request):
         or filters.get('city') or filters.get('county')
     )
 
+    # Count active filters for badge
+    active_filter_count = sum([
+        1 if filters.get('status') else 0,
+        1 if filters.get('year') else 0,
+        1 if filters.get('month') else 0,
+        1 if filters.get('event_type') else 0,
+        1 if filters.get('creator') else 0,
+        1 if filters.get('distributor') else 0,
+        1 if filters.get('account_name') else 0,
+        1 if filters.get('city') else 0,
+        1 if filters.get('county') else 0,
+    ])
+
     return render(request, 'events/event_list.html', {
         'event_groups':     event_groups,
         'paid_groups':      paid_groups,
@@ -520,6 +558,7 @@ def event_list(request):
         'active_tab':       active_tab,
         'filters':          filters,
         'filters_active':   filters_active,
+        'active_filter_count': active_filter_count,
         'years':            years,
         'creators':         creators,
         'distributors':       distributors,
@@ -528,9 +567,9 @@ def event_list(request):
         'event_type_choices': Event.EventType.choices,
         'status_choices':     Event.Status.choices,
         'months': [
-            (1,'January'),(2,'February'),(3,'March'),(4,'April'),
-            (5,'May'),(6,'June'),(7,'July'),(8,'August'),
-            (9,'September'),(10,'October'),(11,'November'),(12,'December'),
+            (1,'Jan'),(2,'Feb'),(3,'Mar'),(4,'Apr'),
+            (5,'May'),(6,'Jun'),(7,'Jul'),(8,'Aug'),
+            (9,'Sep'),(10,'Oct'),(11,'Nov'),(12,'Dec'),
         ],
     })
 
@@ -565,14 +604,15 @@ def event_export_csv(request):
     # Read filters from session (same session key as event list view)
     SESSION_KEY = 'event_list_filters'
     filters = request.session.get(SESSION_KEY, {
-        'status': [], 'year': '', 'month': '', 'event_type': '',
-        'creator': '', 'distributor': '', 'account_name': '', 'city': [],
+        'status': [], 'year': [], 'month': [], 'event_type': [],
+        'creator': [], 'distributor': [], 'account_name': '', 'city': [],
         'county': [],
     })
-    # Backward compatibility: city may have been stored as a string
-    if isinstance(filters.get('city'), str):
-        city_str = filters['city']
-        filters['city'] = [city_str] if city_str else []
+    # Backward compatibility: legacy string values → lists
+    for _field in ('year', 'month', 'event_type', 'creator', 'distributor', 'city'):
+        if isinstance(filters.get(_field), str):
+            _val = filters[_field]
+            filters[_field] = [_val] if _val else []
 
     tab = request.GET.get('tab', 'active')
 

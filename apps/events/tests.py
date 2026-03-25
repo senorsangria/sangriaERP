@@ -2484,3 +2484,99 @@ class SharedFilterFunctionTest(TestCase):
     def test_empty_filters_returns_all(self):
         qs = self.get_filtered_event_queryset(self._base_qs(), {})
         self.assertEqual(qs.count(), 2)
+
+
+# ---------------------------------------------------------------------------
+# Filter modal — multi-value field tests
+# ---------------------------------------------------------------------------
+
+class FilterModalMultiValueTest(TestCase):
+    """Multi-value checkbox filters: event_type, year, and active_filter_count."""
+
+    def setUp(self):
+        self.company = make_company('Modal Filter Co')
+        self.manager = make_user(self.company, 'supplier_admin', username='modal_mgr')
+        self.client = Client()
+        self.client.login(username='modal_mgr', password='testpass123')
+
+        self.acc = make_account(self.company, name='Modal Store')
+
+        self.evt_tasting = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=self.acc,
+            date=date(2024, 3, 1),
+        )
+        self.evt_special = make_event(
+            self.company, self.manager, Event.EventType.SPECIAL_EVENT,
+            status=Event.Status.SCHEDULED,
+            account=self.acc,
+            date=date(2025, 3, 1),
+        )
+        self.evt_admin = make_event(
+            self.company, self.manager, Event.EventType.ADMIN,
+            status=Event.Status.SCHEDULED,
+            account=None,
+            date=date(2025, 4, 1),
+        )
+
+    def _active_event_ids(self, response):
+        event_ids = set()
+        for _label, _slug, events in response.context['event_groups']:
+            for e in events:
+                event_ids.add(e.pk)
+        return event_ids
+
+    def test_filter_modal_multi_type(self):
+        """Filtering by multiple event types returns events of any matching type."""
+        response = self.client.get(
+            reverse('event_list'),
+            {'event_type': ['tasting', 'special_event']},
+        )
+        self.assertEqual(response.status_code, 200)
+        ids = self._active_event_ids(response)
+        self.assertIn(self.evt_tasting.pk, ids)
+        self.assertIn(self.evt_special.pk, ids)
+        self.assertNotIn(self.evt_admin.pk, ids)
+
+    def test_filter_modal_multi_year(self):
+        """Filtering by multiple years returns events from any of those years."""
+        response = self.client.get(
+            reverse('event_list'),
+            {'year': ['2024', '2025']},
+        )
+        self.assertEqual(response.status_code, 200)
+        ids = self._active_event_ids(response)
+        self.assertIn(self.evt_tasting.pk, ids)
+        self.assertIn(self.evt_special.pk, ids)
+        self.assertIn(self.evt_admin.pk, ids)
+
+    def test_filter_modal_single_year(self):
+        """Filtering by a single year excludes events from other years."""
+        response = self.client.get(
+            reverse('event_list'),
+            {'year': ['2024']},
+        )
+        self.assertEqual(response.status_code, 200)
+        ids = self._active_event_ids(response)
+        self.assertIn(self.evt_tasting.pk, ids)
+        self.assertNotIn(self.evt_special.pk, ids)
+        self.assertNotIn(self.evt_admin.pk, ids)
+
+    def test_active_filter_count_in_context(self):
+        """active_filter_count matches the number of filter groups that are active."""
+        # Two filter groups active: event_type and year
+        response = self.client.get(
+            reverse('event_list'),
+            {'event_type': ['tasting'], 'year': ['2024', '2025']},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['active_filter_count'], 2)
+
+    def test_active_filter_count_zero_when_no_filters(self):
+        """active_filter_count is 0 when no filters are active."""
+        # Clear any session filters first
+        self.client.get(reverse('event_list') + '?clear_filters=1')
+        response = self.client.get(reverse('event_list'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['active_filter_count'], 0)

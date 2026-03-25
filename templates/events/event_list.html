@@ -22,9 +22,6 @@
   .event-row-revision td:first-child {
     border-left: 3px solid #dc3545;
   }
-  /* Collapsible filter card */
-  #filterCard { border: 1px solid #dce3ec; }
-  .filter-label { font-size: .8rem; font-weight: 600; color: #495057; margin-bottom: .25rem; }
   /* Mobile event card */
   .event-card { border-left: 3px solid #dee2e6; }
   .event-card.revision { border-left-color: #dc3545; background: #fff5f5; }
@@ -34,189 +31,88 @@
   .event-card.complete  { border-left-color: #198754; }
   /* Desktop table: Draft row light red background */
   .event-row-draft td { background: #fff5f5 !important; }
+  /* Filter modal */
+  .filter-section-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6c757d;
+    margin-bottom: 0.4rem;
+  }
+  .filter-checkbox-inline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.75rem;
+  }
+  .filter-checkbox-scroll {
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.5rem;
+    background: #fff;
+  }
+  .filter-checkbox-scroll .form-check {
+    margin-bottom: 0.25rem;
+  }
+  .filter-checkbox-scroll .form-check:last-child {
+    margin-bottom: 0;
+  }
+  /* Mobile: full-screen modal */
+  @media (max-width: 575px) {
+    #filterModal .modal-dialog {
+      margin: 0;
+      max-width: 100%;
+      height: 100%;
+    }
+    #filterModal .modal-content {
+      height: 100%;
+      border-radius: 0;
+    }
+  }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
   <h4 class="mb-0 fw-semibold"><i class="bi bi-calendar-event me-2"></i>Events</h4>
-  <div class="d-flex gap-2 align-items-center">
-    {% if filters.status or filters.year or filters.month or filters.event_type or filters.creator or filters.distributor or filters.account_name or filters.city or filters.county %}
-    <a href="?tab={{ active_tab }}" class="badge bg-warning text-dark text-decoration-none">
-      <i class="bi bi-funnel-fill me-1"></i>Filters Active
-    </a>
-    {% endif %}
-    <button class="btn btn-sm btn-outline-secondary" type="button"
-            data-bs-toggle="collapse" data-bs-target="#filterCard"
-            aria-expanded="false" aria-controls="filterCard">
+  <div class="d-flex align-items-center gap-2">
+
+    {# Filter button with active count badge #}
+    <button type="button"
+            class="btn btn-outline-secondary btn-sm"
+            data-bs-toggle="modal"
+            data-bs-target="#filterModal"
+            id="filter-modal-btn">
       <i class="bi bi-funnel me-1"></i>Filters
+      <span id="filter-count-badge"
+            class="badge bg-warning text-dark ms-1
+                   {% if not filters_active %}d-none{% endif %}">
+        {{ active_filter_count }}
+      </span>
     </button>
+
+    {# Export CSV — outside modal, submits filter form #}
+    {% if user|has_perm:'can_export_events_csv' %}
+    <button type="submit"
+            form="event-filter-form"
+            formaction="{% url 'event_export_csv' %}"
+            class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-download me-1"></i>Export CSV
+    </button>
+    {% endif %}
+
+    {# New Event button #}
     {% if user|has_perm:'can_create_events' %}
-    <button type="button" class="btn btn-sm btn-primary"
-            data-bs-toggle="modal" data-bs-target="#newEventModal">
+    <button type="button"
+            class="btn btn-primary btn-sm"
+            data-bs-toggle="modal"
+            data-bs-target="#newEventModal">
       <i class="bi bi-plus-lg me-1"></i>New Event
     </button>
     {% endif %}
-  </div>
-</div>
 
-<!-- Filter bar -->
-<div class="collapse {% if filters_active %}show{% endif %} mb-3" id="filterCard">
-  <div class="card card-body py-3" id="filterCard">
-    <form method="get" action="{% url 'event_list' %}" autocomplete="off">
-      <input type="hidden" name="tab" value="{{ active_tab }}">
-      <div class="row g-2">
-
-        <!-- Status checkboxes -->
-        <div class="col-12 col-md-6 col-lg-4" id="status-filter-section">
-          <div class="filter-label">Status</div>
-          <div class="d-flex flex-wrap gap-2">
-            {% for val, label in status_choices %}
-            <div class="form-check form-check-inline">
-              <input class="form-check-input" type="checkbox" name="status"
-                     value="{{ val }}" id="st_{{ val }}"
-                     {% if val in filters.status %}checked{% endif %}>
-              <label class="form-check-label small" for="st_{{ val }}">{{ label }}</label>
-            </div>
-            {% endfor %}
-          </div>
-        </div>
-
-        <!-- Event Type -->
-        <div class="col-6 col-md-3 col-lg-2">
-          <label class="filter-label" for="filter_type">Type</label>
-          <select name="event_type" id="filter_type" class="form-select form-select-sm" autocomplete="off">
-            <option value="">All Types</option>
-            {% for val, label in event_type_choices %}
-            <option value="{{ val }}" {% if filters.event_type == val %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-          </select>
-        </div>
-
-        <!-- Year -->
-        <div class="col-6 col-md-3 col-lg-2">
-          <label class="filter-label" for="filter_year">Year</label>
-          <select name="year" id="filter_year" class="form-select form-select-sm" autocomplete="off">
-            <option value="">All Years</option>
-            {% for y in years %}
-            <option value="{{ y }}" {% if filters.year == y|stringformat:"d" %}selected{% endif %}>{{ y }}</option>
-            {% endfor %}
-          </select>
-        </div>
-
-        <!-- Month -->
-        <div class="col-6 col-md-3 col-lg-2">
-          <label class="filter-label" for="filter_month">Month</label>
-          <select name="month" id="filter_month" class="form-select form-select-sm" autocomplete="off">
-            <option value="">All Months</option>
-            {% for num, name in months %}
-            <option value="{{ num }}" {% if filters.month == num|stringformat:"d" %}selected{% endif %}>{{ name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-
-        <!-- Creator -->
-        <div class="col-6 col-md-3 col-lg-2">
-          <label class="filter-label" for="filter_creator">Creator</label>
-          <select name="creator" id="filter_creator" class="form-select form-select-sm" autocomplete="off">
-            <option value="">All Creators</option>
-            {% for c in creators %}
-            <option value="{{ c.pk }}" {% if filters.creator == c.pk|stringformat:"d" %}selected{% endif %}>
-              {{ c.get_full_name|default:c.username }}
-            </option>
-            {% endfor %}
-          </select>
-        </div>
-
-        <!-- Distributor -->
-        <div class="col-6 col-md-3 col-lg-3">
-          <label class="filter-label" for="filter_dist">Distributor</label>
-          <select name="distributor" id="filter_dist" class="form-select form-select-sm" autocomplete="off">
-            <option value="">All Distributors</option>
-            {% for d in distributors %}
-            <option value="{{ d.pk }}" {% if filters.distributor == d.pk|stringformat:"d" %}selected{% endif %}>{{ d.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-
-        <!-- Account name search -->
-        <div class="col-6 col-md-3 col-lg-3">
-          <label class="filter-label" for="filter_acct">Account</label>
-          <input type="text" name="account_name" id="filter_acct"
-                 class="form-control form-control-sm"
-                 placeholder="Account name…"
-                 value="{{ filters.account_name }}"
-                 autocomplete="off">
-        </div>
-
-        <!-- City -->
-        {% if available_cities %}
-        <div class="col-6 col-md-3 col-lg-3">
-          <div class="mb-2">
-            <label class="form-label small fw-semibold mb-1">City</label>
-            <select name="city"
-                    class="form-select form-select-sm"
-                    multiple
-                    autocomplete="off"
-                    size="4">
-              {% for city in available_cities %}
-              <option value="{{ city }}"
-                {% if city in filters.city %}
-                selected{% endif %}>
-                {{ city }}
-              </option>
-              {% endfor %}
-            </select>
-            <div class="form-text small">
-              Hold Ctrl/Cmd to select multiple
-            </div>
-          </div>
-        </div>
-        {% endif %}
-
-        <!-- County -->
-        {% if available_counties %}
-        <div class="col-6 col-md-3 col-lg-3">
-          <div class="mb-2">
-            <label class="form-label small fw-semibold mb-1">
-              County
-            </label>
-            <select name="county"
-                    class="form-select form-select-sm"
-                    multiple
-                    autocomplete="off"
-                    size="4">
-              {% for county in available_counties %}
-              <option value="{{ county }}"
-                {% if county in filters.county %}
-                selected{% endif %}>
-                {{ county }}
-              </option>
-              {% endfor %}
-            </select>
-            <div class="form-text small">
-              Hold Ctrl/Cmd to select multiple
-            </div>
-          </div>
-        </div>
-        {% endif %}
-
-        <!-- Buttons -->
-        <div class="col-12 d-flex gap-2 mt-1 flex-wrap">
-          <button type="submit" class="btn btn-sm btn-primary">
-            <i class="bi bi-search me-1"></i>Apply Filters
-          </button>
-          <a href="?tab={{ active_tab }}&clear_filters=1" id="clear-filters-link" class="btn btn-sm btn-outline-secondary">
-            <i class="bi bi-x-circle me-1"></i>Clear Filters
-          </a>
-          <button type="submit" formaction="{% url 'event_export_csv' %}"
-                  class="btn btn-sm btn-outline-success ms-auto">
-            <i class="bi bi-download me-1"></i>Export CSV
-          </button>
-        </div>
-
-      </div>
-    </form>
   </div>
 </div>
 
@@ -498,6 +394,224 @@
 
 </div>{# /tab-content #}
 
+<!-- ================================================================
+     Filter Modal
+     ================================================================ -->
+<div class="modal fade" id="filterModal" tabindex="-1"
+     aria-labelledby="filterModalLabel">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+
+      <div class="modal-header py-2">
+        <h6 class="modal-title fw-semibold" id="filterModalLabel">
+          <i class="bi bi-funnel me-1"></i>Filter Events
+        </h6>
+        <button type="button" class="btn-close"
+                data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+        <form method="get"
+              action="{% url 'event_list' %}"
+              id="event-filter-form"
+              autocomplete="off">
+          <input type="hidden" name="tab"
+                 id="filter-tab-input"
+                 value="{{ active_tab }}">
+
+          {# STATUS #}
+          <div class="mb-3" id="status-filter-section">
+            <div class="filter-section-label">Status</div>
+            <div class="filter-checkbox-inline">
+              {% for value, label in status_choices %}
+              <div class="form-check form-check-inline">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="status"
+                       id="status_{{ value }}"
+                       value="{{ value }}"
+                       {% if value in filters.status %}checked{% endif %}>
+                <label class="form-check-label small"
+                       for="status_{{ value }}">{{ label }}</label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          {# TYPE #}
+          <div class="mb-3">
+            <div class="filter-section-label">Type</div>
+            <div class="filter-checkbox-inline">
+              {% for value, label in event_type_choices %}
+              <div class="form-check form-check-inline">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="event_type"
+                       id="etype_{{ value }}"
+                       value="{{ value }}"
+                       {% if value in filters.event_type %}checked{% endif %}>
+                <label class="form-check-label small"
+                       for="etype_{{ value }}">{{ label }}</label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          {# YEAR and MONTH side by side #}
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <div class="filter-section-label">Year</div>
+              <div class="filter-checkbox-scroll">
+                {% for year in years %}
+                <div class="form-check">
+                  <input class="form-check-input"
+                         type="checkbox"
+                         name="year"
+                         id="year_{{ year }}"
+                         value="{{ year }}"
+                         {% if year|stringformat:"s" in filters.year %}checked{% endif %}>
+                  <label class="form-check-label small"
+                         for="year_{{ year }}">{{ year }}</label>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="filter-section-label">Month</div>
+              <div class="filter-checkbox-scroll">
+                {% for num, name in months %}
+                <div class="form-check">
+                  <input class="form-check-input"
+                         type="checkbox"
+                         name="month"
+                         id="month_{{ num }}"
+                         value="{{ num }}"
+                         {% if num|stringformat:"s" in filters.month %}checked{% endif %}>
+                  <label class="form-check-label small"
+                         for="month_{{ num }}">{{ name }}</label>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+
+          {# CREATOR #}
+          {% if creators %}
+          <div class="mb-3">
+            <div class="filter-section-label">Creator</div>
+            <div class="filter-checkbox-scroll">
+              {% for creator in creators %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="creator"
+                       id="creator_{{ creator.pk }}"
+                       value="{{ creator.pk }}"
+                       {% if creator.pk|stringformat:"s" in filters.creator %}checked{% endif %}>
+                <label class="form-check-label small"
+                       for="creator_{{ creator.pk }}">
+                  {{ creator.get_full_name|default:creator.username }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# DISTRIBUTOR #}
+          {% if distributors %}
+          <div class="mb-3">
+            <div class="filter-section-label">Distributor</div>
+            <div class="filter-checkbox-scroll">
+              {% for dist in distributors %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="distributor"
+                       id="dist_{{ dist.pk }}"
+                       value="{{ dist.pk }}"
+                       {% if dist.pk|stringformat:"s" in filters.distributor %}checked{% endif %}>
+                <label class="form-check-label small"
+                       for="dist_{{ dist.pk }}">{{ dist.name }}</label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# COUNTY #}
+          {% if available_counties %}
+          <div class="mb-3">
+            <div class="filter-section-label">County</div>
+            <div class="filter-checkbox-scroll">
+              {% for county in available_counties %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="county"
+                       id="county_{{ forloop.counter }}"
+                       value="{{ county }}"
+                       {% if county in filters.county %}checked{% endif %}>
+                <label class="form-check-label small"
+                       for="county_{{ forloop.counter }}">{{ county }}</label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# CITY #}
+          {% if available_cities %}
+          <div class="mb-3">
+            <div class="filter-section-label">City</div>
+            <div class="filter-checkbox-scroll">
+              {% for city in available_cities %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="city"
+                       id="city_{{ forloop.counter }}"
+                       value="{{ city }}"
+                       {% if city in filters.city %}checked{% endif %}>
+                <label class="form-check-label small"
+                       for="city_{{ forloop.counter }}">{{ city }}</label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# ACCOUNT NAME #}
+          <div class="mb-3">
+            <div class="filter-section-label">Account Name</div>
+            <input type="text"
+                   name="account_name"
+                   class="form-control form-control-sm"
+                   placeholder="Search by name..."
+                   value="{{ filters.account_name }}"
+                   autocomplete="off">
+          </div>
+
+        </form>
+      </div>
+
+      <div class="modal-footer py-2">
+        <a href="?tab={{ active_tab }}&clear_filters=1"
+           id="clear-filters-link"
+           class="btn btn-outline-secondary btn-sm me-auto">
+          <i class="bi bi-x-circle me-1"></i>Clear All
+        </a>
+        <button type="submit"
+                form="event-filter-form"
+                class="btn btn-primary btn-sm">
+          <i class="bi bi-check-lg me-1"></i>Apply Filters
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
 {% if user|has_perm:'can_create_events' %}
 <!-- ================================================================
      New Event — Event Type Selection Modal
@@ -552,29 +666,32 @@
       }
       window.history.replaceState({}, '', url.toString());
 
-      // Show/hide status filter
-      document.getElementById('status-filter-section').style.display = isPast ? 'none' : '';
+      // Show/hide status filter section in the modal
+      var statusSection = document.getElementById('status-filter-section');
+      if (statusSection) {
+        statusSection.style.display = isPast ? 'none' : '';
+      }
 
       // Update the hidden tab input in the filter form
-      const tabInput = document.querySelector('input[type="hidden"][name="tab"]');
+      var tabInput = document.getElementById('filter-tab-input');
       if (tabInput) {
         tabInput.value = isPast ? 'past' : 'active';
       }
 
       // Update the Clear Filters link href
-      const clearLink = document.getElementById('clear-filters-link');
+      var clearLink = document.getElementById('clear-filters-link');
       if (clearLink) {
-        const url = new URL(clearLink.href);
-        url.searchParams.set('tab', isPast ? 'past' : 'active');
-        url.searchParams.set('clear_filters', '1');
-        clearLink.href = url.toString();
+        var clearUrl = new URL(clearLink.href);
+        clearUrl.searchParams.set('tab', isPast ? 'past' : 'active');
+        clearUrl.searchParams.set('clear_filters', '1');
+        clearLink.href = clearUrl.toString();
       }
 
       // Update return_tab on all event detail links
-      document.querySelectorAll('a[data-return-tab]').forEach(link => {
-        const url = new URL(link.href);
-        url.searchParams.set('return_tab', isPast ? 'past' : 'active');
-        link.href = url.toString();
+      document.querySelectorAll('a[data-return-tab]').forEach(function(link) {
+        var linkUrl = new URL(link.href);
+        linkUrl.searchParams.set('return_tab', isPast ? 'past' : 'active');
+        link.href = linkUrl.toString();
       });
     });
   });

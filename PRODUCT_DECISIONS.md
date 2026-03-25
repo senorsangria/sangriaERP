@@ -2898,5 +2898,39 @@ Routes allow users to group accounts into named lists for planning and filtering
   `event_list_filters`), not from GET parameters
 - This guarantees the CSV always exports exactly what is visible on screen
 
-*Last updated: March 25, 2026 (Event filter refactor: shared function, city multi-select, CSV session filters)*
+---
+
+## Filter Modal — Standard UI Pattern (March 2026)
+
+### Pattern
+- Filterable list pages use a **modal window** for all filter controls, not a
+  collapsible inline panel
+- The modal is triggered by a "Filters" button in the top bar; a numeric badge
+  on the button shows how many filter groups are currently active
+- The filter form (`id="event-filter-form"`) lives inside the modal; the Export
+  CSV button sits outside the modal in the top bar and references the form via
+  the `form=` attribute, so it submits the same filter state without opening the modal
+
+### CSS Classes (defined per-page in `{% block extra_css %}`)
+- `filter-section-label` — small all-caps label above each filter group
+- `filter-checkbox-inline` — flex row of inline checkboxes (for short lists like Status, Type)
+- `filter-checkbox-scroll` — scrollable box (max 150px) with a border for longer lists
+  (Year, Month, Creator, Distributor, County, City)
+
+### Mobile
+- On screens ≤ 575px (`max-width: 575px`) the filter modal expands to full-screen
+  with no border-radius, using CSS on `#filterModal .modal-dialog` and `.modal-content`
+
+### Multi-Value Filters
+- All filter fields except `account_name` are stored as lists and submitted as
+  checkboxes; multiple selections use OR logic within a field
+- `get_filtered_event_queryset()` handles both list and legacy string values for
+  backward compatibility with old session data
+
+### Status Filter on Past Events Tab
+- The Status filter section (`id="status-filter-section"`) is hidden via JS when
+  the Past Events tab is active, both on tab switch (`shown.bs.tab`) and on
+  initial page load if `active_tab == 'past'`
+
+*Last updated: March 25, 2026 (Filter modal redesign: standard pattern, checkbox groups, multi-value fields)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
