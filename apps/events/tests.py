@@ -2238,3 +2238,215 @@ class CountyFilterTest(TestCase):
         self.assertIsNotNone(saved, 'Filters were not saved to session')
         self.assertIn('Essex', saved['county'])
         self.assertIn('Mercer', saved['county'])
+
+
+# ---------------------------------------------------------------------------
+# City filter multi-select tests
+# ---------------------------------------------------------------------------
+
+def make_account_with_city(company, name, city, county='Unknown', distributor=None):
+    return Account.objects.create(
+        company=company,
+        distributor=distributor,
+        name=name,
+        city=city,
+        state='NJ',
+        county=county,
+        is_active=True,
+    )
+
+
+class CityFilterMultiSelectTest(TestCase):
+    """City filter on the event list — multi-select OR logic."""
+
+    def setUp(self):
+        self.company = make_company('City Filter Co')
+        self.manager = make_user(self.company, 'supplier_admin', username='city_manager')
+        self.client = Client()
+        self.client.login(username='city_manager', password='testpass123')
+
+        self.acc_hoboken = make_account_with_city(self.company, 'Hoboken Store', 'Hoboken')
+        self.acc_newark  = make_account_with_city(self.company, 'Newark Store',  'Newark')
+        self.acc_trenton = make_account_with_city(self.company, 'Trenton Store', 'Trenton')
+
+        self.evt_hoboken = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=self.acc_hoboken,
+            date=date(2025, 7, 1),
+        )
+        self.evt_newark = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=self.acc_newark,
+            date=date(2025, 7, 2),
+        )
+        self.evt_trenton = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=self.acc_trenton,
+            date=date(2025, 7, 3),
+        )
+
+    def _active_event_ids(self, response):
+        event_ids = set()
+        for _label, _slug, events in response.context['event_groups']:
+            for e in events:
+                event_ids.add(e.pk)
+        return event_ids
+
+    def test_city_filter_multi_select(self):
+        """Filtering by multiple cities returns events for accounts in any of those cities."""
+        response = self.client.get(
+            reverse('event_list'),
+            {'city': ['Hoboken', 'Newark']},
+        )
+        self.assertEqual(response.status_code, 200)
+        ids = self._active_event_ids(response)
+        self.assertIn(self.evt_hoboken.pk, ids)
+        self.assertIn(self.evt_newark.pk, ids)
+        self.assertNotIn(self.evt_trenton.pk, ids)
+
+    def test_city_filter_single(self):
+        """Filtering by a single city returns only events in that city."""
+        response = self.client.get(
+            reverse('event_list'),
+            {'city': 'Hoboken'},
+        )
+        self.assertEqual(response.status_code, 200)
+        ids = self._active_event_ids(response)
+        self.assertIn(self.evt_hoboken.pk, ids)
+        self.assertNotIn(self.evt_newark.pk, ids)
+        self.assertNotIn(self.evt_trenton.pk, ids)
+
+    def test_city_filter_csv_respected(self):
+        """CSV export with city filter in session returns only matching events."""
+        # First save city filter to session
+        self.client.get(reverse('event_list'), {'city': ['Hoboken']})
+
+        response = self.client.get(reverse('event_export_csv'), {'tab': 'active'})
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode('utf-8')
+        self.assertIn('Hoboken Store', content)
+        self.assertNotIn('Newark Store', content)
+        self.assertNotIn('Trenton Store', content)
+
+
+# ---------------------------------------------------------------------------
+# County filter CSV export test
+# ---------------------------------------------------------------------------
+
+class CountyFilterCsvTest(TestCase):
+    """CSV export respects county filter from session."""
+
+    def setUp(self):
+        self.company = make_company('County CSV Co')
+        self.manager = make_user(self.company, 'supplier_admin', username='cc_manager')
+        self.client = Client()
+        self.client.login(username='cc_manager', password='testpass123')
+
+        self.acc_essex  = make_account_with_county(self.company, 'Essex CSV Store',  'Essex')
+        self.acc_mercer = make_account_with_county(self.company, 'Mercer CSV Store', 'Mercer')
+
+        make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=self.acc_essex,
+            date=date(2025, 8, 1),
+        )
+        make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=self.acc_mercer,
+            date=date(2025, 8, 2),
+        )
+
+    def test_county_filter_csv_respected(self):
+        """CSV export with county filter in session returns only matching events."""
+        # Save county filter to session
+        self.client.get(reverse('event_list'), {'county': ['Essex']})
+
+        response = self.client.get(reverse('event_export_csv'), {'tab': 'active'})
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode('utf-8')
+        self.assertIn('Essex CSV Store', content)
+        self.assertNotIn('Mercer CSV Store', content)
+
+
+# ---------------------------------------------------------------------------
+# Shared filter function unit tests
+# ---------------------------------------------------------------------------
+
+class SharedFilterFunctionTest(TestCase):
+    """get_filtered_event_queryset applies all filters correctly."""
+
+    def setUp(self):
+        from apps.events.views import get_filtered_event_queryset
+        self.get_filtered_event_queryset = get_filtered_event_queryset
+
+        self.company = make_company('Filter Fn Co')
+        self.manager = make_user(self.company, 'supplier_admin', username='ff_manager')
+
+        self.acc_hoboken = make_account_with_city(self.company, 'HK Store', 'Hoboken', county='Hudson')
+        self.acc_newark  = make_account_with_city(self.company, 'NK Store', 'Newark',  county='Essex')
+
+        self.evt_hoboken = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=self.acc_hoboken,
+            date=date(2025, 9, 1),
+        )
+        self.evt_newark = make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=self.acc_newark,
+            date=date(2025, 9, 2),
+        )
+
+    def _base_qs(self):
+        return Event.objects.filter(company=self.company).select_related('account')
+
+    def test_city_filter_list(self):
+        qs = self.get_filtered_event_queryset(self._base_qs(), {'city': ['Hoboken']})
+        pks = set(qs.values_list('pk', flat=True))
+        self.assertIn(self.evt_hoboken.pk, pks)
+        self.assertNotIn(self.evt_newark.pk, pks)
+
+    def test_city_filter_string_backward_compat(self):
+        """A string city value is treated as a single-item list."""
+        qs = self.get_filtered_event_queryset(self._base_qs(), {'city': 'Hoboken'})
+        pks = set(qs.values_list('pk', flat=True))
+        self.assertIn(self.evt_hoboken.pk, pks)
+        self.assertNotIn(self.evt_newark.pk, pks)
+
+    def test_county_filter_list(self):
+        qs = self.get_filtered_event_queryset(self._base_qs(), {'county': ['Essex']})
+        pks = set(qs.values_list('pk', flat=True))
+        self.assertIn(self.evt_newark.pk, pks)
+        self.assertNotIn(self.evt_hoboken.pk, pks)
+
+    def test_county_filter_or_logic(self):
+        qs = self.get_filtered_event_queryset(self._base_qs(), {'county': ['Essex', 'Hudson']})
+        pks = set(qs.values_list('pk', flat=True))
+        self.assertIn(self.evt_hoboken.pk, pks)
+        self.assertIn(self.evt_newark.pk, pks)
+
+    def test_year_filter(self):
+        qs = self.get_filtered_event_queryset(self._base_qs(), {'year': '2025'})
+        pks = set(qs.values_list('pk', flat=True))
+        self.assertIn(self.evt_hoboken.pk, pks)
+        self.assertIn(self.evt_newark.pk, pks)
+
+    def test_year_filter_no_match(self):
+        qs = self.get_filtered_event_queryset(self._base_qs(), {'year': '2020'})
+        self.assertEqual(qs.count(), 0)
+
+    def test_account_name_filter(self):
+        qs = self.get_filtered_event_queryset(self._base_qs(), {'account_name': 'HK'})
+        pks = set(qs.values_list('pk', flat=True))
+        self.assertIn(self.evt_hoboken.pk, pks)
+        self.assertNotIn(self.evt_newark.pk, pks)
+
+    def test_empty_filters_returns_all(self):
+        qs = self.get_filtered_event_queryset(self._base_qs(), {})
+        self.assertEqual(qs.count(), 2)

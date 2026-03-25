@@ -296,13 +296,15 @@ def _sort_events(events_qs):
 # Event List helpers
 # ---------------------------------------------------------------------------
 
-def _apply_event_filters(qs, filters):
+def get_filtered_event_queryset(base_qs, filters):
     """
-    Apply a filter dict to an event queryset.
+    Apply all event list filters to base_qs.
+    This is the single authoritative place for
+    event filtering logic. Both the event list
+    view and CSV export use this function.
+    """
+    qs = base_qs
 
-    Used by both event_list (which saves filters to session) and
-    event_export_csv (which reads filters from GET parameters).
-    """
     if filters.get('status'):
         qs = qs.filter(status__in=filters['status'])
 
@@ -329,21 +331,37 @@ def _apply_event_filters(qs, filters):
 
     if filters.get('distributor'):
         try:
-            qs = qs.filter(account__distributor_id=int(filters['distributor']))
+            qs = qs.filter(
+                account__distributor_id=int(filters['distributor'])
+            )
         except (ValueError, TypeError):
             pass
 
     if filters.get('account_name'):
-        qs = qs.filter(account__name__icontains=filters['account_name'])
+        qs = qs.filter(
+            account__name__icontains=filters['account_name']
+        )
 
-    if filters.get('city'):
-        qs = qs.filter(account__city__icontains=filters['city'])
+    # City — multi-select OR logic
+    city_filter = filters.get('city', [])
+    if isinstance(city_filter, str):
+        city_filter = [city_filter] if city_filter else []
+    if city_filter:
+        qs = qs.filter(account__city__in=city_filter)
 
+    # County — multi-select OR logic
     county_filter = filters.get('county', [])
+    if isinstance(county_filter, str):
+        county_filter = [county_filter] if county_filter else []
     if county_filter:
         qs = qs.filter(account__county__in=county_filter)
 
     return qs
+
+
+def _apply_event_filters(qs, filters):
+    """Deprecated: delegates to get_filtered_event_queryset."""
+    return get_filtered_event_queryset(qs, filters)
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +396,7 @@ def event_list(request):
             'creator':      request.GET.get('creator', ''),
             'distributor':  request.GET.get('distributor', ''),
             'account_name': request.GET.get('account_name', ''),
-            'city':         request.GET.get('city', ''),
+            'city':         request.GET.getlist('city'),
             'county':       request.GET.getlist('county'),
         }
         request.session[SESSION_KEY] = filters
@@ -386,36 +404,56 @@ def event_list(request):
         # Restore from session
         filters = request.session.get(SESSION_KEY, {
             'status': [], 'year': '', 'month': '', 'event_type': '',
-            'creator': '', 'distributor': '', 'account_name': '', 'city': '',
+            'creator': '', 'distributor': '', 'account_name': '', 'city': [],
             'county': [],
         })
+        # Backward compatibility: city may have been stored as a string
+        if isinstance(filters.get('city'), str):
+            city_str = filters['city']
+            filters['city'] = [city_str] if city_str else []
 
     active_tab = request.GET.get('tab', 'active')
 
-    # ---- Base queryset ----
-    qs = _get_visible_events(request.user)
-
-    # Hide drafts from ambassadors (already handled in _get_visible_events,
-    # but belt-and-suspenders here)
+    # ---- Base queryset (before filters) ----
+    base_qs = _get_visible_events(request.user)
     if not _can_view_drafts(request.user):
-        qs = qs.exclude(status=Event.Status.DRAFT)
+        base_qs = base_qs.exclude(status=Event.Status.DRAFT)
+
+    # Compute available cities and counties from combined visible events
+    # BEFORE filters are applied
+    available_cities = list(
+        base_qs
+        .exclude(account__city='')
+        .exclude(account__isnull=True)
+        .values_list('account__city', flat=True)
+        .distinct()
+        .order_by('account__city')
+    )
+
+    available_counties = list(
+        base_qs
+        .exclude(account__county='')
+        .exclude(account__county='Unknown')
+        .exclude(account__isnull=True)
+        .values_list('account__county', flat=True)
+        .distinct()
+        .order_by('account__county')
+    )
 
     # Split into active (non-paid) and past (paid) querysets
-    active_qs = qs.exclude(status=Event.Status.PAID)
-    paid_qs   = qs.filter(status=Event.Status.PAID)
+    active_qs = base_qs.exclude(status=Event.Status.PAID)
+    paid_qs   = base_qs.filter(status=Event.Status.PAID)
 
     # Apply all filters (including status) to active events
-    active_qs = _apply_event_filters(active_qs, filters)
+    active_qs = get_filtered_event_queryset(active_qs, filters)
 
     # Apply non-status filters to paid events (status filter excluded for past tab)
     filters_no_status = {**filters, 'status': []}
-    paid_qs = _apply_event_filters(paid_qs, filters_no_status)
+    paid_qs = get_filtered_event_queryset(paid_qs, filters_no_status)
 
     # ---- Build filter sidebar data ----
     # Years from event dates (from full visible set, not filtered)
-    all_events = _get_visible_events(request.user)
-    if not _can_view_drafts(request.user):
-        all_events = all_events.exclude(status=Event.Status.DRAFT)
+    all_events = base_qs
 
     distinct_years = (
         all_events.exclude(date__isnull=True)
@@ -432,10 +470,10 @@ def event_list(request):
     creators = User.objects.filter(pk__in=creator_pks).order_by('last_name', 'first_name')
 
     # Scope distributors to those appearing in visible events
-    active_dist_pks = qs.values_list(
+    active_dist_pks = base_qs.exclude(status=Event.Status.PAID).values_list(
         'account__distributor_id', flat=True
     ).distinct()
-    past_dist_pks = paid_qs.values_list(
+    past_dist_pks = base_qs.filter(status=Event.Status.PAID).values_list(
         'account__distributor_id', flat=True
     ).distinct()
 
@@ -445,16 +483,6 @@ def event_list(request):
     distributors = Distributor.objects.filter(
         pk__in=all_dist_pks
     ).order_by('name')
-
-    available_counties = list(
-        all_events
-        .exclude(account__county='')
-        .exclude(account__county='Unknown')
-        .exclude(account__isnull=True)
-        .values_list('account__county', flat=True)
-        .distinct()
-        .order_by('account__county')
-    )
 
     # ---- Group and sort ----
     event_groups, _ = _sort_events(active_qs)
@@ -483,6 +511,7 @@ def event_list(request):
         'years':            years,
         'creators':         creators,
         'distributors':       distributors,
+        'available_cities':   available_cities,
         'available_counties': available_counties,
         'event_type_choices': Event.EventType.choices,
         'status_choices':     Event.Status.choices,
@@ -521,29 +550,34 @@ def event_export_csv(request):
     if not request.user.has_permission('can_view_events'):
         return render(request, '403.html', status=403)
 
-    # Build filter dict from GET parameters (same keys as event_list session)
-    filters = {
-        'status':       request.GET.getlist('status'),
-        'year':         request.GET.get('year', ''),
-        'month':        request.GET.get('month', ''),
-        'event_type':   request.GET.get('event_type', ''),
-        'creator':      request.GET.get('creator', ''),
-        'distributor':  request.GET.get('distributor', ''),
-        'account_name': request.GET.get('account_name', ''),
-        'city':         request.GET.get('city', ''),
-    }
+    # Read filters from session (same session key as event list view)
+    SESSION_KEY = 'event_list_filters'
+    filters = request.session.get(SESSION_KEY, {
+        'status': [], 'year': '', 'month': '', 'event_type': '',
+        'creator': '', 'distributor': '', 'account_name': '', 'city': [],
+        'county': [],
+    })
+    # Backward compatibility: city may have been stored as a string
+    if isinstance(filters.get('city'), str):
+        city_str = filters['city']
+        filters['city'] = [city_str] if city_str else []
 
     tab = request.GET.get('tab', 'active')
 
     qs = _get_visible_events(request.user)
     if not _can_view_drafts(request.user):
         qs = qs.exclude(status=Event.Status.DRAFT)
-    qs = _apply_event_filters(qs, filters)
 
+    # Apply tab scoping
     if tab == 'past':
         qs = qs.filter(status=Event.Status.PAID)
+        # No status filter for paid tab
+        filters_for_export = {**filters, 'status': []}
     else:
         qs = qs.exclude(status=Event.Status.PAID)
+        filters_for_export = filters
+
+    qs = get_filtered_event_queryset(qs, filters_for_export)
 
     # Fetch all events with related data in a single pass
     events = list(

@@ -150,14 +150,29 @@
         </div>
 
         <!-- City -->
+        {% if available_cities %}
         <div class="col-6 col-md-3 col-lg-3">
-          <label class="filter-label" for="filter_city">City</label>
-          <input type="text" name="city" id="filter_city"
-                 class="form-control form-control-sm"
-                 placeholder="City…"
-                 value="{{ filters.city }}"
-                 autocomplete="off">
+          <div class="mb-2">
+            <label class="form-label small fw-semibold mb-1">City</label>
+            <select name="city"
+                    class="form-select form-select-sm"
+                    multiple
+                    autocomplete="off"
+                    size="4">
+              {% for city in available_cities %}
+              <option value="{{ city }}"
+                {% if city in filters.city %}
+                selected{% endif %}>
+                {{ city }}
+              </option>
+              {% endfor %}
+            </select>
+            <div class="form-text small">
+              Hold Ctrl/Cmd to select multiple
+            </div>
+          </div>
         </div>
+        {% endif %}
 
         <!-- County -->
         {% if available_counties %}

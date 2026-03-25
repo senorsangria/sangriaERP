@@ -2866,5 +2866,37 @@ Routes allow users to group accounts into named lists for planning and filtering
 - Route sharing — allow a TM to share a route with a colleague
 - Route templates — copy a route as starting point for a new one
 
-*Last updated: March 22, 2026 (Routes feature: models, API, report integration)*
+---
+
+## Event List Filtering — Architecture (March 2026)
+
+### Single Authoritative Filter Function
+- `get_filtered_event_queryset(base_qs, filters)` in `apps/events/views.py` is
+  the single authoritative place for all event list filter logic
+- Both the event list view (`event_list`) and the CSV export view
+  (`event_export_csv`) use this function — filters are never applied inline in
+  views
+- The event list view passes a `filters_no_status` dict (status cleared) to the
+  paid/past queryset so status checkboxes don't affect the Past Events tab;
+  the CSV export mirrors this pattern
+
+### City Filter — Multi-Select
+- City changed from a free-text `icontains` search to a multi-select list
+- Available cities are computed from the combined visible events (active + paid)
+  **before** any filters are applied, so the select always shows all options
+- Multiple cities use OR logic (same as county)
+- The session stores city as a list; backward compatibility converts old string
+  values to a single-item list on read
+
+### County and City Options — Computed Before Filters
+- Both `available_cities` and `available_counties` are derived from `base_qs`
+  (all events visible to the user, before any filter is applied)
+- This ensures filter options are never restricted by currently active filters
+
+### CSV Export — Session-Based Filters
+- The CSV export reads filters exclusively from the session (key:
+  `event_list_filters`), not from GET parameters
+- This guarantees the CSV always exports exactly what is visible on screen
+
+*Last updated: March 25, 2026 (Event filter refactor: shared function, city multi-select, CSV session filters)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
