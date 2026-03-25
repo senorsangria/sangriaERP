@@ -1051,41 +1051,84 @@ class AccountDetailTest(TestCase):
         self.assertEqual(row['last_full_year_total'], 0)
         self.assertIsNone(row['change_pct'])
 
-    def test_status_icon_in_row(self):
-        """status_icon key present and correct for each status type."""
-        from apps.catalog.models import Brand
-        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
-
-        # Non-buy: sale only in Jan 2025 (before window)
-        nb = Item.objects.create(brand=brand, item_code='ICNB', name='Icon Nonbuy', sort_order=86)
-        make_sale(self.company, self.batch, self.account, nb, date(2025, 1, 15), 10)
-
-        # New: sale only in Jan 2026 (window, no LFY)
-        nw = Item.objects.create(brand=brand, item_code='ICNW', name='Icon New', sort_order=85)
-        make_sale(self.company, self.batch, self.account, nw, date(2026, 1, 15), 5)
+    def test_diff_lfy_by_month_calculated(self):
+        """diff_lfy_by_month[m] = last_full_year_by_month[m] - prior_year_by_month[m]."""
+        # Add prior year (2024) sales for item_a in months 3 and 6
+        make_sale(self.company, self.batch, self.account, self.item_a, date(2024, 3, 15), 4)
+        make_sale(self.company, self.batch, self.account, self.item_a, date(2024, 6, 15), 6)
 
         response = self.client.get(self._url())
         self.assertEqual(response.status_code, 200)
         rows = response.context['rows']
+        row_a = next(r for r in rows if r['item_name'] == 'Item A')
 
-        # All rows must have status_icon
-        for row in rows:
-            self.assertIn('status_icon', row, f'Row {row["item_name"]} missing status_icon')
+        # LFY (2025) month 3 = 10, prior year (2024) month 3 = 4 → diff = 6
+        self.assertEqual(row_a['diff_lfy_by_month'][3], 10 - 4)
+        # LFY month 6 = 10, prior year month 6 = 6 → diff = 4
+        self.assertEqual(row_a['diff_lfy_by_month'][6], 10 - 6)
+        # LFY month 1 = 0, prior year month 1 = 0 → diff = 0
+        self.assertEqual(row_a['diff_lfy_by_month'][1], 0)
 
-        # Check specific icons by status
-        expected = {
-            'non_buy': '⚫',
-            'declining': '🔴',
-            'steady': '⚪',
-            'growing': '🟢',
-            'new': '🟡',
-        }
-        for row in rows:
-            self.assertEqual(
-                row['status_icon'],
-                expected[row['status']],
-                f'Wrong icon for status {row["status"]}',
-            )
+    def test_diff_cy_actual_calculated(self):
+        """diff_cy_actual_by_month[m] = current_actual_by_month[m] - last_full_year_by_month[m]."""
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        row_a = next(r for r in rows if r['item_name'] == 'Item A')
+
+        # CY Jan (2026) = 8, LFY Jan (2025) = 0 → diff = 8
+        self.assertEqual(row_a['diff_cy_actual_by_month'][1], 8 - 0)
+        # CY Feb (2026) = 12, LFY Feb (2025) = 0 → diff = 12
+        self.assertEqual(row_a['diff_cy_actual_by_month'][2], 12 - 0)
+
+    def test_events_by_month_counted(self):
+        """lfy_events_by_month counts events for the account in LFY correctly."""
+        from apps.events.models import Event
+
+        # Create 2 events in Jan 2025 and 1 event in Mar 2025 (LFY = 2025)
+        Event.objects.create(
+            company=self.company, account=self.account, date=date(2025, 1, 10),
+        )
+        Event.objects.create(
+            company=self.company, account=self.account, date=date(2025, 1, 20),
+        )
+        Event.objects.create(
+            company=self.company, account=self.account, date=date(2025, 3, 15),
+        )
+        # Event for a different account — should not be counted
+        Event.objects.create(
+            company=self.company, account=self.other_account, date=date(2025, 1, 5),
+        )
+
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        lem = response.context['lfy_events_by_month']
+
+        self.assertEqual(lem.get(1), 2, 'Expected 2 events in Jan 2025')
+        self.assertEqual(lem.get(3), 1, 'Expected 1 event in Mar 2025')
+        self.assertIsNone(lem.get(6), 'Expected no events in Jun 2025')
+
+    def test_projected_diff_none_when_no_prior(self):
+        """diff_cy_projected_by_month[m] is None when projected value is None (new item)."""
+        from apps.catalog.models import Brand
+        brand = Brand.objects.get(company=self.company, name='Alpha Brand')
+        # New item: sale only in CY 2026, no LFY data → multiplier=None → projected=None
+        new_item = Item.objects.create(
+            brand=brand, item_code='DIFFNEW', name='Diff New Item', sort_order=84,
+        )
+        make_sale(self.company, self.batch, self.account, new_item, date(2026, 1, 15), 10)
+
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        row = next((r for r in rows if r['item_name'] == 'Diff New Item'), None)
+        self.assertIsNotNone(row)
+        self.assertEqual(row['last_full_year_total'], 0)
+
+        # All projected months should have None diff
+        proj_diff = row['diff_cy_projected_by_month']
+        for m, val in proj_diff.items():
+            self.assertIsNone(val, f'Expected None diff for projected month {m} on new item')
 
     def test_total_change_pct_in_portfolio_totals(self):
         """portfolio_totals.total_change_pct = round((last_12_total - prior) / prior * 100, 1)."""

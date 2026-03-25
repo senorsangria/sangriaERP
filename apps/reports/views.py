@@ -7,7 +7,8 @@ from datetime import date
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db.models import Max, Sum
+from django.db.models import Count, Max, Sum
+from django.db.models.functions import ExtractMonth
 from django.http import Http404, HttpResponse, HttpResponseForbidden
 from django.shortcuts import redirect, render
 
@@ -15,6 +16,7 @@ from apps.accounts.models import Account
 from apps.accounts.utils import get_accounts_for_user, get_distributors_for_user
 from apps.catalog.models import Item
 from apps.routes.models import Route
+from apps.events.models import Event
 from apps.sales.models import SalesRecord
 
 
@@ -770,6 +772,47 @@ def account_detail_sales(request, account_id):
     ):
         last12_data[row['item_id']] = row['units']
 
+    # Prior year monthly data for diff calculation
+    prior_year = last_full_year - 1
+
+    prior_year_qs = SalesRecord.objects.filter(
+        account=account,
+        sale_date__year=prior_year,
+    ).values(
+        'item_id',
+        month=ExtractMonth('sale_date'),
+    ).annotate(total=Sum('quantity'))
+
+    prior_year_data = {
+        (r['item_id'], r['month']): r['total']
+        for r in prior_year_qs
+    }
+
+    # Events per month for LFY
+    lfy_events = Event.objects.filter(
+        account=account,
+        date__year=last_full_year,
+    ).values(
+        month=ExtractMonth('date')
+    ).annotate(count=Count('id'))
+
+    lfy_events_by_month = {
+        r['month']: r['count'] for r in lfy_events
+    }
+
+    # Events per month for CY (actual months only)
+    cy_events = Event.objects.filter(
+        account=account,
+        date__year=current_year,
+        date__month__in=actual_months,
+    ).values(
+        month=ExtractMonth('date')
+    ).annotate(count=Count('id'))
+
+    cy_events_by_month = {
+        r['month']: r['count'] for r in cy_events
+    }
+
     # ---- Build per-item rows ---------------------------------------------
     all_months = list(range(1, 13))
 
@@ -831,13 +874,27 @@ def account_detail_sales(request, account_id):
             if last_full_year_total > 0
             else None
         )
-        status_icon = {
-            'non_buy': '⚫',
-            'declining': '🔴',
-            'steady': '⚪',
-            'growing': '🟢',
-            'new': '🟡',
-        }[status]
+        prior_year_by_month = {
+            m: prior_year_data.get((item_id, m), 0)
+            for m in all_months
+        }
+
+        diff_lfy_by_month = {
+            m: last_full_year_by_month[m] - prior_year_by_month[m]
+            for m in all_months
+        }
+
+        diff_cy_actual_by_month = {
+            m: current_actual_by_month[m] - last_full_year_by_month[m]
+            for m in actual_months
+        }
+
+        diff_cy_projected_by_month = {
+            m: (current_projected_by_month[m] - last_full_year_by_month[m])
+               if current_projected_by_month[m] is not None
+               else None
+            for m in projected_months
+        }
 
         rows.append({
             'item_name': item.name,
@@ -847,6 +904,10 @@ def account_detail_sales(request, account_id):
             'last_full_year_by_month': last_full_year_by_month,
             'current_actual_by_month': current_actual_by_month,
             'current_projected_by_month': current_projected_by_month,
+            'prior_year_by_month': prior_year_by_month,
+            'diff_lfy_by_month': diff_lfy_by_month,
+            'diff_cy_actual_by_month': diff_cy_actual_by_month,
+            'diff_cy_projected_by_month': diff_cy_projected_by_month,
             'last_full_year_total': last_full_year_total,
             'current_actual_total': current_actual_total,
             'current_projected_total': current_projected_total,
@@ -857,7 +918,6 @@ def account_detail_sales(request, account_id):
             'status': status,
             'status_priority': status_priority,
             'change_pct': change_pct,
-            'status_icon': status_icon,
         })
 
     # Sort by status_priority, then brand_name, sort_order, item_name
@@ -911,6 +971,24 @@ def account_detail_sales(request, account_id):
         'diff_last_12_vs_last_year': sum(r['diff_last_12_vs_last_year'] for r in rows),
         'diff_current_vs_last_year': sum(r['diff_current_vs_last_year'] for r in rows),
     }
+    totals['diff_lfy_by_month'] = {
+        m: sum(row['diff_lfy_by_month'][m] for row in rows)
+        for m in all_months
+    }
+    totals['diff_cy_actual_by_month'] = {
+        m: sum(row['diff_cy_actual_by_month'][m] for row in rows)
+        for m in actual_months
+    }
+    totals['diff_cy_projected_by_month'] = {
+        m: sum(
+            r for r in [
+                row['diff_cy_projected_by_month'][m]
+                for row in rows
+            ]
+            if r is not None
+        )
+        for m in projected_months
+    }
 
     month_names = {i: date(2000, i, 1).strftime('%b') for i in all_months}
 
@@ -927,6 +1005,8 @@ def account_detail_sales(request, account_id):
         'month_names': month_names,
         'totals': totals,
         'current_year_colspan': len(actual_months) + len(projected_months),
+        'lfy_events_by_month': lfy_events_by_month,
+        'cy_events_by_month': cy_events_by_month,
         'status_counts': status_counts,
         'portfolio_totals': portfolio_totals,
     })

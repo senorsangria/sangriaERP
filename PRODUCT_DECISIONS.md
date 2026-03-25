@@ -2453,6 +2453,27 @@ negative highlighting on monthly cells. The Portfolio Status Change column uses 
 conditionals (not JS) for three-way green/red/muted coloring on both the raw number and percentage.
 `diff-col` class is NOT used on the Portfolio Status Change column.
 
+**Events row (Full Sales History):** A pinned `<tbody id="detailEventsBody">` row appears above
+the Totals row. It shows event counts per month for LFY (Jan–Dec) and CY actual months. Projected
+month cells show a static dash (no event data). Counts are sourced from `Event.objects.filter(
+account=account, date__year=...)` grouped by `ExtractMonth('date')`. Context variables:
+`lfy_events_by_month` and `cy_events_by_month` (both dicts keyed by month integer).
+
+**Diff row (Full Sales History):** A pinned `<tbody id="detailDiffBody">` row appears below the
+Totals row. It shows the month-over-month year comparison:
+- LFY columns: `last_full_year_by_month[m] - prior_year_by_month[m]`
+- CY actual columns: `current_actual_by_month[m] - last_full_year_by_month[m]`
+- CY projected columns: `current_projected_by_month[m] - last_full_year_by_month[m]`
+  (None if the projected value is None, i.e., new items with no LFY baseline).
+The prior year (`prior_year = last_full_year - 1`) is queried from `SalesRecord` using
+`ExtractMonth` and stored in `prior_year_data`. Each row dict includes `diff_lfy_by_month`,
+`diff_cy_actual_by_month`, and `diff_cy_projected_by_month`. Totals dict includes matching
+aggregate dicts. Diff cells use the `diff-col` class and are colored by `applyNegativeColors()`.
+
+**Portfolio Status icons removed:** The Status badge column no longer includes emoji icons
+(⚫🔴⚪🟢🟡). Badges show text-only labels: Non-buy, Declining, Steady, Growing, New.
+The `status_icon` key has been removed from per-row dicts in `account_detail_sales`.
+
 **Main report link:** Account Name column in `account_sales_by_year.html` is now a link
 to `report_account_detail`. Each row dict in `account_sales_by_year` includes `account_id`.
 

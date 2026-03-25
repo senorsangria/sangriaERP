@@ -199,14 +199,13 @@
                 {% if row.change_pct > 0 %}+{% endif %}{{ row.change_pct }}%
               </span>
               {% endif %}
-              <span class="ms-1">{{ row.status_icon }}</span>
             </td>
             <td>
-              {% if row.status == 'non_buy' %}<span class="badge bg-dark text-white">⚫ Non-buy</span>
-              {% elif row.status == 'declining' %}<span class="badge bg-danger text-white">🔴 Declining</span>
-              {% elif row.status == 'steady' %}<span class="badge bg-secondary text-white">⚪ Steady</span>
-              {% elif row.status == 'growing' %}<span class="badge bg-success text-white">🟢 Growing</span>
-              {% elif row.status == 'new' %}<span class="badge bg-warning text-dark">🟡 New</span>{% endif %}
+              {% if row.status == 'non_buy' %}<span class="badge bg-dark text-white">Non-buy</span>
+              {% elif row.status == 'declining' %}<span class="badge bg-danger text-white">Declining</span>
+              {% elif row.status == 'steady' %}<span class="badge bg-secondary text-white">Steady</span>
+              {% elif row.status == 'growing' %}<span class="badge bg-success text-white">Growing</span>
+              {% elif row.status == 'new' %}<span class="badge bg-warning text-dark">New</span>{% endif %}
             </td>
           </tr>
           {% empty %}
@@ -258,6 +257,32 @@
             </tr>
           </thead>
 
+          <!-- Events row -->
+          <tbody id="detailEventsBody">
+            <tr class="table-info fw-semibold">
+              <td class="sticky-col small">Events</td>
+              {% for m in all_months %}
+              <td class="text-end small"
+                  data-value="{{ lfy_events_by_month|get_item:m|default:0 }}">
+                {% with val=lfy_events_by_month|get_item:m %}
+                {% if val %}{{ val }}{% endif %}
+                {% endwith %}
+              </td>
+              {% endfor %}
+              {% for m in actual_months %}
+              <td class="text-end small"
+                  data-value="{{ cy_events_by_month|get_item:m|default:0 }}">
+                {% with val=cy_events_by_month|get_item:m %}
+                {% if val %}{{ val }}{% endif %}
+                {% endwith %}
+              </td>
+              {% endfor %}
+              {% for m in projected_months %}
+              <td class="text-end small text-muted">—</td>
+              {% endfor %}
+            </tr>
+          </tbody>
+
           <!-- Totals row (pinned) -->
           <tbody id="detailTotalsBody">
             <tr>
@@ -275,6 +300,43 @@
               {% for m in projected_months %}
               {% with val=totals.current_projected_by_month|get_item:m %}
               <td class="text-end proj-cell" data-value="{{ val|default:0 }}">{{ val|default:0|intcomma }}</td>
+              {% endwith %}
+              {% endfor %}
+            </tr>
+          </tbody>
+
+          <!-- Diff row -->
+          <tbody id="detailDiffBody">
+            <tr class="fw-semibold">
+              <td class="sticky-col small">Diff</td>
+              {% for m in all_months %}
+              {% with val=totals.diff_lfy_by_month|get_item:m %}
+              <td class="text-end small diff-col"
+                  data-value="{{ val|default:0 }}">
+                {% if val %}
+                  {% if val > 0 %}+{% endif %}{{ val|intcomma }}
+                {% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+              {% for m in actual_months %}
+              {% with val=totals.diff_cy_actual_by_month|get_item:m %}
+              <td class="text-end small diff-col"
+                  data-value="{{ val|default:0 }}">
+                {% if val %}
+                  {% if val > 0 %}+{% endif %}{{ val|intcomma }}
+                {% endif %}
+              </td>
+              {% endwith %}
+              {% endfor %}
+              {% for m in projected_months %}
+              {% with val=totals.diff_cy_projected_by_month|get_item:m %}
+              <td class="text-end small proj-cell diff-col"
+                  data-value="{{ val|default:0 }}">
+                {% if val is not None %}
+                  {% if val > 0 %}+{% endif %}{{ val|intcomma }}
+                {% endif %}
+              </td>
               {% endwith %}
               {% endfor %}
             </tr>
