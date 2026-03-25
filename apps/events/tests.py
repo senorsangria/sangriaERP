@@ -2331,6 +2331,40 @@ class CityFilterMultiSelectTest(TestCase):
         self.assertNotIn('Newark Store', content)
         self.assertNotIn('Trenton Store', content)
 
+    def test_city_options_reflect_distributor_filter(self):
+        """After filtering by distributor, available_cities only contains cities
+        from that distributor's events."""
+        dist_a = make_distributor(self.company, name='Dist A')
+        dist_b = make_distributor(self.company, name='Dist B')
+
+        acc_dist_a = make_account_with_city(
+            self.company, 'Dist A Store', 'Bayonne', distributor=dist_a
+        )
+        acc_dist_b = make_account_with_city(
+            self.company, 'Dist B Store', 'Princeton', distributor=dist_b
+        )
+        make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=acc_dist_a,
+            date=date(2025, 7, 10),
+        )
+        make_event(
+            self.company, self.manager, Event.EventType.TASTING,
+            status=Event.Status.SCHEDULED,
+            account=acc_dist_b,
+            date=date(2025, 7, 11),
+        )
+
+        response = self.client.get(
+            reverse('event_list'),
+            {'distributor': str(dist_a.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        available_cities = response.context['available_cities']
+        self.assertIn('Bayonne', available_cities)
+        self.assertNotIn('Princeton', available_cities)
+
 
 # ---------------------------------------------------------------------------
 # County filter CSV export test

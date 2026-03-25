@@ -419,10 +419,26 @@ def event_list(request):
     if not _can_view_drafts(request.user):
         base_qs = base_qs.exclude(status=Event.Status.DRAFT)
 
-    # Compute available cities and counties from combined visible events
-    # BEFORE filters are applied
+    # Split base into active and paid before applying filters
+    base_active_qs = base_qs.exclude(status=Event.Status.PAID)
+    base_paid_qs   = base_qs.filter(status=Event.Status.PAID)
+
+    # Apply all filters (including status) to active events
+    active_qs = get_filtered_event_queryset(base_active_qs, filters)
+
+    # Apply non-status filters to paid events (status filter excluded for past tab)
+    filters_no_status = {**filters, 'status': []}
+    paid_qs = get_filtered_event_queryset(base_paid_qs, filters_no_status)
+
+    # Compute available cities: all filters except city applied to both tabs
+    filters_no_city = {k: v for k, v in filters.items() if k != 'city'}
+    qs_no_city = get_filtered_event_queryset(base_active_qs, filters_no_city)
+    paid_qs_no_city = get_filtered_event_queryset(
+        base_paid_qs, {**filters_no_city, 'status': []}
+    )
+    combined_no_city = (qs_no_city | paid_qs_no_city).distinct()
     available_cities = list(
-        base_qs
+        combined_no_city
         .exclude(account__city='')
         .exclude(account__isnull=True)
         .values_list('account__city', flat=True)
@@ -430,8 +446,15 @@ def event_list(request):
         .order_by('account__city')
     )
 
+    # Compute available counties: all filters except county applied to both tabs
+    filters_no_county = {k: v for k, v in filters.items() if k != 'county'}
+    qs_no_county = get_filtered_event_queryset(base_active_qs, filters_no_county)
+    paid_qs_no_county = get_filtered_event_queryset(
+        base_paid_qs, {**filters_no_county, 'status': []}
+    )
+    combined_no_county = (qs_no_county | paid_qs_no_county).distinct()
     available_counties = list(
-        base_qs
+        combined_no_county
         .exclude(account__county='')
         .exclude(account__county='Unknown')
         .exclude(account__isnull=True)
@@ -439,17 +462,6 @@ def event_list(request):
         .distinct()
         .order_by('account__county')
     )
-
-    # Split into active (non-paid) and past (paid) querysets
-    active_qs = base_qs.exclude(status=Event.Status.PAID)
-    paid_qs   = base_qs.filter(status=Event.Status.PAID)
-
-    # Apply all filters (including status) to active events
-    active_qs = get_filtered_event_queryset(active_qs, filters)
-
-    # Apply non-status filters to paid events (status filter excluded for past tab)
-    filters_no_status = {**filters, 'status': []}
-    paid_qs = get_filtered_event_queryset(paid_qs, filters_no_status)
 
     # ---- Build filter sidebar data ----
     # Years from event dates (from full visible set, not filtered)
