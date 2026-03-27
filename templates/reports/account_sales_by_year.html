@@ -226,7 +226,10 @@
             <th class="sortable text-end" data-col="{{ forloop.counter|add:3 }}">{{ year }}</th>
             {% endfor %}
             {% if prior_year %}
-            <th class="text-end">{{ most_recent_year }} Diff</th>
+            <th class="sortable text-end"
+                data-col="{{ years|length|add:4 }}">
+              {{ most_recent_year }} Diff
+            </th>
             {% endif %}
             <th class="sortable text-end" data-col="{% if prior_year %}{{ years|length|add:5 }}{% else %}{{ years|length|add:4 }}{% endif %}">Last 12m</th>
             <th class="sortable text-end" data-col="{% if prior_year %}{{ years|length|add:6 }}{% else %}{{ years|length|add:5 }}{% endif %}">Diff</th>
