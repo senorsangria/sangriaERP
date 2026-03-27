@@ -228,7 +228,6 @@ def account_sales_by_year(request):
         1 if current_filters.get('on_off') else 0,
         1 if current_filters.get('city') else 0,
         1 if current_filters.get('county') else 0,
-        1 if current_filters.get('account_type') else 0,
         1 if current_filters.get('class_of_trade') else 0,
         1 if current_filters.get('distributor_route') else 0,
         1 if current_filters.get('route_id') else 0,
@@ -333,6 +332,7 @@ def account_sales_by_year(request):
         [:4]
     )  # ascending: oldest year left, newest year right
     most_recent_year = years[-1] if years else None
+    prior_year = years[-2] if len(years) >= 2 else None
 
     # ---- Base queryset --------------------------------------------------
     base_qs = SalesRecord.objects.filter(
@@ -401,6 +401,10 @@ def account_sales_by_year(request):
         last_12_units = last12_data.get(account_id, 0)
         most_recent_year_units = year_units.get(most_recent_year, 0) if most_recent_year else 0
         diff = last_12_units - most_recent_year_units
+        lfy_diff = (
+            year_units.get(most_recent_year, 0) - year_units.get(prior_year, 0)
+            if prior_year and most_recent_year else None
+        )
 
         on_off = account.on_off_premise if account.on_off_premise in ('ON', 'OFF') else 'Unknown'
 
@@ -412,6 +416,7 @@ def account_sales_by_year(request):
             'year_units': year_units,
             'last_12_units': last_12_units,
             'diff': diff,
+            'lfy_diff': lfy_diff,
         })
 
     rows.sort(key=lambda r: r['account_name'])
@@ -421,6 +426,10 @@ def account_sales_by_year(request):
     total_last_12 = sum(r['last_12_units'] for r in rows)
     most_recent_year_total = total_by_year.get(most_recent_year, 0) if most_recent_year else 0
     total_diff = total_last_12 - most_recent_year_total
+    total_lfy_diff = (
+        total_by_year.get(most_recent_year, 0) - total_by_year.get(prior_year, 0)
+        if prior_year and most_recent_year else None
+    )
 
     return render(request, 'reports/account_sales_by_year.html', {
         'rows': rows,
@@ -436,8 +445,11 @@ def account_sales_by_year(request):
         'total_by_year': total_by_year,
         'total_last_12': total_last_12,
         'total_diff': total_diff,
+        'total_lfy_diff': total_lfy_diff,
         'user_routes': user_routes,
         'active_filter_count': active_filter_count,
+        'most_recent_year': most_recent_year,
+        'prior_year': prior_year,
     })
 
 
@@ -587,6 +599,7 @@ def account_sales_by_year_csv(request):
         [:4]
     )
     most_recent_year = years[-1] if years else None
+    prior_year = years[-2] if len(years) >= 2 else None
 
     # ---- Base queryset --------------------------------------------------
     base_qs = SalesRecord.objects.filter(
@@ -640,6 +653,10 @@ def account_sales_by_year_csv(request):
         last_12_units = last12_data.get(account_id, 0)
         most_recent_year_units = year_units.get(most_recent_year, 0) if most_recent_year else 0
         diff = last_12_units - most_recent_year_units
+        lfy_diff = (
+            year_units.get(most_recent_year, 0) - year_units.get(prior_year, 0)
+            if prior_year and most_recent_year else None
+        )
         on_off = account.on_off_premise if account.on_off_premise in ('ON', 'OFF') else 'Unknown'
 
         csv_rows.append({
@@ -649,6 +666,7 @@ def account_sales_by_year_csv(request):
             'year_units': year_units,
             'last_12_units': last_12_units,
             'diff': diff,
+            'lfy_diff': lfy_diff,
         })
 
     csv_rows.sort(key=lambda r: r['account_name'].lower())
@@ -658,20 +676,32 @@ def account_sales_by_year_csv(request):
     total_last_12 = sum(r['last_12_units'] for r in csv_rows)
     most_recent_year_total = total_by_year.get(most_recent_year, 0) if most_recent_year else 0
     total_diff = total_last_12 - most_recent_year_total
+    total_lfy_diff = (
+        total_by_year.get(most_recent_year, 0) - total_by_year.get(prior_year, 0)
+        if prior_year and most_recent_year else None
+    )
 
     # ---- Write CSV ------------------------------------------------------
     writer = csv.writer(response)
-    header = ['Account Name', 'City', 'On/Off'] + [str(y) for y in years] + ['Last 12m', 'Diff']
+    if prior_year and most_recent_year:
+        header = (['Account Name', 'City', 'On/Off'] + [str(y) for y in years]
+                  + [f'{most_recent_year} Diff', 'Last 12m', 'Diff'])
+    else:
+        header = ['Account Name', 'City', 'On/Off'] + [str(y) for y in years] + ['Last 12m', 'Diff']
     writer.writerow(header)
 
     for row in csv_rows:
         data_row = [row['account_name'], row['city'], row['on_off']]
         data_row += [row['year_units'].get(y, 0) for y in years]
+        if prior_year and most_recent_year:
+            data_row.append(row['lfy_diff'] if row['lfy_diff'] is not None else '')
         data_row += [row['last_12_units'], row['diff']]
         writer.writerow(data_row)
 
     totals_row = ['TOTAL', '', '']
     totals_row += [total_by_year.get(y, 0) for y in years]
+    if prior_year and most_recent_year:
+        totals_row.append(total_lfy_diff if total_lfy_diff is not None else '')
     totals_row += [total_last_12, total_diff]
     writer.writerow(totals_row)
 

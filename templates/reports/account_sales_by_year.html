@@ -132,19 +132,42 @@
      ================================================================ -->
 <div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-3">
   <div>
-    <h1 class="h3 fw-bold mb-0">Account Sales by Year</h1>
+    <h4 class="fw-bold mb-0">Account Sales by Year</h4>
     {% if selected_distributor %}
-    <p class="text-muted mb-0 small">{{ selected_distributor.name }}</p>
-    {% endif %}
-    {% if last_full_month_display %}
-    <p class="text-muted mb-0 small">Data through: <strong>{{ last_full_month_display }}</strong> ({{ last_12_label }})</p>
+    <p class="text-muted mb-0 small">
+      {{ selected_distributor.name }}
+      {% if last_full_month_display %}
+      &middot; Data through: <strong>{{ last_full_month_display }}</strong>
+      {% endif %}
+    </p>
+    {% elif last_full_month_display %}
+    <p class="text-muted mb-0 small">Data through: <strong>{{ last_full_month_display }}</strong></p>
     {% endif %}
   </div>
-  {% if multiple_distributors and selected_distributor %}
-  <a href="{% url 'report_account_sales_distributor_select' %}" class="btn btn-sm btn-outline-secondary">
-    <i class="bi bi-arrow-left-right me-1"></i>Change Distributor
-  </a>
-  {% endif %}
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <button type="button"
+            class="btn btn-outline-secondary btn-sm"
+            data-bs-toggle="modal"
+            data-bs-target="#filterModal">
+      <i class="bi bi-funnel me-1"></i>Filters
+      <span class="badge bg-warning text-dark ms-1
+            {% if not active_filter_count %}d-none{% endif %}"
+            id="filter-count-badge">
+        {{ active_filter_count }}
+      </span>
+    </button>
+    <button type="submit"
+            form="report-filter-form"
+            formaction="{% url 'report_account_sales_csv' %}"
+            class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-download me-1"></i>Export CSV
+    </button>
+    {% if multiple_distributors and selected_distributor %}
+    <a href="{% url 'report_account_sales_distributor_select' %}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left-right me-1"></i>Change Distributor
+    </a>
+    {% endif %}
+  </div>
 </div>
 
 <!-- ================================================================
@@ -164,32 +187,6 @@
   </div>
 </div>
 {% else %}
-
-<!-- ================================================================
-     Top bar: Filters + Export CSV
-     ================================================================ -->
-<div class="d-flex align-items-center justify-content-between mb-3">
-  <h5 class="mb-0">Account Sales by Year</h5>
-  <div class="d-flex align-items-center gap-2">
-    <button type="button"
-            class="btn btn-outline-secondary btn-sm"
-            data-bs-toggle="modal"
-            data-bs-target="#filterModal">
-      <i class="bi bi-funnel me-1"></i>Filters
-      <span class="badge bg-warning text-dark ms-1
-            {% if not active_filter_count %}d-none{% endif %}"
-            id="filter-count-badge">
-        {{ active_filter_count }}
-      </span>
-    </button>
-    <button type="submit"
-            form="report-filter-form"
-            formaction="{% url 'report_account_sales_csv' %}"
-            class="btn btn-outline-secondary btn-sm">
-      <i class="bi bi-download me-1"></i>Export CSV
-    </button>
-  </div>
-</div>
 
 <!-- ================================================================
      Route action bar (shown when checkboxes are checked)
@@ -228,8 +225,11 @@
             {% for year in years %}
             <th class="sortable text-end" data-col="{{ forloop.counter|add:3 }}">{{ year }}</th>
             {% endfor %}
-            <th class="sortable text-end" data-col="{{ years|length|add:4 }}">Last 12m</th>
-            <th class="sortable text-end" data-col="{{ years|length|add:5 }}">Diff</th>
+            {% if prior_year %}
+            <th class="text-end">{{ most_recent_year }} Diff</th>
+            {% endif %}
+            <th class="sortable text-end" data-col="{% if prior_year %}{{ years|length|add:5 }}{% else %}{{ years|length|add:4 }}{% endif %}">Last 12m</th>
+            <th class="sortable text-end" data-col="{% if prior_year %}{{ years|length|add:6 }}{% else %}{{ years|length|add:5 }}{% endif %}">Diff</th>
           </tr>
         </thead>
 
@@ -251,6 +251,13 @@
             </td>
             {% endwith %}
             {% endfor %}
+            {% if prior_year %}
+            <td class="text-end diff-col fw-bold" data-value="{{ total_lfy_diff|default:0 }}">
+              {% if total_lfy_diff is not None %}
+                {% if total_lfy_diff > 0 %}+{% endif %}{{ total_lfy_diff|intcomma }}
+              {% endif %}
+            </td>
+            {% endif %}
             <td class="text-end" data-value="{{ total_last_12 }}">
               {% if total_last_12 %}{{ total_last_12|intcomma }}{% else %}&mdash;{% endif %}
             </td>
@@ -299,6 +306,14 @@
             </td>
             {% endwith %}
             {% endfor %}
+            <!-- LFY Diff -->
+            {% if prior_year %}
+            <td class="text-end diff-col" data-value="{{ row.lfy_diff|default:0 }}">
+              {% if row.lfy_diff is not None %}
+                {% if row.lfy_diff > 0 %}+{% endif %}{{ row.lfy_diff|intcomma }}
+              {% endif %}
+            </td>
+            {% endif %}
             <!-- Last 12 months -->
             <td class="text-end" data-value="{{ row.last_12_units }}">
               {% if row.last_12_units %}{{ row.last_12_units|intcomma }}{% else %}&mdash;{% endif %}
@@ -310,7 +325,7 @@
           </tr>
           {% empty %}
           <tr>
-            <td colspan="{{ years|length|add:6 }}" class="text-center text-muted py-4">
+            <td colspan="{% if prior_year %}{{ years|length|add:7 }}{% else %}{{ years|length|add:6 }}{% endif %}" class="text-center text-muted py-4">
               No data matches the current filters.
             </td>
           </tr>
@@ -344,6 +359,22 @@
 
           {# Preserve distributor selection #}
           <input type="hidden" name="distributor" value="{{ selected_distributor.pk }}">
+
+          {# MY ROUTES — single select dropdown #}
+          {% if user_routes %}
+          <div class="mb-3">
+            <div class="filter-section-label">My Routes</div>
+            <select name="route_id" class="form-select form-select-sm" autocomplete="off">
+              <option value="">All</option>
+              {% for route in user_routes %}
+              <option value="{{ route.pk }}"
+                {% if current_filters.route_id == route.pk|stringformat:"s" %}selected{% endif %}>
+                {{ route.name }} ({{ route.route_accounts.count }})
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
 
           {# ACCOUNT NAME #}
           <div class="mb-3">
@@ -432,28 +463,6 @@
           </div>
           {% endif %}
 
-          {# ACCOUNT TYPE #}
-          {% if available_account_types %}
-          <div class="mb-3">
-            <div class="filter-section-label">Account Type</div>
-            <div class="filter-checkbox-scroll">
-              {% for actype in available_account_types %}
-              <div class="form-check">
-                <input class="form-check-input"
-                       type="checkbox"
-                       name="account_type"
-                       id="rpt_actype_{{ forloop.counter }}"
-                       value="{{ actype }}"
-                       {% if actype in current_filters.account_type %}checked{% endif %}>
-                <label class="form-check-label small" for="rpt_actype_{{ forloop.counter }}">
-                  {{ actype }}
-                </label>
-              </div>
-              {% endfor %}
-            </div>
-          </div>
-          {% endif %}
-
           {# CLASS OF TRADE #}
           {% if filter_options.classes_of_trade %}
           <div class="mb-3">
@@ -498,26 +507,10 @@
           </div>
           {% endif %}
 
-          {# MY ROUTES — single select dropdown #}
-          {% if user_routes %}
-          <div class="mb-3">
-            <div class="filter-section-label">My Routes</div>
-            <select name="route_id" class="form-select form-select-sm" autocomplete="off">
-              <option value="">All</option>
-              {% for route in user_routes %}
-              <option value="{{ route.pk }}"
-                {% if current_filters.route_id == route.pk|stringformat:"s" %}selected{% endif %}>
-                {{ route.name }} ({{ route.route_accounts.count }})
-              </option>
-              {% endfor %}
-            </select>
-          </div>
-          {% endif %}
-
         </form>
       </div>
       <div class="modal-footer py-2">
-        <a href="{% url 'report_account_sales_by_year' %}?distributor={{ selected_distributor.pk }}"
+        <a href="{% url 'report_account_sales_by_year' %}?distributor={{ selected_distributor.pk }}&clear_filters=1"
            class="btn btn-outline-secondary btn-sm me-auto"
            id="clear-filters-link">
           <i class="bi bi-x-circle me-1"></i>Clear All

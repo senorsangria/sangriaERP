@@ -310,6 +310,96 @@ class DiffCalcTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# LFY Diff tests
+# ---------------------------------------------------------------------------
+
+class LfyDiffTest(TestCase):
+    """lfy_diff = most_recent_year units - prior_year units per row."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.distributor = make_distributor(self.company)
+        self.item = make_item(self.company)
+        self.batch = make_batch(self.company, self.distributor)
+        self.account = make_account(self.company, self.distributor)
+        self.user = make_user(self.company, 'supplier_admin', username='sa1')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_lfy_diff_calculated(self):
+        """lfy_diff equals most_recent_year total minus prior_year total."""
+        # prior_year: 2023 = 40 units; most_recent_year: 2024 = 100 units
+        make_sale(self.company, self.batch, self.account, self.item, date(2023, 6, 1), 40)
+        make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 100)
+        response = self.client.get(reverse('report_account_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        self.assertEqual(len(rows), 1)
+        prior_year = response.context['prior_year']
+        most_recent_year = response.context['most_recent_year']
+        self.assertIsNotNone(prior_year)
+        self.assertEqual(most_recent_year, 2024)
+        self.assertEqual(prior_year, 2023)
+        self.assertEqual(rows[0]['lfy_diff'], 60)  # 100 - 40
+
+    def test_lfy_diff_none_when_only_one_year(self):
+        """lfy_diff is None when only one year of data exists."""
+        make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 50)
+        response = self.client.get(reverse('report_account_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(response.context['prior_year'])
+        self.assertIsNone(rows[0]['lfy_diff'])
+
+
+# ---------------------------------------------------------------------------
+# Clear filters test
+# ---------------------------------------------------------------------------
+
+class ClearFiltersTest(TestCase):
+    """clear_filters=1 clears session filters and shows unfiltered report."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.distributor = make_distributor(self.company)
+        self.item = make_item(self.company)
+        self.batch = make_batch(self.company, self.distributor)
+        self.account = make_account(
+            self.company, self.distributor, name='Clear Test Bar', city='Newark'
+        )
+        make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 20)
+        self.user = make_user(self.company, 'supplier_admin', username='sa1')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_clear_filters_resets_report(self):
+        """After applying an account_name filter, clear_filters=1 restores all rows."""
+        # Apply a filter that returns no results
+        self.client.get(
+            reverse('report_account_sales_by_year'),
+            {'account_name': 'zzznomatch'}
+        )
+        # Confirm filter is stored in session
+        session = self.client.session
+        self.assertIn('report_account_sales_filters', session)
+
+        # Now clear filters
+        response = self.client.get(
+            reverse('report_account_sales_by_year'),
+            {'clear_filters': '1'}
+        )
+        self.assertEqual(response.status_code, 200)
+        # Session filters should be cleared
+        session = self.client.session
+        self.assertNotIn('report_account_sales_filters', session)
+        # Account should appear again
+        rows = response.context['rows']
+        account_names = [r['account_name'] for r in rows]
+        self.assertTrue(any('Clear Test' in n for n in account_names), account_names)
+
+
+# ---------------------------------------------------------------------------
 # CSV export tests
 # ---------------------------------------------------------------------------
 
