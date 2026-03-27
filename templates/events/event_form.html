@@ -3,14 +3,6 @@
 
 {% block extra_css %}
 <style>
-  .field-section { border-left: 3px solid #dee2e6; padding-left: 1rem; }
-  .section-heading { font-size: .8rem; font-weight: 700; text-transform: uppercase;
-                     letter-spacing: .06em; color: #6c757d; margin-bottom: .75rem; }
-  /* Hide account / items / start-time / event-manager sections until type is chosen */
-  #accountSection, #itemsSection { transition: opacity .2s; }
-  #accountSection.hidden, #itemsSection.hidden { display: none; }
-  #startTimeWrapper.hidden, #eventManagerWrapper.hidden { display: none; }
-
   /* Account live search */
   #accountSearchResults {
     border: 1px solid #dee2e6;
@@ -30,11 +22,34 @@
   }
   .account-result-item:last-child { border-bottom: none; }
   .account-result-item:hover { background: #f8f9fa; }
+  /* Items checkbox scroll */
+  .filter-section-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6c757d;
+    margin-bottom: 0.4rem;
+  }
+  .filter-checkbox-scroll {
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.5rem;
+    background: #fff;
+  }
+  .filter-checkbox-scroll .form-check {
+    margin-bottom: 0.25rem;
+  }
+  /* Hide account / items / start-time / event-manager sections until type is chosen */
+  #accountSection, #itemsSection { transition: opacity .2s; }
+  #accountSection.hidden, #itemsSection.hidden { display: none; }
+  #startTimeWrapper.hidden, #eventManagerWrapper.hidden { display: none; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center gap-2 mb-3">
+<div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
   {% if is_create %}
   <a href="{% url 'event_list' %}" class="btn btn-sm btn-outline-secondary">
     <i class="bi bi-arrow-left me-1"></i>Events
@@ -45,183 +60,146 @@
   </a>
   {% endif %}
   <h4 class="mb-0 fw-semibold">{{ form_title }}</h4>
-</div>
-
-{% if not is_create %}
-<div class="mb-3">
-  <span class="text-muted small">Status:</span>
-  <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status_badge_class == 'warning' %}dark{% else %}white{% endif %} ms-1">
+  <span class="badge bg-secondary">{{ locked_event_type_display }}</span>
+  {% if not is_create %}
+  <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status_badge_class == 'warning' %}dark{% else %}white{% endif %}">
     {{ event.get_status_display }}
   </span>
-  <span class="small text-muted ms-2">(status changes via action buttons on the detail page)</span>
+  <span class="small text-muted">(status changes via action buttons on the detail page)</span>
+  {% endif %}
 </div>
-{% endif %}
 
 <form method="post" id="eventForm">
   {% csrf_token %}
 
   {# Hidden field for selected account ID (live search result) #}
+  <input type="hidden" name="event_type" value="{{ locked_event_type }}">
   <input type="hidden" name="account" id="id_account" value="{{ form.account.value|default:'' }}">
 
-  <div class="row g-3">
+  <div class="card shadow-sm">
+    <div class="card-body">
 
-    <!-- ---- Event Type (locked, read-only) ---- -->
-    <div class="col-12">
-      <div class="card">
-        <div class="card-body">
-          <div class="section-heading">Event Type</div>
-          <input type="hidden" name="event_type" value="{{ locked_event_type }}">
-          <span class="badge bg-secondary fs-6 px-3 py-2">{{ locked_event_type_display }}</span>
-          {% if not is_create %}
-          <span class="text-muted small ms-2">Event type cannot be changed after creation.</span>
+      <!-- ---- Account live search ---- -->
+      <div class="mb-3" id="accountSection">
+
+        {% if account_search_disabled %}
+        <div class="alert alert-secondary py-2 px-3 small text-muted mb-0">
+          <i class="bi bi-info-circle me-1"></i>
+          No accounts available. Contact your Supplier Admin to set up your coverage areas.
+        </div>
+        {% else %}
+
+        {# Selected account display #}
+        <div id="accountSelected" class="mb-2" style="{% if not form.account.value %}display:none{% endif %}">
+          <div class="d-flex align-items-center gap-2 p-2 bg-light rounded border">
+            <i class="bi bi-shop text-primary"></i>
+            <span id="accountSelectedName" class="fw-medium">
+              {{ selected_account_name|default:'' }}
+            </span>
+            <a href="#" id="accountClear" class="ms-auto text-muted small text-decoration-none">
+              <i class="bi bi-x-circle me-1"></i>Clear
+            </a>
+          </div>
+        </div>
+
+        {# Search input #}
+        <div id="accountSearchWrap" {% if form.account.value %}style="display:none"{% endif %}>
+          <label class="form-label">
+            Account <span class="text-danger" id="accountRequired">*</span>
+          </label>
+          <input
+            type="text"
+            id="accountSearchInput"
+            class="form-control"
+            placeholder="Search by account name, address, or city..."
+            autocomplete="off"
+          >
+          <div id="accountSearchResults" class="mt-1" style="display:none;"></div>
+          <div id="accountSearchHint" class="form-text">Type 2+ characters to search accounts.</div>
+        </div>
+
+        {% if form.account.errors %}
+        <div class="text-danger small mt-1">{{ form.account.errors|join:", " }}</div>
+        {% endif %}
+
+        {% endif %}{# end account_search_disabled #}
+
+      </div>
+
+      <!-- ---- Schedule ---- -->
+      <div class="row g-2 mb-3">
+        <div class="col-12 col-sm-4">
+          <label for="{{ form.date.id_for_label }}" class="form-label">Date</label>
+          {{ form.date }}
+          {% if form.date.errors %}<div class="text-danger small mt-1">{{ form.date.errors|join:", " }}</div>{% endif %}
+        </div>
+        <div class="col-6 col-sm-4" id="startTimeWrapper">
+          <label for="{{ form.start_time.id_for_label }}" class="form-label">Start Time</label>
+          {{ form.start_time }}
+          {% if form.start_time.errors %}<div class="text-danger small mt-1">{{ form.start_time.errors|join:", " }}</div>{% endif %}
+        </div>
+        <div class="col-6 col-sm-4">
+          <label class="form-label">Duration</label>
+          <div class="d-flex gap-2">
+            {{ form.duration_hours }}
+            {{ form.duration_minutes }}
+          </div>
+          {% if form.duration_hours.errors or form.duration_minutes.errors %}
+          <div class="text-danger small mt-1">{{ form.duration_hours.errors|join:", " }} {{ form.duration_minutes.errors|join:", " }}</div>
           {% endif %}
         </div>
       </div>
-    </div>
 
-    <!-- ---- Account (hidden for Admin) — live search ---- -->
-    <div class="col-12" id="accountSection">
-      <div class="card">
-        <div class="card-body">
-          <div class="section-heading">Account</div>
+      <!-- ---- People ---- -->
+      <div class="row g-2 mb-3">
+        <div class="col-12 col-sm-6">
+          <label for="{{ form.ambassador.id_for_label }}" class="form-label">Ambassador</label>
+          {{ form.ambassador }}
+          {% if form.ambassador.errors %}<div class="text-danger small mt-1">{{ form.ambassador.errors|join:", " }}</div>{% endif %}
+          <div class="form-text" id="ambassadorHint">Select an account above to filter ambassadors by coverage area.</div>
+        </div>
+        <div class="col-12 col-sm-6" id="eventManagerWrapper">
+          <label for="{{ form.event_manager.id_for_label }}" class="form-label">Event Manager</label>
+          {{ form.event_manager }}
+          {% if form.event_manager.errors %}<div class="text-danger small mt-1">{{ form.event_manager.errors|join:", " }}</div>{% endif %}
+          <div class="form-text" id="eventManagerHint"></div>
+        </div>
+      </div>
 
-          {% if account_search_disabled %}
-          {# No accounts available message #}
-          <div class="alert alert-secondary py-2 px-3 small text-muted mb-0">
-            <i class="bi bi-info-circle me-1"></i>
-            No accounts available. Contact your Supplier Admin to set up your coverage areas.
+      <!-- ---- Items (Tasting only) ---- -->
+      <div class="mb-3" id="itemsSection">
+        <label class="form-label fw-medium">Items to be Sampled</label>
+        <div class="filter-checkbox-scroll" style="max-height:200px;">
+          {% for brand_name, brand_items in items_by_brand %}
+          <div class="filter-section-label mt-2 {% if not forloop.first %}border-top pt-2{% endif %}">
+            {{ brand_name }}
           </div>
-          {% else %}
-
-          {# Selected account display #}
-          <div id="accountSelected" class="mb-2" style="{% if not form.account.value %}display:none{% endif %}">
-            <div class="d-flex align-items-center gap-2 p-2 bg-light rounded border">
-              <i class="bi bi-shop text-primary"></i>
-              <span id="accountSelectedName" class="fw-medium">
-                {# Populated by JS on load if editing #}
-                {{ selected_account_name|default:'' }}
-              </span>
-              <a href="#" id="accountClear" class="ms-auto text-muted small text-decoration-none">
-                <i class="bi bi-x-circle me-1"></i>Clear
-              </a>
-            </div>
-          </div>
-
-          {# Search input #}
-          <div id="accountSearchWrap">
-            <label class="form-label">
-              Account <span class="text-danger" id="accountRequired">*</span>
+          {% for item in brand_items %}
+          <div class="form-check">
+            <input class="form-check-input item-checkbox"
+                   type="checkbox"
+                   name="items"
+                   id="item_{{ item.pk }}"
+                   value="{{ item.pk }}"
+                   {% if item.pk in selected_item_pks %}checked{% endif %}>
+            <label class="form-check-label small" for="item_{{ item.pk }}">
+              {{ item.name }}
             </label>
-            <input
-              type="text"
-              id="accountSearchInput"
-              class="form-control"
-              placeholder="Search by account name, address, or city..."
-              autocomplete="off"
-            >
-            <div id="accountSearchResults" class="mt-1" style="display:none;"></div>
-            <div id="accountSearchHint" class="form-text">Type 2+ characters to search accounts.</div>
           </div>
-
-          {% if form.account.errors %}
-          <div class="text-danger small mt-1">{{ form.account.errors|join:", " }}</div>
-          {% endif %}
-
-          {% endif %}{# end account_search_disabled #}
-
+          {% endfor %}
+          {% endfor %}
         </div>
+        {% if form.items.errors %}<div class="text-danger small mt-1">{{ form.items.errors|join:", " }}</div>{% endif %}
       </div>
-    </div>
 
-    <!-- ---- Schedule ---- -->
-    <div class="col-12">
-      <div class="card">
-        <div class="card-body">
-          <div class="section-heading">Schedule</div>
-          <div class="row g-3">
-            <div class="col-12 col-sm-6 col-md-4">
-              <label for="{{ form.date.id_for_label }}" class="form-label">Date</label>
-              {{ form.date }}
-              {% if form.date.errors %}<div class="text-danger small mt-1">{{ form.date.errors|join:", " }}</div>{% endif %}
-            </div>
-            <div class="col-12 col-sm-6 col-md-4" id="startTimeWrapper">
-              <label for="{{ form.start_time.id_for_label }}" class="form-label">Start Time</label>
-              {{ form.start_time }}
-              {% if form.start_time.errors %}<div class="text-danger small mt-1">{{ form.start_time.errors|join:", " }}</div>{% endif %}
-            </div>
-            <div class="col-12 col-md-4">
-              <label class="form-label">Duration</label>
-              <div class="d-flex gap-2">
-                {{ form.duration_hours }}
-                {{ form.duration_minutes }}
-              </div>
-              {% if form.duration_hours.errors or form.duration_minutes.errors %}
-              <div class="text-danger small mt-1">{{ form.duration_hours.errors|join:", " }} {{ form.duration_minutes.errors|join:", " }}</div>
-              {% endif %}
-            </div>
-          </div>
-        </div>
+      <!-- ---- Notes ---- -->
+      <div class="mb-3">
+        <label for="{{ form.notes.id_for_label }}" class="form-label">Notes (optional)</label>
+        {{ form.notes }}
+        {% if form.notes.errors %}<div class="text-danger small mt-1">{{ form.notes.errors|join:", " }}</div>{% endif %}
       </div>
-    </div>
 
-    <!-- ---- People ---- -->
-    <div class="col-12">
-      <div class="card">
-        <div class="card-body">
-          <div class="section-heading">People</div>
-          <div class="row g-3">
-            <div class="col-12 col-sm-6">
-              <label for="{{ form.ambassador.id_for_label }}" class="form-label">Ambassador</label>
-              {{ form.ambassador }}
-              {% if form.ambassador.errors %}<div class="text-danger small mt-1">{{ form.ambassador.errors|join:", " }}</div>{% endif %}
-              <div class="form-text" id="ambassadorHint">Select an account above to filter ambassadors by coverage area.</div>
-            </div>
-            <div class="col-12 col-sm-6" id="eventManagerWrapper">
-              <label for="{{ form.event_manager.id_for_label }}" class="form-label">Event Manager</label>
-              {{ form.event_manager }}
-              {% if form.event_manager.errors %}<div class="text-danger small mt-1">{{ form.event_manager.errors|join:", " }}</div>{% endif %}
-              <div class="form-text" id="eventManagerHint"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ---- Items (Tasting only) ---- -->
-    <div class="col-12" id="itemsSection">
-      <div class="card">
-        <div class="card-body">
-          <div class="section-heading">Items to be Sampled</div>
-          <label for="id_items" class="form-label">Select items</label>
-          <select name="items" id="id_items" class="form-select" size="6" multiple>
-            {% for brand_name, brand_items in items_by_brand %}
-            <optgroup label="{{ brand_name }}">
-              {% for item in brand_items %}
-              <option value="{{ item.pk }}" {% if item.pk in selected_item_pks %}selected{% endif %}>{{ item.name }}</option>
-              {% endfor %}
-            </optgroup>
-            {% endfor %}
-          </select>
-          {% if form.items.errors %}<div class="text-danger small mt-1">{{ form.items.errors|join:", " }}</div>{% endif %}
-          <div class="form-text">Hold Ctrl (or Cmd on Mac) to select multiple items.</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ---- Notes ---- -->
-    <div class="col-12">
-      <div class="card">
-        <div class="card-body">
-          <div class="section-heading">Notes</div>
-          <label for="{{ form.notes.id_for_label }}" class="form-label">Notes (optional)</label>
-          {{ form.notes }}
-          {% if form.notes.errors %}<div class="text-danger small mt-1">{{ form.notes.errors|join:", " }}</div>{% endif %}
-        </div>
-      </div>
-    </div>
-
-    <!-- ---- Submit ---- -->
-    <div class="col-12">
+      <!-- ---- Submit ---- -->
       <div class="d-flex gap-2">
         <button type="submit" class="btn btn-primary">
           <i class="bi bi-check-circle me-1"></i>
@@ -233,9 +211,10 @@
         <a href="{% url 'event_detail' event.pk %}" class="btn btn-outline-secondary">Cancel</a>
         {% endif %}
       </div>
-    </div>
 
-  </div><!-- /row -->
+    </div>
+  </div>
+
 </form>
 {% endblock %}
 
@@ -260,6 +239,7 @@
   const accountSearchInput   = document.getElementById('accountSearchInput');
   const accountSearchResults = document.getElementById('accountSearchResults');
   const accountSearchHint    = document.getElementById('accountSearchHint');
+  const accountSearchWrap    = document.getElementById('accountSearchWrap');
   const accountSelected      = document.getElementById('accountSelected');
   const accountSelectedName  = document.getElementById('accountSelectedName');
   const accountClear         = document.getElementById('accountClear');
@@ -364,6 +344,7 @@
     if (accountHidden)       accountHidden.value = id;
     if (accountSelectedName) accountSelectedName.textContent = name;
     if (accountSelected)     accountSelected.style.display = '';
+    if (accountSearchWrap)   accountSearchWrap.style.display = 'none';
     if (accountSearchInput)  accountSearchInput.value = '';
     if (accountSearchResults){ accountSearchResults.style.display = 'none'; accountSearchResults.innerHTML = ''; }
     if (accountSearchHint)   accountSearchHint.textContent = 'Account selected. Click Clear to change.';
@@ -374,6 +355,7 @@
     if (accountHidden)       accountHidden.value = '';
     if (accountSelected)     accountSelected.style.display = 'none';
     if (accountSelectedName) accountSelectedName.textContent = '';
+    if (accountSearchWrap)   accountSearchWrap.style.display = '';
     if (accountSearchInput)  { accountSearchInput.value = ''; accountSearchInput.focus(); }
     if (accountSearchResults){ accountSearchResults.style.display = 'none'; accountSearchResults.innerHTML = ''; }
     if (accountSearchHint)   accountSearchHint.textContent = 'Type 2+ characters to search accounts.';
