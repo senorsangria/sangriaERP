@@ -282,14 +282,16 @@ def account_sales_by_year(request):
     today = date.today()
     current_month_start = today.replace(day=1)
 
-    max_past_sale = (
-        SalesRecord.objects
-        .filter(
-            account__in=accounts_qs,
-            sale_date__lt=current_month_start,
-        )
-        .aggregate(Max('sale_date'))['sale_date__max']
+    # Unfiltered distributor scope for stable report structure — date window
+    # and year columns must not shift when user filters are applied.
+    distributor_qs = SalesRecord.objects.filter(
+        account__distributor=selected_distributor,
+        account__company=user.company,
     )
+
+    max_past_sale = distributor_qs.filter(
+        sale_date__lt=current_month_start,
+    ).aggregate(Max('sale_date'))['sale_date__max']
 
     if max_past_sale is None:
         return render(request, 'reports/account_sales_by_year.html', {
@@ -318,14 +320,11 @@ def account_sales_by_year(request):
     last_12_label = f"{window_start.strftime('%b %Y')} \u2013 {window_end.strftime('%b %Y')}"
 
     # ---- Complete calendar years (up to 4, displayed ascending) ---------
-    # Fetch the 4 most recent completed years, then sort ascending for display.
+    # Uses distributor_qs so year columns stay stable regardless of filters.
     current_year = today.year
     years = sorted(
-        SalesRecord.objects
-        .filter(
-            account__in=accounts_qs,
-            sale_date__year__lt=current_year,
-        )
+        distributor_qs
+        .filter(sale_date__year__lt=current_year)
         .values_list('sale_date__year', flat=True)
         .distinct()
         .order_by('-sale_date__year')
@@ -334,7 +333,7 @@ def account_sales_by_year(request):
     most_recent_year = years[-1] if years else None
     prior_year = years[-2] if len(years) >= 2 else None
 
-    # ---- Base queryset --------------------------------------------------
+    # ---- Base queryset (filtered) for per-account row data --------------
     base_qs = SalesRecord.objects.filter(
         account__in=accounts_qs,
     )
@@ -561,14 +560,15 @@ def account_sales_by_year_csv(request):
     today = date.today()
     current_month_start = today.replace(day=1)
 
-    max_past_sale = (
-        SalesRecord.objects
-        .filter(
-            account__in=accounts_qs,
-            sale_date__lt=current_month_start,
-        )
-        .aggregate(Max('sale_date'))['sale_date__max']
+    # Unfiltered distributor scope for stable report structure.
+    distributor_qs = SalesRecord.objects.filter(
+        account__distributor=selected_distributor,
+        account__company=user.company,
     )
+
+    max_past_sale = distributor_qs.filter(
+        sale_date__lt=current_month_start,
+    ).aggregate(Max('sale_date'))['sale_date__max']
 
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = 'attachment; filename="account_sales_by_year.csv"'
@@ -585,14 +585,11 @@ def account_sales_by_year_csv(request):
     window_start = date(w_year, w_month, 1)
     window_end = lfm_end
 
-    # ---- Complete calendar years (up to 4) ------------------------------
+    # ---- Complete calendar years (up to 4) — uses distributor_qs --------
     current_year = today.year
     years = sorted(
-        SalesRecord.objects
-        .filter(
-            account__in=accounts_qs,
-            sale_date__year__lt=current_year,
-        )
+        distributor_qs
+        .filter(sale_date__year__lt=current_year)
         .values_list('sale_date__year', flat=True)
         .distinct()
         .order_by('-sale_date__year')

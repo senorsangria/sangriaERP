@@ -2973,3 +2973,44 @@ Routes allow users to group accounts into named lists for planning and filtering
 
 *Last updated: March 25, 2026 (AccountContact model, API, and contacts modal on account detail)*
 *Maintained by: Drink Up Life, Inc / productERP project team*
+
+---
+
+## Account Sales by Year Report — Scope for Date Window and Year Columns
+
+### Decision
+`max_past_sale` (which drives `lfm_end`, `window_start`, `window_end`) and `years`
+(the per-year column headers) are computed from a **distributor-wide** queryset
+(`distributor_qs`) that is **not** affected by the user's active filters.
+
+Row data, totals, Last 12m, and LFY Diff values still reflect the user-filtered
+`accounts_qs`.
+
+### Rationale
+If structural calculations used the filtered queryset, applying a filter that
+excluded the account with the most recent sale would shift the report's date
+window backward, and the year columns could change. This made filtered and
+unfiltered views structurally incomparable.
+
+Using `distributor_qs` for structure keeps the column headers and date window
+stable regardless of which filter combination is active.
+
+### Implementation
+```python
+distributor_qs = SalesRecord.objects.filter(
+    account__distributor=selected_distributor,
+    account__company=user.company,
+)
+max_past_sale = distributor_qs.filter(sale_date__lt=current_month_start) \
+    .aggregate(Max('sale_date'))['sale_date__max']
+years = sorted(
+    distributor_qs
+    .filter(sale_date__year__lt=current_year)
+    .values_list('sale_date__year', flat=True)
+    .distinct()
+    .order_by('-sale_date__year')[:4]
+)
+```
+The same pattern is applied in `account_sales_by_year_csv`.
+
+*Last updated: March 27, 2026*
