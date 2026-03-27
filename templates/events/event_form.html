@@ -65,7 +65,6 @@
   <span class="badge bg-{{ event.status_badge_class }} text-{% if event.status_badge_class == 'warning' %}dark{% else %}white{% endif %}">
     {{ event.get_status_display }}
   </span>
-  <span class="small text-muted">(status changes via action buttons on the detail page)</span>
   {% endif %}
 </div>
 

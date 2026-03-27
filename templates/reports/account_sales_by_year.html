@@ -84,11 +84,29 @@
   .diff-negative { color: #dc3545; }
   .diff-zero     { color: #6c757d; }
 
-  /* Filter badge */
-  .filter-badge { font-size: .7rem; }
-
-  /* Active filter count badge */
-  #filterToggle .badge { font-size: .7rem; vertical-align: middle; }
+  /* Filter modal */
+  .filter-section-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6c757d;
+    margin-bottom: 0.4rem;
+  }
+  .filter-checkbox-scroll {
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.5rem;
+    background: #fff;
+  }
+  .filter-checkbox-scroll .form-check {
+    margin-bottom: 0.25rem;
+  }
+  .filter-checkbox-scroll .form-check:last-child {
+    margin-bottom: 0;
+  }
 
   /* On/Off icon sizing */
   .on-off-icon { font-size: 1rem; }
@@ -148,208 +166,28 @@
 {% else %}
 
 <!-- ================================================================
-     Filter panel
+     Top bar: Filters + Export CSV
      ================================================================ -->
-
-<div class="card border-0 shadow-sm mb-3">
-  <div class="card-body py-2 px-3">
-
-    <!-- Toggle button — all screen sizes -->
-    <div class="mb-2">
-      <button
-        id="filterToggle"
-        class="btn btn-sm btn-outline-secondary"
-        type="button"
-        data-bs-toggle="collapse"
-        data-bs-target="#filterPanel"
-        aria-expanded="false"
-        aria-controls="filterPanel"
-      >
-        <i class="bi bi-funnel me-1"></i>Filters
-        {% if current_filters.account_name or current_filters.account_type or current_filters.item_name or current_filters.on_off or current_filters.city or current_filters.county or current_filters.class_of_trade or current_filters.distributor_route or current_filters.route_id %}
-        <span class="badge bg-warning text-dark ms-1 filter-badge">Active</span>
-        {% endif %}
-      </button>
-    </div>
-
-    <!-- Filter panel: collapsed by default on all screen sizes -->
-    <div class="collapse" id="filterPanel">
-      <form method="get" id="filterForm">
-        <div class="row g-2 align-items-end">
-
-          <!-- Account Name -->
-          <div class="col-12 col-sm-6 col-lg-3">
-            <div class="mb-2">
-              <label class="form-label small fw-semibold">
-                Account Name
-              </label>
-              <input type="text"
-                     name="account_name"
-                     class="form-control form-control-sm"
-                     placeholder="Search by name..."
-                     value="{{ current_filters.account_name }}"
-                     autocomplete="off">
-            </div>
-          </div>
-
-          <!-- Item Name -->
-          {% if filter_options.items %}
-          <div class="col-12 col-sm-6 col-lg-2">
-            <label class="form-label small text-muted mb-1">Item Name</label>
-            <select name="item_name" class="form-select form-select-sm multi-filter" multiple size="3">
-              <option value="">All</option>
-              {% for name in filter_options.items %}
-              <option value="{{ name }}" {% if name in current_filters.item_name %}selected{% endif %}>{{ name }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          {% endif %}
-
-          <!-- On/Off Premise -->
-          <div class="col-6 col-sm-4 col-lg-1">
-            <label class="form-label small text-muted mb-1">On/Off</label>
-            <select name="on_off" class="form-select form-select-sm">
-              <option value="">All</option>
-              <option value="ON" {% if current_filters.on_off == 'ON' %}selected{% endif %}>ON</option>
-              <option value="OFF" {% if current_filters.on_off == 'OFF' %}selected{% endif %}>OFF</option>
-            </select>
-          </div>
-
-          <!-- City -->
-          {% if filter_options.cities %}
-          <div class="col-12 col-sm-6 col-lg-2">
-            <label class="form-label small text-muted mb-1">City</label>
-            <select name="city" class="form-select form-select-sm multi-filter" multiple size="3">
-              <option value="">All</option>
-              {% for city in filter_options.cities %}
-              <option value="{{ city }}" {% if city in current_filters.city %}selected{% endif %}>{{ city }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          {% endif %}
-
-          <!-- County -->
-          {% if available_counties %}
-          <div class="col-12 col-sm-6 col-lg-2">
-            <div class="mb-2">
-              <label class="form-label small fw-semibold">
-                County
-              </label>
-              <select name="county"
-                      class="form-select form-select-sm"
-                      multiple
-                      autocomplete="off"
-                      size="4">
-                {% for county in available_counties %}
-                <option value="{{ county }}"
-                  {% if county in current_filters.county %}
-                  selected{% endif %}>
-                  {{ county }}
-                </option>
-                {% endfor %}
-              </select>
-              <div class="form-text small">
-                Hold Ctrl/Cmd to select multiple
-              </div>
-            </div>
-          </div>
-          {% endif %}
-
-          <!-- Account Type -->
-          {% if available_account_types %}
-          <div class="col-12 col-sm-6 col-lg-2">
-            <div class="mb-2">
-              <label class="form-label small fw-semibold">
-                Account Type
-              </label>
-              <select name="account_type"
-                      class="form-select form-select-sm"
-                      multiple
-                      autocomplete="off"
-                      size="4">
-                {% for actype in available_account_types %}
-                <option value="{{ actype }}"
-                  {% if actype in current_filters.account_type %}
-                  selected{% endif %}>
-                  {{ actype }}
-                </option>
-                {% endfor %}
-              </select>
-              <div class="form-text small">
-                Hold Ctrl/Cmd to select multiple
-              </div>
-            </div>
-          </div>
-          {% endif %}
-
-          <!-- Class of Trade -->
-          {% if filter_options.classes_of_trade %}
-          <div class="col-12 col-sm-6 col-lg-2">
-            <label class="form-label small text-muted mb-1">Class of Trade</label>
-            <select name="class_of_trade" class="form-select form-select-sm multi-filter" multiple size="3">
-              <option value="">All</option>
-              {% for cot in filter_options.classes_of_trade %}
-              <option value="{{ cot }}" {% if cot in current_filters.class_of_trade %}selected{% endif %}>{{ cot }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          {% endif %}
-
-          <!-- Distributor Route -->
-          {% if filter_options.distributor_routes %}
-          <div class="col-12 col-sm-6 col-lg-2">
-            <label class="form-label small text-muted mb-1">Route</label>
-            <select name="distributor_route" class="form-select form-select-sm multi-filter" multiple size="3">
-              <option value="">All</option>
-              {% for route in filter_options.distributor_routes %}
-              <option value="{{ route }}" {% if route in current_filters.distributor_route %}selected{% endif %}>{{ route }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          {% endif %}
-
-          <!-- My Routes -->
-          {% if user_routes %}
-          <div class="col-12 col-sm-6 col-lg-2">
-            <div class="mb-2">
-              <label class="form-label small fw-semibold">
-                My Routes
-              </label>
-              <select name="route_id"
-                      class="form-select form-select-sm"
-                      autocomplete="off">
-                <option value="">All</option>
-                {% for route in user_routes %}
-                <option value="{{ route.pk }}"
-                  {% if current_filters.route_id == route.pk|stringformat:"s" %}
-                  selected{% endif %}>
-                  {{ route.name }}
-                  ({{ route.route_accounts.count }})
-                </option>
-                {% endfor %}
-              </select>
-            </div>
-          </div>
-          {% endif %}
-
-          <!-- Actions -->
-          <div class="col-12 col-sm-auto">
-            <button type="submit" class="btn btn-primary btn-sm me-1">
-              <i class="bi bi-funnel-fill me-1"></i>Apply
-            </button>
-            <a href="{% url 'report_account_sales_by_year' %}" class="btn btn-outline-secondary btn-sm me-1">
-              Clear
-            </a>
-            <a href="{% url 'report_account_sales_csv' %}?{{ request.GET.urlencode }}"
-               class="btn btn-outline-secondary btn-sm">
-              <i class="bi bi-download me-1"></i>Export CSV
-            </a>
-          </div>
-
-        </div>
-      </form>
-    </div>
-
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0">Account Sales by Year</h5>
+  <div class="d-flex align-items-center gap-2">
+    <button type="button"
+            class="btn btn-outline-secondary btn-sm"
+            data-bs-toggle="modal"
+            data-bs-target="#filterModal">
+      <i class="bi bi-funnel me-1"></i>Filters
+      <span class="badge bg-warning text-dark ms-1
+            {% if not active_filter_count %}d-none{% endif %}"
+            id="filter-count-badge">
+        {{ active_filter_count }}
+      </span>
+    </button>
+    <button type="submit"
+            form="report-filter-form"
+            formaction="{% url 'report_account_sales_csv' %}"
+            class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-download me-1"></i>Export CSV
+    </button>
   </div>
 </div>
 
@@ -487,6 +325,214 @@
 </div>
 
 <!-- ================================================================
+     Filter modal
+     ================================================================ -->
+<div class="modal fade" id="filterModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title fw-semibold">
+          <i class="bi bi-funnel me-1"></i>Filter Report
+        </h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form method="get"
+              action="{% url 'report_account_sales_by_year' %}"
+              id="report-filter-form"
+              autocomplete="off">
+
+          {# Preserve distributor selection #}
+          <input type="hidden" name="distributor" value="{{ selected_distributor.pk }}">
+
+          {# ACCOUNT NAME #}
+          <div class="mb-3">
+            <div class="filter-section-label">Account Name</div>
+            <input type="text"
+                   name="account_name"
+                   class="form-control form-control-sm"
+                   placeholder="Search by name..."
+                   value="{{ current_filters.account_name }}"
+                   autocomplete="off">
+          </div>
+
+          {# ITEM NAME #}
+          {% if filter_options.items %}
+          <div class="mb-3">
+            <div class="filter-section-label">Item</div>
+            <div class="filter-checkbox-scroll">
+              {% for item in filter_options.items %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="item_name"
+                       id="item_{{ forloop.counter }}"
+                       value="{{ item }}"
+                       {% if item in current_filters.item_name %}checked{% endif %}>
+                <label class="form-check-label small" for="item_{{ forloop.counter }}">
+                  {{ item }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# ON/OFF PREMISE #}
+          <div class="mb-3">
+            <div class="filter-section-label">On/Off Premise</div>
+            <select name="on_off" class="form-select form-select-sm" autocomplete="off">
+              <option value="">All</option>
+              <option value="ON" {% if current_filters.on_off == 'ON' %}selected{% endif %}>ON</option>
+              <option value="OFF" {% if current_filters.on_off == 'OFF' %}selected{% endif %}>OFF</option>
+            </select>
+          </div>
+
+          {# COUNTY #}
+          {% if available_counties %}
+          <div class="mb-3">
+            <div class="filter-section-label">County</div>
+            <div class="filter-checkbox-scroll">
+              {% for county in available_counties %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="county"
+                       id="rpt_county_{{ forloop.counter }}"
+                       value="{{ county }}"
+                       {% if county in current_filters.county %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_county_{{ forloop.counter }}">
+                  {{ county }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# CITY #}
+          {% if filter_options.cities %}
+          <div class="mb-3">
+            <div class="filter-section-label">City</div>
+            <div class="filter-checkbox-scroll">
+              {% for city in filter_options.cities %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="city"
+                       id="rpt_city_{{ forloop.counter }}"
+                       value="{{ city }}"
+                       {% if city in current_filters.city %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_city_{{ forloop.counter }}">
+                  {{ city }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# ACCOUNT TYPE #}
+          {% if available_account_types %}
+          <div class="mb-3">
+            <div class="filter-section-label">Account Type</div>
+            <div class="filter-checkbox-scroll">
+              {% for actype in available_account_types %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="account_type"
+                       id="rpt_actype_{{ forloop.counter }}"
+                       value="{{ actype }}"
+                       {% if actype in current_filters.account_type %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_actype_{{ forloop.counter }}">
+                  {{ actype }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# CLASS OF TRADE #}
+          {% if filter_options.classes_of_trade %}
+          <div class="mb-3">
+            <div class="filter-section-label">Class of Trade</div>
+            <div class="filter-checkbox-scroll">
+              {% for cot in filter_options.classes_of_trade %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="class_of_trade"
+                       id="rpt_cot_{{ forloop.counter }}"
+                       value="{{ cot }}"
+                       {% if cot in current_filters.class_of_trade %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_cot_{{ forloop.counter }}">
+                  {{ cot }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# DISTRIBUTOR ROUTE #}
+          {% if filter_options.distributor_routes %}
+          <div class="mb-3">
+            <div class="filter-section-label">Distributor Route</div>
+            <div class="filter-checkbox-scroll">
+              {% for route in filter_options.distributor_routes %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="distributor_route"
+                       id="rpt_dr_{{ forloop.counter }}"
+                       value="{{ route }}"
+                       {% if route in current_filters.distributor_route %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_dr_{{ forloop.counter }}">
+                  {{ route }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# MY ROUTES — single select dropdown #}
+          {% if user_routes %}
+          <div class="mb-3">
+            <div class="filter-section-label">My Routes</div>
+            <select name="route_id" class="form-select form-select-sm" autocomplete="off">
+              <option value="">All</option>
+              {% for route in user_routes %}
+              <option value="{{ route.pk }}"
+                {% if current_filters.route_id == route.pk|stringformat:"s" %}selected{% endif %}>
+                {{ route.name }} ({{ route.route_accounts.count }})
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+
+        </form>
+      </div>
+      <div class="modal-footer py-2">
+        <a href="{% url 'report_account_sales_by_year' %}?distributor={{ selected_distributor.pk }}"
+           class="btn btn-outline-secondary btn-sm me-auto"
+           id="clear-filters-link">
+          <i class="bi bi-x-circle me-1"></i>Clear All
+        </a>
+        <button type="submit"
+                form="report-filter-form"
+                class="btn btn-primary btn-sm">
+          <i class="bi bi-check-lg me-1"></i>Apply Filters
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================
      Save to Route modal
      ================================================================ -->
 <div class="modal fade" id="saveRouteModal" tabindex="-1">
@@ -588,38 +634,6 @@
     new bootstrap.Tooltip(el, { trigger: 'hover' });
   });
 
-  // ---- Multi-select "All" option logic -----------------------------
-  (function () {
-    document.querySelectorAll('select.multi-filter').forEach(function (sel) {
-      const allOpt = sel.querySelector('option[value=""]');
-      if (!allOpt) return;
-
-      sel.addEventListener('change', function () {
-        const opts = Array.from(sel.options);
-        const allSelected = allOpt.selected;
-        const anyRealSelected = opts.some(o => o.value !== '' && o.selected);
-
-        if (allSelected && anyRealSelected) {
-          opts.forEach(o => { if (o.value !== '') o.selected = false; });
-        } else if (!allSelected && !anyRealSelected) {
-          allOpt.selected = true;
-        } else if (anyRealSelected) {
-          allOpt.selected = false;
-        }
-      });
-    });
-
-    // On form submit: deselect "All" so blank value is not submitted
-    const form = document.getElementById('filterForm');
-    if (form) {
-      form.addEventListener('submit', function () {
-        document.querySelectorAll('select.multi-filter').forEach(function (sel) {
-          const allOpt = sel.querySelector('option[value=""]');
-          if (allOpt) allOpt.selected = false;
-        });
-      });
-    }
-  })();
 
   // ---- Client-side column sort (data rows only) -------------------
   (function () {

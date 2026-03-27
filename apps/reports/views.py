@@ -222,6 +222,18 @@ def account_sales_by_year(request):
 
     current_filters = filters
 
+    active_filter_count = sum([
+        1 if current_filters.get('account_name') else 0,
+        1 if current_filters.get('item_name') else 0,
+        1 if current_filters.get('on_off') else 0,
+        1 if current_filters.get('city') else 0,
+        1 if current_filters.get('county') else 0,
+        1 if current_filters.get('account_type') else 0,
+        1 if current_filters.get('class_of_trade') else 0,
+        1 if current_filters.get('distributor_route') else 0,
+        1 if current_filters.get('route_id') else 0,
+    ])
+
     # ---- Apply account-level filters ------------------------------------
     on_off_filter = filters.get('on_off', '')
     city_filter = filters.get('city', [])
@@ -291,6 +303,7 @@ def account_sales_by_year(request):
             'available_counties': available_counties,
             'available_account_types': available_account_types,
             'user_routes': user_routes,
+            'active_filter_count': active_filter_count,
         })
 
     lfm_year = max_past_sale.year
@@ -369,6 +382,7 @@ def account_sales_by_year(request):
             'available_counties': available_counties,
             'available_account_types': available_account_types,
             'user_routes': user_routes,
+            'active_filter_count': active_filter_count,
         })
 
     # ---- Fetch account objects ------------------------------------------
@@ -423,6 +437,7 @@ def account_sales_by_year(request):
         'total_last_12': total_last_12,
         'total_diff': total_diff,
         'user_routes': user_routes,
+        'active_filter_count': active_filter_count,
     })
 
 
