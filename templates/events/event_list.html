@@ -236,7 +236,7 @@
                 </td>
                 <td>
                   <div>{% if event.start_time %}{{ event.start_time|time:"g:i A" }}{% else %}—{% endif %}</div>
-                  <div class="text-muted small">{{ event.duration }}hr</div>
+                  <div class="text-muted small">{{ event.duration_display }}</div>
                 </td>
                 <td>
                   {% if event.account %}
@@ -370,7 +370,7 @@
                 </td>
                 <td>
                   <div>{% if event.start_time %}{{ event.start_time|time:"g:i A" }}{% else %}—{% endif %}</div>
-                  <div class="text-muted small">{{ event.duration }}hr</div>
+                  <div class="text-muted small">{{ event.duration_display }}</div>
                 </td>
                 <td>
                   {% if event.account %}
