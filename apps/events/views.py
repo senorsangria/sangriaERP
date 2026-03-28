@@ -1018,7 +1018,7 @@ def event_release(request, pk):
         event.save(update_fields=['status', 'updated_at'])
         messages.success(request, 'Event released and is now Scheduled.')
 
-    return redirect('event_detail', pk=pk)
+    return redirect('event_list')
 
 
 @login_required
@@ -1111,7 +1111,7 @@ def event_approve(request, pk):
         messages.success(request, 'Event approved and marked as Complete.')
     else:
         messages.error(request, 'Event status changed before approval could be saved. Please try again.')
-    return redirect('event_detail', pk=pk)
+    return redirect('event_list')
 
 
 # ---------------------------------------------------------------------------

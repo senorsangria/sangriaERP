@@ -170,14 +170,23 @@
         <label class="form-label fw-medium">Items to be Sampled</label>
         <div class="filter-checkbox-scroll" style="max-height:200px;">
           {% for brand_name, brand_items in items_by_brand %}
-          <div class="filter-section-label mt-2 {% if not forloop.first %}border-top pt-2{% endif %}">
-            {{ brand_name }}
+          <div class="filter-section-label mt-2 d-flex align-items-center gap-2 {% if not forloop.first %}border-top pt-2{% endif %}">
+            <input type="checkbox"
+                   class="form-check-input brand-select-all"
+                   data-brand="{{ brand_name }}"
+                   id="brand_{{ forloop.counter }}"
+                   title="Select all {{ brand_name }} items">
+            <label for="brand_{{ forloop.counter }}"
+                   class="mb-0" style="cursor:pointer">
+              {{ brand_name }}
+            </label>
           </div>
           {% for item in brand_items %}
           <div class="form-check">
             <input class="form-check-input item-checkbox"
                    type="checkbox"
                    name="items"
+                   data-brand="{{ brand_name }}"
                    id="item_{{ item.pk }}"
                    value="{{ item.pk }}"
                    {% if item.pk in selected_item_pks %}checked{% endif %}>
@@ -486,5 +495,37 @@
   }
 
 })();
+
+// Brand select-all checkboxes
+document.querySelectorAll('.brand-select-all').forEach(function(brandCb) {
+  brandCb.addEventListener('change', function() {
+    const brand = this.dataset.brand;
+    document.querySelectorAll('.item-checkbox[data-brand="' + brand + '"]').forEach(function(cb) {
+      cb.checked = brandCb.checked;
+    });
+  });
+});
+
+// When individual item checked/unchecked, update the brand checkbox state
+document.querySelectorAll('.item-checkbox').forEach(function(itemCb) {
+  itemCb.addEventListener('change', function() {
+    const brand = this.dataset.brand;
+    const allItems = document.querySelectorAll('.item-checkbox[data-brand="' + brand + '"]');
+    const allChecked = Array.from(allItems).every(cb => cb.checked);
+    const brandCb = document.querySelector('.brand-select-all[data-brand="' + brand + '"]');
+    if (brandCb) brandCb.checked = allChecked;
+  });
+});
+
+// On page load, set each brand checkbox to checked if all its items are already selected
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.brand-select-all').forEach(function(brandCb) {
+    const brand = brandCb.dataset.brand;
+    const allItems = document.querySelectorAll('.item-checkbox[data-brand="' + brand + '"]');
+    if (allItems.length > 0) {
+      brandCb.checked = Array.from(allItems).every(cb => cb.checked);
+    }
+  });
+});
 </script>
 {% endblock %}
