@@ -905,6 +905,7 @@ def event_create(request):
         'locked_event_type_display': locked_event_type_display,
         'items_by_brand':            items_by_brand,
         'selected_item_pks':         selected_item_pks,
+        'can_manage_contacts':       request.user.has_permission('can_manage_contacts'),
     })
 
 
@@ -964,6 +965,7 @@ def event_edit(request, pk):
         'locked_event_type_display': locked_event_type_display,
         'items_by_brand':            items_by_brand,
         'selected_item_pks':         selected_item_pks,
+        'can_manage_contacts':       request.user.has_permission('can_manage_contacts'),
     })
 
 
