@@ -1,0 +1,362 @@
+<!-- Contacts Modal -->
+<div class="modal fade" id="contactsModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg">
+    <div class="modal-content">
+
+      <div class="modal-header">
+        <h5 class="modal-title" id="contactsModalLabel">
+          Contacts<span id="contacts-modal-account-name"></span>
+        </h5>
+        <button type="button" class="btn-close"
+                data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+
+        {# Contact list #}
+        <div id="contact-list" class="mb-4">
+          <div id="contact-list-empty"
+               class="text-muted small {% if contact_count %}d-none{% endif %}">
+            No contacts yet.
+          </div>
+        </div>
+
+        {# Add/Edit form — only shown when can_manage_contacts #}
+        {% if can_manage_contacts %}
+        <div id="contact-form-section">
+          <hr class="my-3">
+          <h6 class="fw-semibold mb-3" id="contact-form-title">Add Contact</h6>
+          <input type="hidden" id="editing-contact-id" value="">
+
+          <div class="row g-2 mb-2">
+            <div class="col-12">
+              <label class="form-label small fw-medium">Title</label>
+              <select id="contact-title" class="form-select form-select-sm">
+                <option value="owner">Owner</option>
+                <option value="manager">Manager</option>
+                <option value="employee">Employee</option>
+                <option value="other" selected>Other</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <div class="form-check">
+              <input type="checkbox" class="form-check-input"
+                     id="contact-tasting">
+              <label class="form-check-label small" for="contact-tasting">
+                Tasting Contact
+              </label>
+            </div>
+          </div>
+
+          <div class="row g-2 mb-2">
+            <div class="col-12">
+              <label class="form-label small fw-medium">
+                Name <span class="text-danger">*</span>
+              </label>
+              <input type="text" id="contact-name"
+                     class="form-control form-control-sm"
+                     placeholder="Full name">
+            </div>
+          </div>
+
+          <div class="row g-2 mb-2">
+            <div class="col-12 col-sm-6">
+              <label class="form-label small fw-medium">Phone</label>
+              <input type="text" id="contact-phone"
+                     class="form-control form-control-sm"
+                     placeholder="Phone number">
+            </div>
+            <div class="col-12 col-sm-6">
+              <label class="form-label small fw-medium">Email</label>
+              <input type="email" id="contact-email"
+                     class="form-control form-control-sm"
+                     placeholder="Email address">
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label small fw-medium">Note</label>
+            <textarea id="contact-note"
+                      class="form-control form-control-sm"
+                      rows="2"
+                      placeholder="Optional note"></textarea>
+          </div>
+
+          <div id="contact-form-error"
+               class="alert alert-danger alert-sm py-1 px-2 small d-none mb-2"></div>
+
+          <div class="d-flex gap-2">
+            <button type="button" class="btn btn-primary btn-sm"
+                    id="contact-save-btn">Save Contact</button>
+            <button type="button"
+                    class="btn btn-outline-secondary btn-sm d-none"
+                    id="contact-cancel-btn">Cancel</button>
+          </div>
+        </div>
+        {% endif %}
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var contactsModalEl = document.getElementById('contactsModal');
+  if (!contactsModalEl) return;
+
+  var canManage = {{ can_manage_contacts|yesno:"true,false" }};
+  var listEl    = document.getElementById('contact-list');
+  var emptyEl   = document.getElementById('contact-list-empty');
+  var countBadge = document.getElementById('contact-count-badge');
+
+  function getCsrf() {
+    var el = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (el) return el.value;
+    var m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+  }
+
+  function makeContactCard(c) {
+    var card = document.createElement('div');
+    card.className = 'border rounded p-2 mb-2';
+    card.dataset.contactId = c.id;
+
+    // Row 1: tasting badge + name + phone + email
+    var row1 = document.createElement('div');
+    row1.className = 'd-flex flex-wrap align-items-center gap-2 mb-1';
+
+    if (c.is_tasting_contact) {
+      var badge = document.createElement('span');
+      badge.className = 'badge bg-success';
+      badge.textContent = 'Tasting';
+      row1.appendChild(badge);
+    }
+
+    var name = document.createElement('span');
+    name.className = 'fw-semibold small';
+    name.textContent = c.name;
+    row1.appendChild(name);
+
+    if (c.phone) {
+      var phone = document.createElement('span');
+      phone.className = 'text-muted small';
+      phone.textContent = c.phone;
+      row1.appendChild(phone);
+    }
+
+    if (c.email) {
+      var email = document.createElement('a');
+      email.href = 'mailto:' + c.email;
+      email.className = 'text-muted small';
+      email.textContent = c.email;
+      row1.appendChild(email);
+    }
+
+    // Row 2: title + note + edit button
+    var row2 = document.createElement('div');
+    row2.className = 'd-flex align-items-start gap-2';
+
+    var titleNote = document.createElement('div');
+    titleNote.className = 'flex-grow-1';
+
+    var titleSpan = document.createElement('span');
+    titleSpan.className = 'badge bg-secondary me-1';
+    titleSpan.textContent = c.title_display;
+    titleNote.appendChild(titleSpan);
+
+    if (c.note) {
+      var noteSpan = document.createElement('span');
+      noteSpan.className = 'text-muted small';
+      noteSpan.textContent = c.note;
+      titleNote.appendChild(noteSpan);
+    }
+    row2.appendChild(titleNote);
+
+    if (canManage) {
+      var editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn btn-outline-secondary btn-sm';
+      editBtn.textContent = 'Edit';
+      editBtn.dataset.contactId = c.id;
+      row2.appendChild(editBtn);
+    }
+
+    card.appendChild(row1);
+    card.appendChild(row2);
+    return card;
+  }
+
+  function updateBadge(count) {
+    if (!countBadge) return;
+    countBadge.textContent = count;
+    var btn = countBadge.closest('button');
+    if (btn) {
+      var label = btn.querySelector('.contact-label');
+      if (label) label.textContent = count === 1 ? 'contact' : 'contacts';
+    }
+  }
+
+  function loadContacts() {
+    var pk = window.contactsAccountPk || 0;
+    if (!pk) return;
+    fetch('/accounts/' + pk + '/contacts/', {
+      headers: {'X-Requested-With': 'XMLHttpRequest'},
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      listEl.querySelectorAll('[data-contact-id]').forEach(function(el) { el.remove(); });
+      if (data.contacts.length === 0) {
+        emptyEl.classList.remove('d-none');
+      } else {
+        emptyEl.classList.add('d-none');
+        data.contacts.forEach(function(c) { listEl.appendChild(makeContactCard(c)); });
+      }
+      updateBadge(data.contacts.length);
+    });
+  }
+
+  contactsModalEl.addEventListener('show.bs.modal', loadContacts);
+
+  if (!canManage) return;
+
+  var nameEl    = document.getElementById('contact-name');
+  var titleEl   = document.getElementById('contact-title');
+  var phoneEl   = document.getElementById('contact-phone');
+  var emailEl   = document.getElementById('contact-email');
+  var noteEl    = document.getElementById('contact-note');
+  var tastingEl = document.getElementById('contact-tasting');
+  var saveBtn   = document.getElementById('contact-save-btn');
+  var cancelBtn = document.getElementById('contact-cancel-btn');
+  var formTitle = document.getElementById('contact-form-title');
+  var errorEl   = document.getElementById('contact-form-error');
+  var editingId = document.getElementById('editing-contact-id');
+
+  // Delete section — appended dynamically
+  var deleteBtnContainer = document.createElement('div');
+  deleteBtnContainer.className = 'mt-3 pt-3 border-top d-none';
+  deleteBtnContainer.id = 'delete-contact-section';
+  deleteBtnContainer.innerHTML =
+    '<button type="button" class="btn btn-outline-danger btn-sm" id="contact-delete-btn">' +
+    '<i class="bi bi-trash me-1"></i>Delete Contact</button>';
+  document.getElementById('contact-form-section').appendChild(deleteBtnContainer);
+
+  function clearForm() {
+    nameEl.value = '';
+    titleEl.value = 'other';
+    phoneEl.value = '';
+    emailEl.value = '';
+    noteEl.value = '';
+    tastingEl.checked = false;
+    editingId.value = '';
+    formTitle.textContent = 'Add Contact';
+    saveBtn.textContent = 'Save Contact';
+    cancelBtn.classList.add('d-none');
+    errorEl.classList.add('d-none');
+    deleteBtnContainer.classList.add('d-none');
+  }
+
+  function startEdit(c) {
+    nameEl.value = c.name;
+    titleEl.value = c.title;
+    phoneEl.value = c.phone || '';
+    emailEl.value = c.email || '';
+    noteEl.value = c.note || '';
+    tastingEl.checked = c.is_tasting_contact;
+    editingId.value = c.id;
+    formTitle.textContent = 'Edit Contact';
+    saveBtn.textContent = 'Update Contact';
+    cancelBtn.classList.remove('d-none');
+    errorEl.classList.add('d-none');
+    deleteBtnContainer.classList.remove('d-none');
+    document.getElementById('contact-delete-btn').dataset.contactId = c.id;
+    nameEl.focus();
+  }
+
+  cancelBtn.addEventListener('click', clearForm);
+
+  saveBtn.addEventListener('click', function() {
+    var name = nameEl.value.trim();
+    if (!name) {
+      errorEl.textContent = 'Name is required.';
+      errorEl.classList.remove('d-none');
+      return;
+    }
+    var pk = window.contactsAccountPk || 0;
+    var id = editingId.value;
+    var url = id
+      ? '/accounts/' + pk + '/contacts/' + id + '/update/'
+      : '/accounts/' + pk + '/contacts/create/';
+
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrf(),
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({
+        name: name,
+        title: titleEl.value,
+        phone: phoneEl.value.trim(),
+        email: emailEl.value.trim(),
+        note: noteEl.value.trim(),
+        is_tasting_contact: tastingEl.checked,
+      }),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.success) {
+        clearForm();
+        loadContacts();
+      } else {
+        errorEl.textContent = data.error || 'Error saving contact.';
+        errorEl.classList.remove('d-none');
+      }
+    })
+    .catch(function() {
+      errorEl.textContent = 'Network error — please try again.';
+      errorEl.classList.remove('d-none');
+    });
+  });
+
+  document.getElementById('contact-delete-btn').addEventListener('click', function() {
+    var cid = this.dataset.contactId;
+    if (!confirm('Delete this contact? This cannot be undone.')) return;
+    var pk = window.contactsAccountPk || 0;
+    fetch('/accounts/' + pk + '/contacts/' + cid + '/delete/', {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': getCsrf(),
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.success) {
+        clearForm();
+        loadContacts();
+      }
+    });
+  });
+
+  // Edit button delegation on the contact list
+  listEl.addEventListener('click', function(e) {
+    var btn = e.target.closest('button[data-contact-id]');
+    if (!btn) return;
+    var pk = window.contactsAccountPk || 0;
+    fetch('/accounts/' + pk + '/contacts/', {
+      headers: {'X-Requested-With': 'XMLHttpRequest'},
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var cid = parseInt(btn.dataset.contactId, 10);
+      var contact = data.contacts.find(function(c) { return c.id === cid; });
+      if (contact) startEdit(contact);
+    });
+  });
+
+})();
+</script>

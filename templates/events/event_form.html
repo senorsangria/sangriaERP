@@ -95,6 +95,16 @@
             <span id="accountSelectedName" class="fw-medium">
               {{ selected_account_name|default:'' }}
             </span>
+            <button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    data-bs-toggle="modal"
+                    data-bs-target="#contactsModal"
+                    id="account-contacts-btn"
+                    style="display:none">
+              <i class="bi bi-person me-1"></i>
+              <span id="event-contact-count">0</span>
+              <span id="event-contact-label">contacts</span>
+            </button>
             <a href="#" id="accountClear" class="ms-auto text-muted small text-decoration-none">
               <i class="bi bi-x-circle me-1"></i>Clear
             </a>
@@ -357,6 +367,26 @@
     if (accountSearchResults){ accountSearchResults.style.display = 'none'; accountSearchResults.innerHTML = ''; }
     if (accountSearchHint)   accountSearchHint.textContent = 'Account selected. Click Clear to change.';
     refreshPeopleDropdowns(id);
+
+    // Set account pk for contacts modal
+    window.contactsAccountPk = id;
+    var modalNameEl = document.getElementById('contacts-modal-account-name');
+    if (modalNameEl) modalNameEl.textContent = ' \u2014 ' + name;
+
+    // Load contact count for this account
+    fetch('/accounts/' + id + '/contacts/', {
+      headers: {'X-Requested-With': 'XMLHttpRequest'},
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var count = data.contacts.length;
+      var btn      = document.getElementById('account-contacts-btn');
+      var countEl  = document.getElementById('event-contact-count');
+      var labelEl  = document.getElementById('event-contact-label');
+      if (btn)     btn.style.display = '';
+      if (countEl) countEl.textContent = count;
+      if (labelEl) labelEl.textContent = count === 1 ? 'contact' : 'contacts';
+    });
   }
 
   function clearAccountSelection() {
@@ -368,6 +398,11 @@
     if (accountSearchResults){ accountSearchResults.style.display = 'none'; accountSearchResults.innerHTML = ''; }
     if (accountSearchHint)   accountSearchHint.textContent = 'Type 2+ characters to search accounts.';
     refreshPeopleDropdowns(null);
+
+    // Hide contacts badge
+    var btn = document.getElementById('account-contacts-btn');
+    if (btn) btn.style.display = 'none';
+    window.contactsAccountPk = 0;
   }
 
   function renderSearchResults(accounts) {
@@ -528,4 +563,5 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 });
 </script>
+{% include "accounts/_contacts_modal.html" %}
 {% endblock %}
