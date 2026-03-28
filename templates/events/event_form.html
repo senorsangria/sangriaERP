@@ -92,9 +92,22 @@
         <div id="accountSelected" class="mb-2" style="{% if not form.account.value %}display:none{% endif %}">
           <div class="d-flex align-items-center gap-2 p-2 bg-light rounded border">
             <i class="bi bi-shop text-primary"></i>
-            <span id="accountSelectedName" class="fw-medium">
-              {{ selected_account_name|default:'' }}
-            </span>
+            <div>
+              <span id="accountSelectedName" class="fw-medium">
+                {{ selected_account_name|default:'' }}
+              </span>
+              <div id="accountSelectedAddress" class="text-muted small">
+                {% if form.account.value and selected_account_name %}
+                  {% with account=form.instance.account %}
+                    {% if account %}
+                      {% if account.street %}{{ account.street }}, {% endif %}
+                      {{ account.city }}{% if account.city and account.state %}, {% endif %}
+                      {{ account.state }}{% if account.zip_code %} {{ account.zip_code }}{% endif %}
+                    {% endif %}
+                  {% endwith %}
+                {% endif %}
+              </div>
+            </div>
             <button type="button"
                     class="btn btn-sm btn-outline-secondary"
                     data-bs-toggle="modal"
@@ -358,7 +371,7 @@
 
   var searchDebounceTimer = null;
 
-  function showAccountSelected(id, name) {
+  function showAccountSelected(id, name, data) {
     if (accountHidden)       accountHidden.value = id;
     if (accountSelectedName) accountSelectedName.textContent = name;
     if (accountSelected)     accountSelected.style.display = '';
@@ -367,6 +380,16 @@
     if (accountSearchResults){ accountSearchResults.style.display = 'none'; accountSearchResults.innerHTML = ''; }
     if (accountSearchHint)   accountSearchHint.textContent = 'Account selected. Click Clear to change.';
     refreshPeopleDropdowns(id);
+
+    // Build address line from full account data (AJAX selections only)
+    const addrEl = document.getElementById('accountSelectedAddress');
+    if (addrEl && data) {
+      const parts = [];
+      if (data.street) parts.push(data.street);
+      const cityStateZip = [data.city, data.state, data.zip_code].filter(Boolean).join(' ');
+      if (cityStateZip) parts.push(cityStateZip);
+      addrEl.textContent = parts.join(', ');
+    }
 
     // Set account pk for contacts modal
     window.contactsAccountPk = id;
@@ -403,6 +426,10 @@
     var btn = document.getElementById('account-contacts-btn');
     if (btn) btn.style.display = 'none';
     window.contactsAccountPk = 0;
+
+    // Clear address line
+    var addrEl = document.getElementById('accountSelectedAddress');
+    if (addrEl) addrEl.textContent = '';
   }
 
   function renderSearchResults(accounts) {
@@ -431,11 +458,14 @@
     accountSearchResults.innerHTML = html;
     accountSearchResults.style.display = '';
 
-    // Wire up select buttons
-    accountSearchResults.querySelectorAll('button[data-account-id]').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        showAccountSelected(this.dataset.accountId, this.dataset.accountName);
-      });
+    // Wire up select buttons — pass full account object for address display
+    var buttons = accountSearchResults.querySelectorAll('button[data-account-id]');
+    accounts.forEach(function(a, i) {
+      if (buttons[i]) {
+        buttons[i].addEventListener('click', function() {
+          showAccountSelected(a.id, a.name, a);
+        });
+      }
     });
   }
 

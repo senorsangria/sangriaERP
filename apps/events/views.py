@@ -1686,6 +1686,7 @@ def ajax_event_accounts(request):
             'street': a.street or '',
             'city': a.city or '',
             'state': a.state or '',
+            'zip_code': a.zip_code or '',
             'distributor': a.distributor.name if a.distributor else '',
         }
         for a in accounts
