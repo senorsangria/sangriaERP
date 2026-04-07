@@ -22,20 +22,42 @@ The application is portable to any hosting provider without code changes.
 ## Photo Storage
 
 Photos uploaded during event recaps can be stored locally (development) or
-in S3-compatible object storage such as Cloudflare R2 (production).
+in Cloudflare R2 (production) via `django-storages` and `boto3`.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `USE_OBJECT_STORAGE` | No | Set to `true` to enable object storage. Defaults to `false` (local `MEDIA_ROOT`). |
-| `OBJECT_STORAGE_BUCKET_NAME` | If `USE_OBJECT_STORAGE=true` | Bucket name (e.g. `producterp-photos`) |
-| `OBJECT_STORAGE_ACCOUNT_ID` | If `USE_OBJECT_STORAGE=true` | Cloudflare account ID (for R2) or AWS account ID |
-| `OBJECT_STORAGE_ACCESS_KEY_ID` | If `USE_OBJECT_STORAGE=true` | S3-compatible access key ID |
-| `OBJECT_STORAGE_SECRET_ACCESS_KEY` | If `USE_OBJECT_STORAGE=true` | S3-compatible secret access key |
-| `OBJECT_STORAGE_PUBLIC_URL` | If `USE_OBJECT_STORAGE=true` | Public base URL for serving stored objects (e.g. `https://pub-xxx.r2.dev`) |
+| `CLOUDFLARE_R2_ACCESS_KEY_ID` | If using R2 | R2 Account API Token Access Key ID |
+| `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | If using R2 | R2 Account API Token Secret Access Key (shown only once at token creation) |
+| `CLOUDFLARE_R2_BUCKET_NAME` | If using R2 | R2 bucket name (e.g. `producterp-media`; use a different bucket per environment, e.g. `producterp-staging` for staging) |
+| `CLOUDFLARE_R2_ENDPOINT_URL` | If using R2 | R2 S3 endpoint URL — format: `https://<account-id>.r2.cloudflarestorage.com` |
+
+```
+CLOUDFLARE_R2_ACCESS_KEY_ID=
+# R2 Account API Token Access Key ID
+
+CLOUDFLARE_R2_SECRET_ACCESS_KEY=
+# R2 Account API Token Secret Access Key
+# (shown only once at token creation)
+
+CLOUDFLARE_R2_BUCKET_NAME=producterp-media
+# R2 bucket name
+# Use a different bucket per environment
+# e.g. producterp-staging for staging
+
+CLOUDFLARE_R2_ENDPOINT_URL=
+# R2 S3 endpoint URL
+# Format: https://<account-id>.r2.cloudflarestorage.com
+```
+
+# Storage behavior:
+# - All four R2 vars set → uses Cloudflare R2
+# - Any var missing → uses local filesystem
+# - Never commit credentials to the repo
+# - Each environment should have its own bucket
 
 ### Development (default)
 
-Leave `USE_OBJECT_STORAGE` unset or set to `false`. Photos will be saved to
+Leave all four `CLOUDFLARE_R2_*` variables unset. Photos will be saved to
 `MEDIA_ROOT/events/<event_id>/` and served at `/media/events/<event_id>/`.
 
 Ensure your Django URL configuration serves media files in development:
@@ -48,10 +70,9 @@ urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 ### Production (Cloudflare R2)
 
-Object storage integration using `django-storages` and `boto3` is stubbed
-and ready for implementation. Set `USE_OBJECT_STORAGE=true` and provide the
-R2 credentials above. Full integration will be completed before production
-photo uploads are enabled.
+Set all four `CLOUDFLARE_R2_*` environment variables. Django will automatically
+use `django-storages` S3Boto3Storage backend with the R2 endpoint. File paths
+follow the format `events/<pk>/<uuid>.<ext>`.
 
 ---
 

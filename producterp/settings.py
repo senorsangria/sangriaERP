@@ -160,6 +160,49 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Cloudflare R2 / S3-compatible storage
+# Only enabled when all four R2 env vars are set.
+# Falls back to local filesystem when not set
+# (development).
+
+CLOUDFLARE_R2_ACCESS_KEY_ID = os.environ.get(
+    'CLOUDFLARE_R2_ACCESS_KEY_ID', ''
+)
+CLOUDFLARE_R2_SECRET_ACCESS_KEY = os.environ.get(
+    'CLOUDFLARE_R2_SECRET_ACCESS_KEY', ''
+)
+CLOUDFLARE_R2_BUCKET_NAME = os.environ.get(
+    'CLOUDFLARE_R2_BUCKET_NAME', ''
+)
+CLOUDFLARE_R2_ENDPOINT_URL = os.environ.get(
+    'CLOUDFLARE_R2_ENDPOINT_URL', ''
+)
+
+_r2_configured = all([
+    CLOUDFLARE_R2_ACCESS_KEY_ID,
+    CLOUDFLARE_R2_SECRET_ACCESS_KEY,
+    CLOUDFLARE_R2_BUCKET_NAME,
+    CLOUDFLARE_R2_ENDPOINT_URL,
+])
+
+if _r2_configured:
+    DEFAULT_FILE_STORAGE = \
+        'storages.backends.s3boto3.S3Boto3Storage'
+    AWS_ACCESS_KEY_ID = CLOUDFLARE_R2_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY = \
+        CLOUDFLARE_R2_SECRET_ACCESS_KEY
+    AWS_STORAGE_BUCKET_NAME = \
+        CLOUDFLARE_R2_BUCKET_NAME
+    AWS_S3_ENDPOINT_URL = CLOUDFLARE_R2_ENDPOINT_URL
+    AWS_S3_REGION_NAME = 'auto'
+    AWS_DEFAULT_ACL = 'public-read'
+    AWS_S3_FILE_OVERWRITE = False
+    AWS_QUERYSTRING_AUTH = False
+    MEDIA_URL = (
+        f'{CLOUDFLARE_R2_ENDPOINT_URL}/'
+        f'{CLOUDFLARE_R2_BUCKET_NAME}/'
+    )
+
 # ---------------------------------------------------------------------------
 # Default primary key type
 # ---------------------------------------------------------------------------

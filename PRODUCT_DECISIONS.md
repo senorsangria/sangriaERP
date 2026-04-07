@@ -3014,3 +3014,33 @@ years = sorted(
 The same pattern is applied in `account_sales_by_year_csv`.
 
 *Last updated: March 27, 2026*
+
+---
+
+## Media Storage
+
+### Decision
+Event recap photos and expense receipt photos are stored via Django's
+`default_storage` abstraction (`apps/events/storage.py`).
+
+- **Local dev**: `MEDIA_ROOT` filesystem — no env vars needed; files saved to
+  `media/events/<pk>/` and served at `/media/events/<pk>/`.
+- **Production**: Cloudflare R2 via `django-storages` (S3Boto3Storage backend).
+  Activated automatically when all four `CLOUDFLARE_R2_*` env vars are set.
+- **Staging**: separate R2 bucket (`producterp-staging`) — same vars, different
+  `CLOUDFLARE_R2_BUCKET_NAME` value.
+
+### Key settings
+- `AWS_QUERYSTRING_AUTH = False` — objects are served via public URLs without
+  signed query strings (bucket is public-read).
+- `AWS_S3_FILE_OVERWRITE = False` — uploading a file with a duplicate name
+  appends a suffix rather than overwriting.
+- File path format: `events/<pk>/<uuid>.<ext>`
+
+### Rationale
+All file operations go through `default_storage.save()` / `default_storage.url()`
+/ `default_storage.delete()` so views and tests are completely unaware of the
+underlying backend. Tests use Django's default in-memory/filesystem test storage
+with no mocking required.
+
+*Last updated: April 2026*
