@@ -34,13 +34,22 @@ if REPLIT_HOST:
         '*.replit.dev',
     ]
 
+_csrf_origins = os.getenv(
+    'CSRF_TRUSTED_ORIGINS',
+    'http://localhost:5000,http://127.0.0.1:5000'
+)
 CSRF_TRUSTED_ORIGINS = [
-    f'https://*.repl.co',
-    f'https://*.replit.app',
-    f'https://*.replit.dev',
-    'http://localhost:5000',
-    'http://127.0.0.1:5000',
+    o.strip() for o in _csrf_origins.split(',')
+    if o.strip()
 ]
+
+# Always include Replit domains when running on Replit
+if os.getenv('REPL_SLUG'):
+    CSRF_TRUSTED_ORIGINS += [
+        'https://*.repl.co',
+        'https://*.replit.app',
+        'https://*.replit.dev',
+    ]
 
 # ---------------------------------------------------------------------------
 # Application definition
