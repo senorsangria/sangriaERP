@@ -3,339 +3,118 @@
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
+<div class="container-fluid px-3 px-md-4 py-4">
 
-<!-- Page header -->
-<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
-  <div>
-    <h1 class="h3 mb-0 fw-bold">
-      Welcome back, {{ user.first_name|default:user.username }}
-    </h1>
-    <p class="text-muted mb-0 small mt-1">
-      {% if user.company %}{{ user.company.name }} &mdash; {% endif %}
-      <span class="badge bg-primary">{{ user.get_role_display }}</span>
-    </p>
+  {# Welcome header — compact #}
+  <div class="mb-4">
+    <h4 class="fw-semibold mb-0">
+      Welcome{% if user.first_name %},
+      {{ user.first_name }}{% endif %}
+    </h4>
+    <div class="text-muted small">
+      {{ user.company.name }}
+    </div>
   </div>
-</div>
 
-<!-- ================================================================
-     SaaS Admin dashboard
-     ================================================================ -->
-{% if user.is_saas_admin %}
-
-<div class="row g-3 mb-4">
-  <div class="col-12 col-md-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-primary bg-opacity-10 p-3 me-3">
-            <i class="bi bi-people fs-4 text-primary"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Users</h6>
-            <small class="text-muted">All platform users</small>
-          </div>
-        </div>
-        <a href="{% url 'user_list' %}" class="btn btn-outline-primary btn-sm">
-          <i class="bi bi-arrow-right me-1"></i>Manage Users
+  {# Account search — only for eligible roles #}
+  {% if can_search %}
+  <div class="mb-4">
+    <form method="get" action="{% url 'dashboard' %}"
+          autocomplete="off">
+      <div class="input-group input-group-lg">
+        <input type="text"
+               name="q"
+               class="form-control"
+               placeholder="Search accounts by name, address or city..."
+               value="{{ query }}"
+               autofocus
+               autocomplete="off">
+        <button type="submit"
+                class="btn btn-primary">
+          <i class="bi bi-search"></i>
+        </button>
+        {% if query %}
+        <a href="{% url 'dashboard' %}"
+           class="btn btn-outline-secondary">
+          <i class="bi bi-x-lg"></i>
         </a>
+        {% endif %}
       </div>
-    </div>
+    </form>
   </div>
-  <div class="col-12 col-md-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-secondary bg-opacity-10 p-3 me-3">
-            <i class="bi bi-building fs-4 text-secondary"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Companies</h6>
-            <small class="text-muted">Tenant management</small>
-          </div>
-        </div>
-        <span class="badge bg-light text-secondary border">Coming in a future phase</span>
-      </div>
+
+  {# Search results #}
+  {% if query %}
+    {% if accounts %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead class="table-light">
+          <tr>
+            <th style="width:40px"></th>
+            <th>Account</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for account in accounts %}
+          <tr style="cursor:pointer"
+              onclick="window.location='{% url 'account_detail_combined' account.pk %}'">
+            <td class="text-center">
+              {% if account.on_off_premise == 'ON' %}
+              <i class="bi bi-cup-hot text-muted"
+                 title="On Premise"></i>
+              {% elif account.on_off_premise == 'OFF' %}
+              <i class="bi bi-shop text-muted"
+                 title="Off Premise"></i>
+              {% else %}
+              <i class="bi bi-question-circle text-muted"></i>
+              {% endif %}
+            </td>
+            <td>
+              <a href="{% url 'account_detail_combined' account.pk %}"
+                 class="text-decoration-none text-dark fw-medium">
+                {{ account.name }}
+              </a>
+              <div class="text-muted small">
+                {% if account.street %}
+                  {{ account.street }},
+                {% endif %}
+                {{ account.city }}
+                {% if account.state %}
+                  , {{ account.state }}
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
+
+    {% if has_more %}
+    <div class="text-muted small text-center mt-2 p-2
+                bg-light rounded border">
+      <i class="bi bi-info-circle me-1"></i>
+      More results exist — enter additional details
+      to narrow your search.
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="text-muted text-center py-4">
+      <i class="bi bi-search me-2"></i>
+      No accounts found for
+      <strong>{{ query }}</strong>
+    </div>
+    {% endif %}
+
+  {% else %}
+  <div class="text-muted small text-center py-3">
+    <i class="bi bi-search me-1"></i>
+    Enter one or more words to search for accounts
   </div>
+  {% endif %}
+
+  {% endif %}{# end can_search #}
+
 </div>
-
-<!-- ================================================================
-     Supplier Admin dashboard
-     ================================================================ -->
-{% elif user.is_supplier_admin %}
-
-<div class="row g-3 mb-4">
-  <div class="col-12 col-sm-6 col-xl-3">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-primary bg-opacity-10 p-3 me-3">
-            <i class="bi bi-people fs-4 text-primary"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Users</h6>
-            <small class="text-muted">Team management</small>
-          </div>
-        </div>
-        <a href="{% url 'user_list' %}" class="btn btn-outline-primary btn-sm">
-          <i class="bi bi-arrow-right me-1"></i>Manage Users
-        </a>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-sm-6 col-xl-3">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-success bg-opacity-10 p-3 me-3">
-            <i class="bi bi-bookmark-star fs-4 text-success"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Brands</h6>
-            <small class="text-muted">Catalog management</small>
-          </div>
-        </div>
-        <span class="badge bg-light text-secondary border">Coming soon</span>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-sm-6 col-xl-3">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-info bg-opacity-10 p-3 me-3">
-            <i class="bi bi-upc fs-4 text-info"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Items / SKUs</h6>
-            <small class="text-muted">Product catalog</small>
-          </div>
-        </div>
-        <span class="badge bg-light text-secondary border">Coming soon</span>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-sm-6 col-xl-3">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-warning bg-opacity-10 p-3 me-3">
-            <i class="bi bi-graph-up-arrow fs-4 text-warning"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Sales Data</h6>
-            <small class="text-muted">Distributor reports</small>
-          </div>
-        </div>
-        <span class="badge bg-light text-secondary border">Coming soon</span>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ================================================================
-     Sales Manager dashboard
-     ================================================================ -->
-{% elif user.is_sales_manager %}
-
-<div class="row g-3 mb-4">
-  <div class="col-12 col-sm-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-primary bg-opacity-10 p-3 me-3">
-            <i class="bi bi-people fs-4 text-primary"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Users</h6>
-            <small class="text-muted">Territory &amp; Ambassador teams</small>
-          </div>
-        </div>
-        <a href="{% url 'user_list' %}" class="btn btn-outline-primary btn-sm">
-          <i class="bi bi-arrow-right me-1"></i>Manage Users
-        </a>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-sm-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-warning bg-opacity-10 p-3 me-3">
-            <i class="bi bi-shop fs-4 text-warning"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Accounts</h6>
-            <small class="text-muted">Retail locations</small>
-          </div>
-        </div>
-        <span class="badge bg-light text-secondary border">Coming in Phase 2</span>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ================================================================
-     Territory Manager dashboard
-     ================================================================ -->
-{% elif user.is_territory_manager %}
-
-<div class="row g-3 mb-4">
-  <div class="col-12 col-sm-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-primary bg-opacity-10 p-3 me-3">
-            <i class="bi bi-people fs-4 text-primary"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Users</h6>
-            <small class="text-muted">Your ambassadors</small>
-          </div>
-        </div>
-        <a href="{% url 'user_list' %}" class="btn btn-outline-primary btn-sm">
-          <i class="bi bi-arrow-right me-1"></i>Manage Users
-        </a>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-sm-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-warning bg-opacity-10 p-3 me-3">
-            <i class="bi bi-shop fs-4 text-warning"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Accounts</h6>
-            <small class="text-muted">Your territory</small>
-          </div>
-        </div>
-        <span class="badge bg-light text-secondary border">Coming in Phase 2</span>
-      </div>
-    </div>
-  </div>
-</div>
-{% if user.territory %}
-<div class="alert alert-light border d-flex align-items-center gap-2 mb-4">
-  <i class="bi bi-geo-alt text-muted"></i>
-  <span class="small"><strong>Territory:</strong> {{ user.territory }}</span>
-</div>
-{% endif %}
-
-<!-- ================================================================
-     Ambassador Manager dashboard
-     ================================================================ -->
-{% elif user.is_ambassador_manager %}
-
-<div class="row g-3 mb-4">
-  <div class="col-12 col-sm-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-primary bg-opacity-10 p-3 me-3">
-            <i class="bi bi-people fs-4 text-primary"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Users</h6>
-            <small class="text-muted">Your ambassadors</small>
-          </div>
-        </div>
-        <a href="{% url 'user_list' %}" class="btn btn-outline-primary btn-sm">
-          <i class="bi bi-arrow-right me-1"></i>Manage Users
-        </a>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-sm-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-danger bg-opacity-10 p-3 me-3">
-            <i class="bi bi-calendar-event fs-4 text-danger"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Events</h6>
-            <small class="text-muted">Tastings &amp; field events</small>
-          </div>
-        </div>
-        <span class="badge bg-light text-secondary border">Coming in Phase 10</span>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ================================================================
-     Ambassador dashboard
-     ================================================================ -->
-{% elif user.is_ambassador %}
-
-<div class="row g-3 mb-4">
-  <div class="col-12 col-sm-8 col-md-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-danger bg-opacity-10 p-3 me-3">
-            <i class="bi bi-calendar-check fs-4 text-danger"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">My Events</h6>
-            <small class="text-muted">Upcoming tastings &amp; assignments</small>
-          </div>
-        </div>
-        <span class="badge bg-light text-secondary border">Coming in Phase 10</span>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ================================================================
-     Distributor Contact dashboard
-     ================================================================ -->
-{% elif user.is_distributor_contact %}
-
-<div class="row g-3 mb-4">
-  <div class="col-12 col-sm-8 col-md-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center mb-3">
-          <span class="rounded-circle bg-success bg-opacity-10 p-3 me-3">
-            <i class="bi bi-graph-up fs-4 text-success"></i>
-          </span>
-          <div>
-            <h6 class="mb-0 fw-semibold">Reports</h6>
-            <small class="text-muted">Sales &amp; inventory reports</small>
-          </div>
-        </div>
-        <span class="badge bg-light text-secondary border">Coming in Phase 6</span>
-      </div>
-    </div>
-  </div>
-</div>
-
-{% endif %}
-
-<!-- Phase progress note for admin roles -->
-{% if user.is_supplier_admin or user.is_sales_manager or user.is_saas_admin %}
-<div class="card border-0 shadow-sm">
-  <div class="card-header bg-white fw-semibold border-bottom small text-muted">
-    <i class="bi bi-map me-2"></i>Build Roadmap
-  </div>
-  <div class="card-body">
-    <div class="row g-2">
-      {% for item in phases %}
-      <div class="col-12 col-sm-6 col-md-4">
-        <div class="d-flex align-items-center gap-2 small py-1">
-          {% if item.status == 'done' %}<i class="bi bi-check-circle-fill text-success flex-shrink-0"></i>
-          {% elif item.status == 'active' %}<i class="bi bi-circle-half text-primary flex-shrink-0"></i>
-          {% else %}<i class="bi bi-circle text-muted flex-shrink-0"></i>{% endif %}
-          <span class="{% if item.status == 'done' %}text-success{% elif item.status == 'pending' %}text-muted{% endif %}">{{ item.label }}</span>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-</div>
-{% endif %}
-
 {% endblock %}

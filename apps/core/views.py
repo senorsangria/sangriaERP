@@ -21,6 +21,8 @@ from .forms import (
 from apps.distribution.models import Distributor
 from apps.accounts.constants import US_STATES, US_STATES_DICT
 from apps.accounts.views import _build_enhanced_coverage_areas
+from apps.accounts.models import Account
+from apps.accounts.utils import get_accounts_for_user
 
 
 # ---------------------------------------------------------------------------
@@ -129,26 +131,45 @@ def password_reset_stub(request):
 # Dashboard
 # ---------------------------------------------------------------------------
 
-PHASE_ROADMAP = [
-    {'label': 'Foundation — Data models & admin', 'status': 'done'},
-    {'label': 'Phase 1 — Login & User Management', 'status': 'active'},
-    {'label': 'Phase 2 — Distributors & VIP Import', 'status': 'pending'},
-    {'label': 'Phase 3 — Sales Views', 'status': 'pending'},
-    {'label': 'Phase 4 — Saving Sales Views', 'status': 'pending'},
-    {'label': 'Phase 5 — CRM / Accounts', 'status': 'pending'},
-    {'label': 'Phase 6 — Sales Reports', 'status': 'pending'},
-    {'label': 'Phase 7 — Sales Orders', 'status': 'pending'},
-    {'label': 'Phase 8 — Production Ordering', 'status': 'pending'},
-    {'label': 'Phase 9 — Projection Planning', 'status': 'pending'},
-    {'label': 'Phase 10 — Event Management', 'status': 'pending'},
-]
-
-
 @login_required
 def dashboard(request):
     if request.user.has_permission('can_redirect_to_events_on_login'):
         return redirect('event_list')
-    return render(request, 'core/dashboard.html', {'phases': PHASE_ROADMAP})
+
+    search_roles = [
+        'supplier_admin', 'sales_manager',
+        'territory_manager',
+    ]
+    can_search = any(
+        request.user.has_role(r) for r in search_roles
+    )
+
+    accounts = []
+    query = ''
+    has_more = False
+
+    if can_search:
+        query = request.GET.get('q', '').strip()
+        if query:
+            base_qs = get_accounts_for_user(request.user)
+            words = query.split()
+            for word in words:
+                base_qs = base_qs.filter(
+                    Q(name__icontains=word) |
+                    Q(street__icontains=word) |
+                    Q(city__icontains=word)
+                )
+            base_qs = base_qs.order_by('name')
+            total = base_qs.count()
+            has_more = total > 30
+            accounts = list(base_qs[:30])
+
+    return render(request, 'core/dashboard.html', {
+        'can_search': can_search,
+        'query': query,
+        'accounts': accounts,
+        'has_more': has_more,
+    })
 
 
 # ---------------------------------------------------------------------------

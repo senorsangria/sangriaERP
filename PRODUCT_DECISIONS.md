@@ -3043,4 +3043,17 @@ All file operations go through `default_storage.save()` / `default_storage.url()
 underlying backend. Tests use Django's default in-memory/filesystem test storage
 with no mocking required.
 
+---
+
+## Dashboard — Account Search
+
+- Dashboard repurposed as account search tool
+- Word search (AND logic) across name, street, city
+- Results capped at 30 with "more results" message
+- Respects get_accounts_for_user() coverage areas
+- Roles with search: Supplier Admin, Sales Manager, Territory Manager
+- Roles without search: Ambassador Manager, Ambassador (redirected to
+  event list anyway), SaaS Admin, Distributor Contact
+- Clicking result goes to account_detail_combined
+
 *Last updated: April 2026*
