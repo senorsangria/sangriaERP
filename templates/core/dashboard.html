@@ -143,7 +143,7 @@
 
             {# --- ACTION ITEMS --- #}
 
-            {% if user.has_permission('can_create_events') %}
+            {% if user|has_perm:'can_create_events' %}
             <button type="button"
                     id="aam-visit-note-btn"
                     class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
@@ -180,7 +180,7 @@
             </div>
             {% endif %}
 
-            {% if user.has_permission('can_view_report_account_sales') %}
+            {% if user|has_perm:'can_view_report_account_sales' %}
             <button type="button"
                     id="aam-add-route-btn"
                     class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
@@ -194,7 +194,7 @@
 
             {# --- VIEW ITEMS --- #}
 
-            {% if user.has_permission('can_view_report_account_sales') %}
+            {% if user|has_perm:'can_view_report_account_sales' %}
             <a id="aam-view-sales"
                href="#"
                class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
@@ -203,7 +203,7 @@
             </a>
             {% endif %}
 
-            {% if user.has_permission('can_view_events') %}
+            {% if user|has_perm:'can_view_events' %}
             <button type="button"
                     id="aam-view-events-btn"
                     class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3"
@@ -214,7 +214,7 @@
             </button>
             {% endif %}
 
-            {% if user.has_permission('can_view_accounts') %}
+            {% if user|has_perm:'can_view_accounts' %}
             <a id="aam-view-details"
                href="#"
                class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
