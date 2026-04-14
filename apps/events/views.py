@@ -885,12 +885,17 @@ def event_create(request):
 
         selected_item_pks = set(int(x) for x in request.POST.getlist('items') if x.isdigit())
     else:
-        locked_event_type = request.GET.get('type', '').strip().lower()
+        locked_event_type = request.GET.get(
+            'event_type',
+            request.POST.get('event_type', 'tasting')
+        ).strip().lower()
         if locked_event_type not in _VALID_EVENT_TYPES:
             return redirect('event_list')
 
         form = EventForm(company=company, user=request.user)
         selected_item_pks = set()
+
+    initial_account_id = request.GET.get('account', '')
 
     locked_event_type_display = dict(Event.EventType.choices).get(locked_event_type, locked_event_type.title())
     items_by_brand = _get_items_by_brand(company)
@@ -906,6 +911,7 @@ def event_create(request):
         'items_by_brand':            items_by_brand,
         'selected_item_pks':         selected_item_pks,
         'can_manage_contacts':       request.user.has_permission('can_manage_contacts'),
+        'initial_account_id':        initial_account_id,
     })
 
 

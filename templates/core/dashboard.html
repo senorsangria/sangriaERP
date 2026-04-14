@@ -3,18 +3,8 @@
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
+{% csrf_token %}
 <div class="container-fluid px-3 px-md-4 py-4">
-
-  {# Welcome header — compact #}
-  <div class="mb-4">
-    <h4 class="fw-semibold mb-0">
-      Welcome{% if user.first_name %},
-      {{ user.first_name }}{% endif %}
-    </h4>
-    <div class="text-muted small">
-      {{ user.company.name }}
-    </div>
-  </div>
 
   {# Account search — only for eligible roles #}
   {% if can_search %}
@@ -57,7 +47,12 @@
         <tbody>
           {% for account in accounts %}
           <tr style="cursor:pointer"
-              onclick="window.location='{% url 'account_detail_combined' account.pk %}'">
+              data-account-id="{{ account.pk }}"
+              data-account-name="{{ account.name }}"
+              data-account-city="{{ account.city }}"
+              data-account-on-off="{{ account.on_off_premise }}"
+              data-account-distributor-id="{{ account.distributor_id }}"
+              data-account-distributor-name="{{ account.distributor.name }}">
             <td class="text-center">
               {% if account.on_off_premise == 'ON' %}
               <i class="bi bi-cup-hot text-muted"
@@ -70,10 +65,10 @@
               {% endif %}
             </td>
             <td>
-              <a href="{% url 'account_detail_combined' account.pk %}"
-                 class="text-decoration-none text-dark fw-medium">
+              <span class="text-decoration-none text-primary fw-medium"
+                    style="cursor:pointer">
                 {{ account.name }}
-              </a>
+              </span>
               <div class="text-muted small">
                 {% if account.street %}
                   {{ account.street }},
@@ -117,4 +112,466 @@
   {% endif %}{# end can_search #}
 
 </div>
+
+{# ------------------------------------------------------------------ #}
+{# Account Actions Modal                                                #}
+{# ------------------------------------------------------------------ #}
+<div class="modal fade" id="accountActionsModal" tabindex="-1"
+     aria-labelledby="aamModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+
+      {# Thin header #}
+      <div class="modal-header py-2">
+        <div class="d-flex align-items-center gap-2">
+          <span id="aam-on-off-icon" class="text-muted"></span>
+          <div>
+            <div id="aamModalLabel" class="fw-semibold lh-sm"></div>
+            <div id="aam-city" class="text-muted small lh-sm"></div>
+          </div>
+        </div>
+        <button type="button" class="btn-close"
+                data-bs-dismiss="modal"
+                aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body p-0">
+
+        {# SECTION 1 — Main menu #}
+        <div id="aam-main-menu">
+          <div class="list-group list-group-flush">
+
+            {# --- ACTION ITEMS --- #}
+
+            {% if user.has_permission('can_create_events') %}
+            <button type="button"
+                    id="aam-visit-note-btn"
+                    class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
+              <i class="bi bi-journal-plus text-secondary"></i>
+              <span>Add Visit Note</span>
+            </button>
+
+            <div>
+              <button type="button"
+                      id="aam-create-event-btn"
+                      class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3 w-100 border-0 bg-transparent text-start">
+                <i class="bi bi-calendar-plus text-secondary"></i>
+                <span class="flex-grow-1">Create Event</span>
+                <i class="bi bi-chevron-right" id="aam-create-chevron"></i>
+              </button>
+              <div id="aam-event-types" style="display:none"
+                   class="ps-4 pb-2 border-bottom">
+                <a id="aam-create-tasting"
+                   href="#"
+                   class="list-group-item list-group-item-action py-2 small">
+                  <i class="bi bi-cup-hot me-2 text-secondary"></i>Tasting
+                </a>
+                <a id="aam-create-special"
+                   href="#"
+                   class="list-group-item list-group-item-action py-2 small">
+                  <i class="bi bi-star me-2 text-secondary"></i>Special Event
+                </a>
+                <a id="aam-create-admin"
+                   href="#"
+                   class="list-group-item list-group-item-action py-2 small">
+                  <i class="bi bi-briefcase me-2 text-secondary"></i>Admin
+                </a>
+              </div>
+            </div>
+            {% endif %}
+
+            {% if user.has_permission('can_view_report_account_sales') %}
+            <button type="button"
+                    id="aam-add-route-btn"
+                    class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
+              <i class="bi bi-signpost-split text-secondary"></i>
+              <span>Add to Route</span>
+            </button>
+            {% endif %}
+
+            {# --- DIVIDER --- #}
+            <div class="dropdown-divider my-0"></div>
+
+            {# --- VIEW ITEMS --- #}
+
+            {% if user.has_permission('can_view_report_account_sales') %}
+            <a id="aam-view-sales"
+               href="#"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
+              <i class="bi bi-bar-chart text-secondary"></i>
+              <span>View Sales</span>
+            </a>
+            {% endif %}
+
+            {% if user.has_permission('can_view_events') %}
+            <button type="button"
+                    id="aam-view-events-btn"
+                    class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3"
+                    disabled>
+              <i class="bi bi-calendar-event text-secondary"></i>
+              <span class="text-muted">View Events</span>
+              <span class="badge bg-secondary ms-auto" style="font-size:.65rem">Soon</span>
+            </button>
+            {% endif %}
+
+            {% if user.has_permission('can_view_accounts') %}
+            <a id="aam-view-details"
+               href="#"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
+              <i class="bi bi-shop text-secondary"></i>
+              <span>View Account Details</span>
+            </a>
+            {% endif %}
+
+          </div>{# /list-group #}
+        </div>{# /aam-main-menu #}
+
+        {# SECTION 2 — Add to Route sub-flow #}
+        <div id="aam-route-section" style="display:none" class="p-3">
+
+          <div class="d-flex align-items-center gap-2 mb-3">
+            <button type="button" id="aam-route-back-btn"
+                    class="btn btn-sm btn-outline-secondary">
+              <i class="bi bi-arrow-left"></i>
+            </button>
+            <h6 class="mb-0 fw-semibold">Add to Route</h6>
+          </div>
+
+          <div class="mb-3">
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="radio"
+                     name="aamRouteAction" id="aamRouteNew" value="new" checked>
+              <label class="form-check-label" for="aamRouteNew">
+                Create new route
+              </label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio"
+                     name="aamRouteAction" id="aamRouteExisting" value="existing">
+              <label class="form-check-label" for="aamRouteExisting">
+                Add to existing route
+              </label>
+            </div>
+          </div>
+
+          <div id="aam-new-route-wrap" class="mb-3">
+            <label for="aam-new-route-name" class="form-label small">Route name</label>
+            <input type="text" id="aam-new-route-name"
+                   class="form-control form-control-sm"
+                   placeholder="Enter route name">
+          </div>
+
+          <div id="aam-existing-route-wrap" class="mb-3" style="display:none">
+            <label for="aam-existing-route-select" class="form-label small">Select route</label>
+            <select id="aam-existing-route-select"
+                    class="form-select form-select-sm">
+              <option value="">Loading...</option>
+            </select>
+          </div>
+
+          <div id="aam-route-message" class="mb-2"></div>
+
+          <button type="button" id="aam-route-save-btn"
+                  class="btn btn-primary btn-sm">
+            Save to Route
+          </button>
+
+        </div>{# /aam-route-section #}
+
+      </div>{# /modal-body #}
+    </div>{# /modal-content #}
+  </div>{# /modal-dialog #}
+</div>{# /modal #}
+
+{% endblock %}
+
+{% block extra_css %}
+<style>
+@media (max-width: 575px) {
+  #accountActionsModal .modal-dialog {
+    margin: 0;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    max-width: 100%;
+    transform: none;
+  }
+  #accountActionsModal .modal-content {
+    border-radius: 1rem 1rem 0 0;
+    border-bottom: none;
+  }
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+
+  // ---- CSRF helper ----
+  function getCsrf() {
+    var el = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (el) return el.value;
+    var m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+  }
+
+  // ---- Modal elements ----
+  var modalEl        = document.getElementById('accountActionsModal');
+  var modal          = modalEl ? new bootstrap.Modal(modalEl) : null;
+  var aamOnOffIcon   = document.getElementById('aam-on-off-icon');
+  var aamLabel       = document.getElementById('aamModalLabel');
+  var aamCity        = document.getElementById('aam-city');
+
+  var aamMainMenu    = document.getElementById('aam-main-menu');
+  var aamRouteSection= document.getElementById('aam-route-section');
+
+  var aamVisitNoteBtn= document.getElementById('aam-visit-note-btn');
+  var aamCreateBtn   = document.getElementById('aam-create-event-btn');
+  var aamChevron     = document.getElementById('aam-create-chevron');
+  var aamEventTypes  = document.getElementById('aam-event-types');
+  var aamTasting     = document.getElementById('aam-create-tasting');
+  var aamSpecial     = document.getElementById('aam-create-special');
+  var aamAdmin       = document.getElementById('aam-create-admin');
+
+  var aamAddRouteBtn = document.getElementById('aam-add-route-btn');
+  var aamViewSales   = document.getElementById('aam-view-sales');
+  var aamViewDetails = document.getElementById('aam-view-details');
+
+  var aamRouteBack   = document.getElementById('aam-route-back-btn');
+  var aamRouteNew    = document.getElementById('aamRouteNew');
+  var aamRouteExisting = document.getElementById('aamRouteExisting');
+  var aamNewRouteWrap  = document.getElementById('aam-new-route-wrap');
+  var aamExistingWrap  = document.getElementById('aam-existing-route-wrap');
+  var aamNewRouteName  = document.getElementById('aam-new-route-name');
+  var aamExistingSelect= document.getElementById('aam-existing-route-select');
+  var aamRouteMsg    = document.getElementById('aam-route-message');
+  var aamRouteSave   = document.getElementById('aam-route-save-btn');
+
+  // Current account state
+  var currentAccountId       = null;
+  var currentDistributorId   = null;
+
+  // ---- Helper: reset modal to main menu ----
+  function resetToMainMenu() {
+    if (aamMainMenu)     aamMainMenu.style.display = '';
+    if (aamRouteSection) aamRouteSection.style.display = 'none';
+    if (aamEventTypes)   aamEventTypes.style.display = 'none';
+    if (aamChevron) {
+      aamChevron.classList.remove('bi-chevron-down');
+      aamChevron.classList.add('bi-chevron-right');
+    }
+    if (aamRouteMsg) aamRouteMsg.innerHTML = '';
+    if (aamNewRouteName) aamNewRouteName.value = '';
+    if (aamRouteNew) aamRouteNew.checked = true;
+    if (aamNewRouteWrap)   aamNewRouteWrap.style.display = '';
+    if (aamExistingWrap)   aamExistingWrap.style.display = 'none';
+  }
+
+  // ---- 1. Row click: open modal ----
+  document.addEventListener('click', function (e) {
+    var row = e.target.closest('[data-account-id]');
+    if (!row) return;
+
+    var accountId      = row.dataset.accountId;
+    var accountName    = row.dataset.accountName;
+    var accountCity    = row.dataset.accountCity;
+    var onOff          = row.dataset.accountOnOff;
+    var distributorId  = row.dataset.accountDistributorId;
+
+    currentAccountId     = accountId;
+    currentDistributorId = distributorId;
+
+    // Populate header
+    if (aamLabel) aamLabel.textContent = accountName;
+    if (aamCity)  aamCity.textContent  = accountCity;
+    if (aamOnOffIcon) {
+      if (onOff === 'ON') {
+        aamOnOffIcon.innerHTML = '<i class="bi bi-cup-hot" title="On Premise"></i>';
+      } else if (onOff === 'OFF') {
+        aamOnOffIcon.innerHTML = '<i class="bi bi-shop" title="Off Premise"></i>';
+      } else {
+        aamOnOffIcon.innerHTML = '<i class="bi bi-question-circle"></i>';
+      }
+    }
+
+    // Set view links
+    if (aamViewSales) {
+      aamViewSales.href = '/accounts/' + accountId + '/detail/?tab=sales';
+    }
+    if (aamViewDetails) {
+      aamViewDetails.href = '/accounts/' + accountId + '/detail/';
+    }
+
+    // Set create event sub-links
+    if (aamTasting) {
+      aamTasting.href = '/events/create/?event_type=tasting&account=' + accountId;
+    }
+    if (aamSpecial) {
+      aamSpecial.href = '/events/create/?event_type=special_event&account=' + accountId;
+    }
+    if (aamAdmin) {
+      aamAdmin.href = '/events/create/?event_type=admin&account=' + accountId;
+    }
+
+    resetToMainMenu();
+    if (modal) modal.show();
+  });
+
+  // ---- 2. Modal hidden: reset ----
+  if (modalEl) {
+    modalEl.addEventListener('hidden.bs.modal', function () {
+      resetToMainMenu();
+    });
+  }
+
+  // ---- 3. Create Event toggle ----
+  if (aamCreateBtn) {
+    aamCreateBtn.addEventListener('click', function () {
+      if (!aamEventTypes) return;
+      var isHidden = aamEventTypes.style.display === 'none';
+      aamEventTypes.style.display = isHidden ? '' : 'none';
+      if (aamChevron) {
+        if (isHidden) {
+          aamChevron.classList.remove('bi-chevron-right');
+          aamChevron.classList.add('bi-chevron-down');
+        } else {
+          aamChevron.classList.remove('bi-chevron-down');
+          aamChevron.classList.add('bi-chevron-right');
+        }
+      }
+    });
+  }
+
+  // ---- 4. Add to Route: fetch routes, show sub-flow ----
+  if (aamAddRouteBtn) {
+    aamAddRouteBtn.addEventListener('click', function () {
+      if (!currentDistributorId) return;
+      // Fetch routes for this distributor
+      if (aamExistingSelect) {
+        aamExistingSelect.innerHTML = '<option value="">Loading...</option>';
+      }
+      fetch('/routes/?distributor_id=' + encodeURIComponent(currentDistributorId), {
+        headers: {'X-Requested-With': 'XMLHttpRequest'},
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!aamExistingSelect) return;
+        var routes = data.routes || [];
+        aamExistingSelect.innerHTML = '';
+        if (routes.length === 0) {
+          var opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = '— No routes yet —';
+          aamExistingSelect.appendChild(opt);
+        } else {
+          routes.forEach(function (r) {
+            var opt = document.createElement('option');
+            opt.value = r.id;
+            opt.textContent = r.name + ' (' + r.account_count + ' accounts)';
+            aamExistingSelect.appendChild(opt);
+          });
+        }
+      })
+      .catch(function () {
+        if (aamExistingSelect) {
+          aamExistingSelect.innerHTML = '<option value="">Error loading routes</option>';
+        }
+      });
+
+      if (aamMainMenu)     aamMainMenu.style.display = 'none';
+      if (aamRouteSection) aamRouteSection.style.display = '';
+    });
+  }
+
+  // ---- 5. Back button ----
+  if (aamRouteBack) {
+    aamRouteBack.addEventListener('click', function () {
+      if (aamMainMenu)     aamMainMenu.style.display = '';
+      if (aamRouteSection) aamRouteSection.style.display = 'none';
+      if (aamRouteMsg)     aamRouteMsg.innerHTML = '';
+    });
+  }
+
+  // ---- 6. Route radio change ----
+  function handleRouteRadio() {
+    if (!aamRouteNew || !aamRouteExisting) return;
+    if (aamRouteNew.checked) {
+      if (aamNewRouteWrap)  aamNewRouteWrap.style.display  = '';
+      if (aamExistingWrap)  aamExistingWrap.style.display  = 'none';
+    } else {
+      if (aamNewRouteWrap)  aamNewRouteWrap.style.display  = 'none';
+      if (aamExistingWrap)  aamExistingWrap.style.display  = '';
+    }
+  }
+  if (aamRouteNew)      aamRouteNew.addEventListener('change', handleRouteRadio);
+  if (aamRouteExisting) aamRouteExisting.addEventListener('change', handleRouteRadio);
+
+  // ---- 7. Route save ----
+  if (aamRouteSave) {
+    aamRouteSave.addEventListener('click', function () {
+      if (!currentAccountId || !currentDistributorId) return;
+
+      var action = (aamRouteNew && aamRouteNew.checked) ? 'new' : 'existing';
+      var payload = {
+        account_ids: [currentAccountId],
+        distributor_id: currentDistributorId,
+        action: action,
+      };
+
+      if (action === 'new') {
+        payload.route_name = aamNewRouteName ? aamNewRouteName.value.trim() : '';
+      } else {
+        payload.route_id = aamExistingSelect ? aamExistingSelect.value : '';
+      }
+
+      if (aamRouteMsg) aamRouteMsg.innerHTML = '';
+      aamRouteSave.disabled = true;
+
+      fetch('/routes/save/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCsrf(),
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(payload),
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        aamRouteSave.disabled = false;
+        if (data.success) {
+          var msg = 'Added to route <strong>' + data.route_name + '</strong>.';
+          if (data.already_in_route > 0) {
+            msg += ' (already in route)';
+          }
+          if (aamRouteMsg) {
+            aamRouteMsg.innerHTML = '<div class="alert alert-success py-2 small">' + msg + '</div>';
+          }
+        } else {
+          if (aamRouteMsg) {
+            aamRouteMsg.innerHTML = '<div class="alert alert-danger py-2 small">' + (data.error || 'Error saving.') + '</div>';
+          }
+        }
+      })
+      .catch(function () {
+        aamRouteSave.disabled = false;
+        if (aamRouteMsg) {
+          aamRouteMsg.innerHTML = '<div class="alert alert-danger py-2 small">Network error. Please try again.</div>';
+        }
+      });
+    });
+  }
+
+  // ---- 8. Add Visit Note: placeholder ----
+  if (aamVisitNoteBtn) {
+    aamVisitNoteBtn.addEventListener('click', function () {
+      // Placeholder — no action
+    });
+  }
+
+})();
+</script>
 {% endblock %}

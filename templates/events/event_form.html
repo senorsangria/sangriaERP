@@ -524,6 +524,39 @@
   })();
   {% endif %}
 
+  // On create page: if initial_account_id passed (e.g. from Account Actions modal),
+  // pre-populate the account selection via AJAX.
+  {% if is_create and initial_account_id %}
+  (function() {
+    var initialId = '{{ initial_account_id|escapejs }}';
+    if (!initialId) return;
+    fetch('{% url "ajax_event_accounts" %}?q=__id__' + encodeURIComponent(initialId), {
+      headers: {'X-Requested-With': 'XMLHttpRequest'},
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      // Find the account by id in results, or fall back to id-only display
+      var accounts = data.accounts || [];
+      var found = null;
+      for (var i = 0; i < accounts.length; i++) {
+        if (String(accounts[i].id) === String(initialId)) {
+          found = accounts[i];
+          break;
+        }
+      }
+      if (found) {
+        showAccountSelected(found.id, found.name, found);
+      } else {
+        // Minimal pre-population if account not returned by search
+        showAccountSelected(initialId, 'Account #' + initialId);
+      }
+    })
+    .catch(function() {
+      showAccountSelected(initialId, 'Account #' + initialId);
+    });
+  })();
+  {% endif %}
+
   // ---- Ambassador placeholder for Tasting/Festival before account selected ----
   function showAmbassadorPlaceholder() {
     if (!ambassadorSelect) return;

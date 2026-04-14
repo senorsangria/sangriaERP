@@ -3054,6 +3054,48 @@ with no mocking required.
 - Roles with search: Supplier Admin, Sales Manager, Territory Manager
 - Roles without search: Ambassador Manager, Ambassador (redirected to
   event list anyway), SaaS Admin, Distributor Contact
-- Clicking result goes to account_detail_combined
+- Clicking result opens Account Actions modal (not account detail)
+
+---
+
+## Account Actions Modal
+
+- Reusable pattern: data attributes on rows drive modal population
+  (`data-account-id`, `data-account-name`, `data-account-city`,
+  `data-account-on-off`, `data-account-distributor-id`,
+  `data-account-distributor-name`)
+- Modal populated entirely via JavaScript — no extra server round trip
+- Desktop: standard Bootstrap centered modal
+- Mobile (≤575px): bottom sheet slides up from bottom with rounded
+  top corners; CSS targets `#accountActionsModal .modal-dialog`
+- Welcome header removed from dashboard (replaced by search-first UX)
+
+### Menu Items and Permission Requirements
+- **Add Visit Note** (`can_create_events`): placeholder, no action yet
+- **Create Event** (`can_create_events`): expands inline to show 3
+  sub-type links — Tasting, Special Event, Admin; each links to
+  `/events/create/?event_type=X&account=ID`
+- **Add to Route** (`can_view_report_account_sales`): opens route
+  sub-flow inside modal; fetches routes via `/routes/?distributor_id=X`
+- **View Sales** (`can_view_report_account_sales`): links to
+  `/accounts/<id>/detail/?tab=sales`
+- **View Events** (`can_view_events`): disabled, future feature
+- **View Account Details** (`can_view_accounts`): links to
+  `/accounts/<id>/detail/`
+
+### Add to Route Sub-flow
+- Shown in place of main menu (back button to return)
+- Radio: Create new route / Add to existing route
+- Existing routes fetched via AJAX from `/routes/?distributor_id=X`
+- Save POSTs to `/routes/save/` (same endpoint as existing Save to Route)
+- Success/error shown inline without dismissing modal
+
+### Event Create Pre-population
+- `event_create` view reads `event_type` from GET params (changed
+  from `type`) and passes `initial_account_id` to template context
+- On create form load, if `initial_account_id` is set, an AJAX call
+  fetches account details and calls `showAccountSelected()` to
+  pre-populate the account field
+- Dashboard only for now; modal pattern is expandable to other pages
 
 *Last updated: April 2026*
