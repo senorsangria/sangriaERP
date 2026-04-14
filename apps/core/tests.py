@@ -7,6 +7,7 @@ from io import StringIO
 
 from django.core.management import call_command
 from django.test import TestCase
+from django.urls import reverse
 
 from apps.core.models import Company, User
 from apps.core.rbac import Permission, Role
@@ -183,3 +184,42 @@ class CreateSaasAdminCommandTest(TestCase):
 
         # Should still be only one user with that username
         self.assertEqual(User.objects.filter(username='existingadmin').count(), 1)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard render test
+# ---------------------------------------------------------------------------
+
+class DashboardRenderTest(TestCase):
+    def setUp(self):
+        self.company = Company.objects.create(
+            name='Test Co', slug='test-co'
+        )
+        self.user = User.objects.create_user(
+            username='testadmin',
+            password='password',
+            company=self.company,
+        )
+        role = Role.objects.get(
+            codename='supplier_admin'
+        )
+        self.user.roles.add(role)
+
+    def test_dashboard_renders_without_error(self):
+        """Dashboard template must render fully
+        without TemplateSyntaxError or other
+        template errors."""
+        self.client.login(
+            username='testadmin',
+            password='password'
+        )
+        response = self.client.get(
+            reverse('dashboard')
+        )
+        self.assertEqual(response.status_code, 200)
+        # Force full render — catches template errors
+        # that status code check alone misses
+        self.assertIn(
+            b'search',
+            response.content.lower()
+        )
