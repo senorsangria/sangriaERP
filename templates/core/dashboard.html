@@ -279,28 +279,129 @@
 
         </div>{# /aam-route-section #}
 
-        {# SECTION 3 — Notes loading state #}
-        <div id="aam-notes-section" style="display:none" class="p-3">
-          <button type="button"
-                  class="btn btn-sm btn-link px-0 mb-3"
-                  id="aam-notes-back-btn">
-            <i class="bi bi-arrow-left me-1"></i>Back
-          </button>
-          <div id="aam-notes-content">
-            <div id="aam-notes-loading"
-                 class="text-center text-muted py-3">
-              <div class="spinner-border spinner-border-sm"></div>
-              Loading notes...
+        {# SECTION 3 — Notes inline sub-flow #}
+        <div id="aam-notes-section" style="display:none" class="p-0">
+
+          <div class="px-3 pt-3 pb-2 border-bottom d-flex align-items-center">
+            <button type="button"
+                    class="btn btn-sm btn-link px-0 me-2"
+                    id="aam-notes-back-btn">
+              <i class="bi bi-arrow-left"></i>
+            </button>
+            <span class="fw-semibold">Notes</span>
+          </div>
+
+          {# Scrollable notes list #}
+          <div id="aam-notes-list"
+               style="max-height:300px; overflow-y:auto;"
+               class="px-3 py-2">
+            <div id="aam-notes-empty"
+                 class="text-muted small text-center py-3">
+              No notes yet.
             </div>
           </div>
+
+          {# Fixed form at bottom #}
+          <div class="border-top p-3">
+
+            {# Note type toggle #}
+            <div class="btn-group btn-group-sm w-100 mb-2">
+              <input type="radio" class="btn-check"
+                     name="aam_note_type"
+                     id="aam-note-type-visit"
+                     value="visit" checked
+                     autocomplete="off">
+              <label class="btn btn-outline-secondary"
+                     for="aam-note-type-visit">Visit Note</label>
+              <input type="radio" class="btn-check"
+                     name="aam_note_type"
+                     id="aam-note-type-general"
+                     value="general"
+                     autocomplete="off">
+              <label class="btn btn-outline-secondary"
+                     for="aam-note-type-general">General Note</label>
+            </div>
+
+            {# Visit date #}
+            <div id="aam-note-date-row" class="mb-2">
+              <input type="date"
+                     id="aam-note-date"
+                     class="form-control form-control-sm">
+            </div>
+
+            {# Body #}
+            <textarea id="aam-note-body"
+                      class="form-control form-control-sm mb-2"
+                      rows="3"
+                      placeholder="Write your note..."></textarea>
+
+            {# Task option #}
+            <div class="mb-2">
+              <div class="form-check form-check-inline">
+                <input type="checkbox"
+                       class="form-check-input"
+                       id="aam-note-is-task">
+                <label class="form-check-label small"
+                       for="aam-note-is-task">Mark as Task</label>
+              </div>
+            </div>
+
+            {# Task fields #}
+            <div id="aam-note-task-fields" class="d-none mb-2">
+              <div class="row g-2">
+                <div class="col-6">
+                  <select id="aam-note-priority"
+                          class="form-select form-select-sm">
+                    <option value="">Priority...</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                </div>
+                <div class="col-6">
+                  <select id="aam-note-assignee"
+                          class="form-select form-select-sm">
+                    <option value="">Assignee...</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {# Photos #}
+            <div class="mb-2">
+              <input type="file"
+                     id="aam-note-photos"
+                     class="form-control form-control-sm"
+                     multiple
+                     accept="image/*">
+            </div>
+
+            {# Error #}
+            <div id="aam-note-error"
+                 class="d-none alert alert-danger py-1 px-2 small mb-2">
+            </div>
+
+            {# Buttons #}
+            <div class="d-flex gap-2">
+              <button type="button"
+                      class="btn btn-primary btn-sm"
+                      id="aam-note-save-btn">
+                Save Note
+              </button>
+              <button type="button"
+                      class="btn btn-outline-secondary btn-sm d-none"
+                      id="aam-note-cancel-edit-btn">
+                Cancel
+              </button>
+            </div>
+
+          </div>{# /form #}
         </div>{# /aam-notes-section #}
 
       </div>{# /modal-body #}
     </div>{# /modal-content #}
   </div>{# /modal-dialog #}
 </div>{# /modal #}
-
-{% include "accounts/_notes_modal.html" %}
 
 {% endblock %}
 
@@ -377,6 +478,7 @@
   // Current account state
   var currentAccountId       = null;
   var currentDistributorId   = null;
+  var currentUserId          = {{ user.pk }};
 
   // ---- Helper: reset modal to main menu ----
   function resetToMainMenu() {
@@ -384,6 +486,7 @@
     if (aamRouteSection) aamRouteSection.style.display = 'none';
     var aamNotesSection = document.getElementById('aam-notes-section');
     if (aamNotesSection) aamNotesSection.style.display = 'none';
+    resetNoteForm();
     if (aamEventTypes)   aamEventTypes.style.display = 'none';
     if (aamChevron) {
       aamChevron.classList.remove('bi-chevron-down');
@@ -592,55 +695,391 @@
     });
   }
 
-  // ---- 8. Add Visit Note: show loading state then open notes modal ----
+  // ---- 8. Add Visit Note: content swap (same pattern as Add to Route) ----
   if (aamVisitNoteBtn) {
-    aamVisitNoteBtn.addEventListener('click',
-      function () {
-        if (aamMainMenu)
-          aamMainMenu.style.display = 'none';
-        var notesSection = document.getElementById(
-          'aam-notes-section'
-        );
-        if (notesSection)
-          notesSection.style.display = '';
-
-        // Small delay then hide AAM and open notes modal
-        setTimeout(function () {
-          var liveModal = modalEl
-            ? bootstrap.Modal.getInstance(modalEl)
-            : null;
-          if (liveModal) liveModal.hide();
-          setTimeout(function () {
-            if (typeof window.openNotesModal === 'function') {
-              window.openNotesModal(
-                currentAccountId,
-                aamLabel
-                  ? aamLabel.textContent.trim()
-                  : ''
-              );
-            }
-          }, 300);
-        }, 100);
-      }
-    );
+    aamVisitNoteBtn.addEventListener('click', function () {
+      if (aamMainMenu)
+        aamMainMenu.style.display = 'none';
+      var notesSection = document.getElementById('aam-notes-section');
+      if (notesSection) notesSection.style.display = '';
+      loadAccountNotes(currentAccountId);
+      var dateEl = document.getElementById('aam-note-date');
+      if (dateEl) dateEl.value = todayStr();
+    });
   }
 
   // ---- 9. Notes back button ----
-  var aamNotesBackBtn = document.getElementById(
-    'aam-notes-back-btn'
-  );
+  var aamNotesBackBtn = document.getElementById('aam-notes-back-btn');
   if (aamNotesBackBtn) {
-    aamNotesBackBtn.addEventListener('click',
-      function () {
-        var notesSection = document.getElementById(
-          'aam-notes-section'
-        );
-        if (notesSection)
-          notesSection.style.display = 'none';
-        if (aamMainMenu)
-          aamMainMenu.style.display = '';
+    aamNotesBackBtn.addEventListener('click', function () {
+      var notesSection = document.getElementById('aam-notes-section');
+      if (notesSection) notesSection.style.display = 'none';
+      if (aamMainMenu) aamMainMenu.style.display = '';
+    });
+  }
+
+  // ---- NOTES FUNCTIONS ----
+
+  function todayStr() {
+    return new Date().toISOString().split('T')[0];
+  }
+
+  function escHtmlNote(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function formatNoteDate(iso) {
+    if (!iso) return '';
+    try { return new Date(iso).toLocaleDateString(); }
+    catch (e) { return iso; }
+  }
+
+  var editingNoteId = null;
+
+  function resetNoteForm() {
+    editingNoteId = null;
+    var typeVisit   = document.getElementById('aam-note-type-visit');
+    var typeGeneral = document.getElementById('aam-note-type-general');
+    if (typeVisit)   typeVisit.checked   = true;
+    if (typeGeneral) typeGeneral.checked = false;
+    toggleNoteVisitDate();
+    var dateEl     = document.getElementById('aam-note-date');
+    var bodyEl     = document.getElementById('aam-note-body');
+    var isTaskEl   = document.getElementById('aam-note-is-task');
+    var taskFields = document.getElementById('aam-note-task-fields');
+    var priorityEl = document.getElementById('aam-note-priority');
+    var assigneeEl = document.getElementById('aam-note-assignee');
+    var photosEl   = document.getElementById('aam-note-photos');
+    var errorEl    = document.getElementById('aam-note-error');
+    var cancelBtn  = document.getElementById('aam-note-cancel-edit-btn');
+    var saveBtn    = document.getElementById('aam-note-save-btn');
+    if (dateEl)     dateEl.value = todayStr();
+    if (bodyEl)     bodyEl.value = '';
+    if (isTaskEl)   isTaskEl.checked = false;
+    if (taskFields) taskFields.classList.add('d-none');
+    if (priorityEl) priorityEl.value = '';
+    if (assigneeEl) assigneeEl.innerHTML = '<option value="">Assignee...</option>';
+    if (photosEl)   photosEl.value = '';
+    if (errorEl)    { errorEl.textContent = ''; errorEl.classList.add('d-none'); }
+    if (cancelBtn)  cancelBtn.classList.add('d-none');
+    if (saveBtn)    saveBtn.textContent = 'Save Note';
+  }
+
+  function toggleNoteVisitDate() {
+    var typeVisit = document.getElementById('aam-note-type-visit');
+    var dateRow   = document.getElementById('aam-note-date-row');
+    if (dateRow) dateRow.style.display = (typeVisit && typeVisit.checked) ? '' : 'none';
+  }
+
+  function loadNoteAssignees() {
+    if (!currentAccountId) return;
+    var assigneeEl = document.getElementById('aam-note-assignee');
+    if (!assigneeEl) return;
+    fetch('/accounts/' + currentAccountId + '/notes/assignees/', {
+      headers: {'X-Requested-With': 'XMLHttpRequest'},
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      var pending = assigneeEl.dataset.pendingValue || '';
+      var current = pending || (currentUserId ? String(currentUserId) : '');
+      assigneeEl.innerHTML = '<option value="">Assignee...</option>';
+      (data.assignees || []).forEach(function (a) {
+        var opt = document.createElement('option');
+        opt.value = a.id;
+        opt.textContent = a.name;
+        assigneeEl.appendChild(opt);
+      });
+      if (current) assigneeEl.value = current;
+      delete assigneeEl.dataset.pendingValue;
+    })
+    .catch(function () {});
+  }
+
+  function loadAccountNotes(accountId) {
+    var listEl  = document.getElementById('aam-notes-list');
+    var emptyEl = document.getElementById('aam-notes-empty');
+    if (!listEl) return;
+    listEl.querySelectorAll('.aam-note-card').forEach(function (el) { el.remove(); });
+    if (emptyEl) emptyEl.classList.add('d-none');
+
+    fetch('/accounts/' + accountId + '/notes/', {
+      headers: {'X-Requested-With': 'XMLHttpRequest'},
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      listEl.querySelectorAll('.aam-note-card').forEach(function (el) { el.remove(); });
+      var notes = data.notes || [];
+      if (notes.length === 0) {
+        if (emptyEl) emptyEl.classList.remove('d-none');
+      } else {
+        if (emptyEl) emptyEl.classList.add('d-none');
+        notes.forEach(function (note) {
+          listEl.appendChild(buildNoteCard(note));
+        });
       }
-    );
+    })
+    .catch(function () {
+      var errP = document.createElement('p');
+      errP.className = 'text-danger small';
+      errP.textContent = 'Error loading notes.';
+      listEl.appendChild(errP);
+    });
+  }
+
+  function buildNoteCard(note) {
+    var div = document.createElement('div');
+    div.className = 'aam-note-card border-bottom pb-2 mb-2';
+    div.dataset.noteId = note.id;
+
+    var typeBadge = note.note_type === 'visit'
+      ? '<span class="badge bg-primary me-1">Visit</span>'
+      : '<span class="badge bg-secondary me-1">General</span>';
+
+    var visitDateStr = '';
+    if (note.note_type === 'visit' && note.visit_date) {
+      visitDateStr = '<span class="text-muted small ms-1">' +
+        escHtmlNote(note.visit_date) + '</span>';
+    }
+
+    var taskHtml = '';
+    if (note.is_task) {
+      var priColor = note.task_priority === 'high' ? 'danger'
+        : note.task_priority === 'medium' ? 'warning' : 'success';
+      taskHtml = ' <span class="badge bg-secondary">Task</span>' +
+        ' <span class="badge bg-' + priColor + '">' +
+        escHtmlNote(note.task_priority || '') + '</span>';
+      if (note.task_assignee_name) {
+        taskHtml += ' <span class="text-muted small">' +
+          escHtmlNote(note.task_assignee_name) + '</span>';
+      }
+    }
+
+    var photosHtml = '';
+    if (note.photos && note.photos.length > 0) {
+      photosHtml = '<div class="d-flex flex-wrap gap-1 mt-1">';
+      note.photos.forEach(function (p) {
+        photosHtml += '<a href="' + escHtmlNote(p.url) + '" target="_blank">' +
+          '<img src="' + escHtmlNote(p.url) +
+          '" style="width:56px;height:56px;object-fit:cover;border-radius:4px" alt="photo">' +
+          '</a>';
+      });
+      photosHtml += '</div>';
+    }
+
+    var actionBtns = '';
+    if (note.can_delete) {
+      actionBtns +=
+        '<button type="button"' +
+        ' class="btn btn-link btn-sm p-0 text-primary aam-note-edit-btn me-2"' +
+        ' data-note-id="' + note.id + '">' +
+        '<i class="bi bi-pencil"></i></button>';
+      actionBtns +=
+        '<button type="button"' +
+        ' class="btn btn-link btn-sm p-0 text-danger aam-note-delete-btn"' +
+        ' data-note-id="' + note.id + '">' +
+        '<i class="bi bi-trash"></i></button>';
+    }
+
+    div.innerHTML =
+      '<div class="d-flex justify-content-between align-items-start">' +
+        '<div>' + typeBadge + visitDateStr + taskHtml + '</div>' +
+        '<div>' + actionBtns + '</div>' +
+      '</div>' +
+      '<p class="small mb-1 mt-1" style="white-space:pre-wrap">' +
+        escHtmlNote(note.body) + '</p>' +
+      photosHtml +
+      '<div class="text-muted" style="font-size:0.7rem">' +
+        escHtmlNote(note.created_by_name || '') +
+        ' &middot; ' + formatNoteDate(note.created_at) +
+      '</div>';
+
+    return div;
+  }
+
+  // ---- Note type radio toggle ----
+  var aamNoteTypeVisit   = document.getElementById('aam-note-type-visit');
+  var aamNoteTypeGeneral = document.getElementById('aam-note-type-general');
+  if (aamNoteTypeVisit)   aamNoteTypeVisit.addEventListener('change', toggleNoteVisitDate);
+  if (aamNoteTypeGeneral) aamNoteTypeGeneral.addEventListener('change', toggleNoteVisitDate);
+
+  // ---- Task checkbox ----
+  var aamNoteIsTask = document.getElementById('aam-note-is-task');
+  if (aamNoteIsTask) {
+    aamNoteIsTask.addEventListener('change', function () {
+      var taskFields = document.getElementById('aam-note-task-fields');
+      if (!taskFields) return;
+      if (aamNoteIsTask.checked) {
+        taskFields.classList.remove('d-none');
+        loadNoteAssignees();
+      } else {
+        taskFields.classList.add('d-none');
+      }
+    });
+  }
+
+  // ---- Note save ----
+  var aamNoteSaveBtn = document.getElementById('aam-note-save-btn');
+  if (aamNoteSaveBtn) {
+    aamNoteSaveBtn.addEventListener('click', function () {
+      var errorEl    = document.getElementById('aam-note-error');
+      var typeVisit  = document.getElementById('aam-note-type-visit');
+      var dateEl     = document.getElementById('aam-note-date');
+      var bodyEl     = document.getElementById('aam-note-body');
+      var isTaskEl   = document.getElementById('aam-note-is-task');
+      var priorityEl = document.getElementById('aam-note-priority');
+      var assigneeEl = document.getElementById('aam-note-assignee');
+      var photosEl   = document.getElementById('aam-note-photos');
+
+      if (errorEl) { errorEl.textContent = ''; errorEl.classList.add('d-none'); }
+
+      var noteType = (typeVisit && typeVisit.checked) ? 'visit' : 'general';
+      var fd = new FormData();
+      fd.append('note_type', noteType);
+      if (noteType === 'visit' && dateEl) fd.append('visit_date', dateEl.value);
+      if (bodyEl) fd.append('body', bodyEl.value);
+      fd.append('is_task', isTaskEl && isTaskEl.checked ? 'true' : 'false');
+      if (isTaskEl && isTaskEl.checked) {
+        if (priorityEl) fd.append('task_priority', priorityEl.value);
+        if (assigneeEl) fd.append('task_assignee', assigneeEl.value);
+      }
+      if (photosEl && photosEl.files) {
+        for (var i = 0; i < photosEl.files.length; i++) {
+          fd.append('photos', photosEl.files[i]);
+        }
+      }
+
+      var url = editingNoteId
+        ? '/accounts/' + currentAccountId + '/notes/' + editingNoteId + '/update/'
+        : '/accounts/' + currentAccountId + '/notes/create/';
+
+      aamNoteSaveBtn.disabled = true;
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': getCsrf(),
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: fd,
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        aamNoteSaveBtn.disabled = false;
+        if (data.success) {
+          resetNoteForm();
+          loadAccountNotes(currentAccountId);
+        } else {
+          if (errorEl) {
+            errorEl.textContent = data.error || 'Error saving note.';
+            errorEl.classList.remove('d-none');
+          }
+        }
+      })
+      .catch(function () {
+        aamNoteSaveBtn.disabled = false;
+        if (errorEl) {
+          errorEl.textContent = 'Network error. Please try again.';
+          errorEl.classList.remove('d-none');
+        }
+      });
+    });
+  }
+
+  // ---- Note cancel edit ----
+  var aamNoteCancelBtn = document.getElementById('aam-note-cancel-edit-btn');
+  if (aamNoteCancelBtn) {
+    aamNoteCancelBtn.addEventListener('click', function () { resetNoteForm(); });
+  }
+
+  // ---- Delegated: edit / delete notes ----
+  var aamNotesList = document.getElementById('aam-notes-list');
+  if (aamNotesList) {
+    aamNotesList.addEventListener('click', function (e) {
+      var editBtn = e.target.closest('.aam-note-edit-btn');
+      if (editBtn) {
+        populateNoteFormForEdit(editBtn.dataset.noteId);
+        return;
+      }
+      var delBtn = e.target.closest('.aam-note-delete-btn');
+      if (delBtn) {
+        if (!confirm('Delete this note?')) return;
+        fetch('/accounts/' + currentAccountId + '/notes/' + delBtn.dataset.noteId + '/delete/', {
+          method: 'POST',
+          headers: {
+            'X-CSRFToken': getCsrf(),
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.success) {
+            resetNoteForm();
+            loadAccountNotes(currentAccountId);
+          }
+        })
+        .catch(function () {});
+      }
+    });
+  }
+
+  function populateNoteFormForEdit(noteId) {
+    fetch('/accounts/' + currentAccountId + '/notes/', {
+      headers: {'X-Requested-With': 'XMLHttpRequest'},
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      var note = (data.notes || []).find(function (n) {
+        return String(n.id) === String(noteId);
+      });
+      if (!note) return;
+
+      editingNoteId = note.id;
+
+      var typeVisit   = document.getElementById('aam-note-type-visit');
+      var typeGeneral = document.getElementById('aam-note-type-general');
+      if (note.note_type === 'visit') {
+        if (typeVisit)   typeVisit.checked   = true;
+      } else {
+        if (typeGeneral) typeGeneral.checked = true;
+      }
+      toggleNoteVisitDate();
+
+      var dateEl     = document.getElementById('aam-note-date');
+      var bodyEl     = document.getElementById('aam-note-body');
+      var isTaskEl   = document.getElementById('aam-note-is-task');
+      var taskFields = document.getElementById('aam-note-task-fields');
+      var priorityEl = document.getElementById('aam-note-priority');
+      var assigneeEl = document.getElementById('aam-note-assignee');
+      var errorEl    = document.getElementById('aam-note-error');
+      var cancelBtn  = document.getElementById('aam-note-cancel-edit-btn');
+      var saveBtn    = document.getElementById('aam-note-save-btn');
+
+      if (dateEl)     dateEl.value        = note.visit_date || '';
+      if (bodyEl)     bodyEl.value        = note.body || '';
+      if (isTaskEl)   isTaskEl.checked    = !!note.is_task;
+      if (taskFields) {
+        if (note.is_task) taskFields.classList.remove('d-none');
+        else              taskFields.classList.add('d-none');
+      }
+      if (priorityEl) priorityEl.value    = note.task_priority || '';
+      if (errorEl)    { errorEl.textContent = ''; errorEl.classList.add('d-none'); }
+      if (cancelBtn)  cancelBtn.classList.remove('d-none');
+      if (saveBtn)    saveBtn.textContent = 'Update Note';
+
+      if (note.is_task && assigneeEl) {
+        assigneeEl.dataset.pendingValue = note.task_assignee_id || '';
+        loadNoteAssignees();
+      }
+
+      // Scroll form into view
+      var formEl = document.querySelector('#aam-notes-section .border-top');
+      if (formEl) formEl.scrollIntoView({behavior: 'smooth'});
+    })
+    .catch(function () {});
   }
 
 })();
