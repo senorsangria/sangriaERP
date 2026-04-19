@@ -323,7 +323,12 @@
 
   // ---- Modal elements ----
   var modalEl        = document.getElementById('accountActionsModal');
-  var modal          = modalEl ? new bootstrap.Modal(modalEl) : null;
+
+  function getModal() {
+    return modalEl
+      ? bootstrap.Modal.getInstance(modalEl)
+      : null;
+  }
   var aamOnOffIcon   = document.getElementById('aam-on-off-icon');
   var aamLabel       = document.getElementById('aamModalLabel');
   var aamCity        = document.getElementById('aam-city');
@@ -420,7 +425,8 @@
     }
 
     resetToMainMenu();
-    if (modal) modal.show();
+    var m = getModal() || (modalEl ? new bootstrap.Modal(modalEl) : null);
+    if (m) m.show();
   });
 
   // ---- 2. Modal hidden: reset ----
@@ -580,7 +586,10 @@
           return;
         }
 
-        if (modalEl && modal) {
+        var liveModal = modalEl
+          ? bootstrap.Modal.getInstance(modalEl)
+          : null;
+        if (modalEl && liveModal) {
           // Listen for AAM to fully close then
           // open notes modal
           var openNotes = function () {
@@ -594,7 +603,7 @@
           modalEl.addEventListener(
             'hidden.bs.modal', openNotes
           );
-          modal.hide();
+          liveModal.hide();
         } else {
           // Fallback: just open directly
           window.openNotesModal(
