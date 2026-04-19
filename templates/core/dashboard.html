@@ -144,7 +144,7 @@
 
             {# --- ACTION ITEMS --- #}
 
-            {% if user|has_perm:'can_create_events' %}
+            {% if user|has_perm:'can_manage_account_notes' %}
             <button type="button"
                     id="aam-visit-note-btn"
                     class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
@@ -570,21 +570,39 @@
 
   // ---- 8. Add Visit Note: open notes modal ----
   if (aamVisitNoteBtn) {
-    aamVisitNoteBtn.addEventListener('click', function () {
-      var accountName = aamLabel ? aamLabel.textContent : '';
-      if (modal) modal.hide();
-      if (typeof window.openNotesModal === 'function') {
-        // Wait for AAM to finish hiding before opening notes modal
-        if (modalEl) {
-          modalEl.addEventListener('hidden.bs.modal', function onAamHidden() {
-            modalEl.removeEventListener('hidden.bs.modal', onAamHidden);
-            window.openNotesModal(currentAccountId, accountName);
-          });
+    aamVisitNoteBtn.addEventListener('click',
+      function () {
+        var accountId = currentAccountId;
+        var accountName = aamLabel
+          ? aamLabel.textContent.trim() : '';
+
+        if (typeof window.openNotesModal !== 'function') {
+          return;
+        }
+
+        if (modalEl && modal) {
+          // Listen for AAM to fully close then
+          // open notes modal
+          var openNotes = function () {
+            modalEl.removeEventListener(
+              'hidden.bs.modal', openNotes
+            );
+            window.openNotesModal(
+              accountId, accountName
+            );
+          };
+          modalEl.addEventListener(
+            'hidden.bs.modal', openNotes
+          );
+          modal.hide();
         } else {
-          window.openNotesModal(currentAccountId, accountName);
+          // Fallback: just open directly
+          window.openNotesModal(
+            accountId, accountName
+          );
         }
       }
-    });
+    );
   }
 
 })();
