@@ -279,6 +279,22 @@
 
         </div>{# /aam-route-section #}
 
+        {# SECTION 3 — Notes loading state #}
+        <div id="aam-notes-section" style="display:none" class="p-3">
+          <button type="button"
+                  class="btn btn-sm btn-link px-0 mb-3"
+                  id="aam-notes-back-btn">
+            <i class="bi bi-arrow-left me-1"></i>Back
+          </button>
+          <div id="aam-notes-content">
+            <div id="aam-notes-loading"
+                 class="text-center text-muted py-3">
+              <div class="spinner-border spinner-border-sm"></div>
+              Loading notes...
+            </div>
+          </div>
+        </div>{# /aam-notes-section #}
+
       </div>{# /modal-body #}
     </div>{# /modal-content #}
   </div>{# /modal-dialog #}
@@ -366,6 +382,8 @@
   function resetToMainMenu() {
     if (aamMainMenu)     aamMainMenu.style.display = '';
     if (aamRouteSection) aamRouteSection.style.display = 'none';
+    var aamNotesSection = document.getElementById('aam-notes-section');
+    if (aamNotesSection) aamNotesSection.style.display = 'none';
     if (aamEventTypes)   aamEventTypes.style.display = 'none';
     if (aamChevron) {
       aamChevron.classList.remove('bi-chevron-down');
@@ -574,42 +592,53 @@
     });
   }
 
-  // ---- 8. Add Visit Note: open notes modal ----
+  // ---- 8. Add Visit Note: show loading state then open notes modal ----
   if (aamVisitNoteBtn) {
     aamVisitNoteBtn.addEventListener('click',
       function () {
-        var accountId = currentAccountId;
-        var accountName = aamLabel
-          ? aamLabel.textContent.trim() : '';
+        if (aamMainMenu)
+          aamMainMenu.style.display = 'none';
+        var notesSection = document.getElementById(
+          'aam-notes-section'
+        );
+        if (notesSection)
+          notesSection.style.display = '';
 
-        if (typeof window.openNotesModal !== 'function') {
-          return;
-        }
+        // Small delay then hide AAM and open notes modal
+        setTimeout(function () {
+          var liveModal = modalEl
+            ? bootstrap.Modal.getInstance(modalEl)
+            : null;
+          if (liveModal) liveModal.hide();
+          setTimeout(function () {
+            if (typeof window.openNotesModal === 'function') {
+              window.openNotesModal(
+                currentAccountId,
+                aamLabel
+                  ? aamLabel.textContent.trim()
+                  : ''
+              );
+            }
+          }, 300);
+        }, 100);
+      }
+    );
+  }
 
-        var liveModal = modalEl
-          ? bootstrap.Modal.getInstance(modalEl)
-          : null;
-        if (modalEl && liveModal) {
-          // Listen for AAM to fully close then
-          // open notes modal
-          var openNotes = function () {
-            modalEl.removeEventListener(
-              'hidden.bs.modal', openNotes
-            );
-            window.openNotesModal(
-              accountId, accountName
-            );
-          };
-          modalEl.addEventListener(
-            'hidden.bs.modal', openNotes
-          );
-          liveModal.hide();
-        } else {
-          // Fallback: just open directly
-          window.openNotesModal(
-            accountId, accountName
-          );
-        }
+  // ---- 9. Notes back button ----
+  var aamNotesBackBtn = document.getElementById(
+    'aam-notes-back-btn'
+  );
+  if (aamNotesBackBtn) {
+    aamNotesBackBtn.addEventListener('click',
+      function () {
+        var notesSection = document.getElementById(
+          'aam-notes-section'
+        );
+        if (notesSection)
+          notesSection.style.display = 'none';
+        if (aamMainMenu)
+          aamMainMenu.style.display = '';
       }
     );
   }
