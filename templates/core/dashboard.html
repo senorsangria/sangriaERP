@@ -843,7 +843,7 @@
     var visitDateStr = '';
     if (note.note_type === 'visit' && note.visit_date) {
       visitDateStr = '<span class="text-muted small ms-1">' +
-        escHtmlNote(note.visit_date) + '</span>';
+        'Visit: ' + escHtmlNote(note.visit_date) + '</span>';
     }
 
     var taskHtml = '';

@@ -1277,11 +1277,19 @@ def note_list(request, pk):
     if not request.user.has_permission('can_view_accounts'):
         return JsonResponse({'error': 'Forbidden'}, status=403)
     account = get_object_or_404(Account, pk=pk, company=request.user.company)
+    from django.db.models.functions import Coalesce, Cast
+    from django.db.models import DateField
     notes = (
         account.notes
         .select_related('task_assignee', 'created_by')
         .prefetch_related('photos')
-        .order_by('-created_at')
+        .annotate(
+            sort_date=Coalesce(
+                'visit_date',
+                Cast('created_at', DateField()),
+            )
+        )
+        .order_by('-sort_date', '-created_at')
     )
     return JsonResponse({'notes': [_note_to_dict(n, request.user, account) for n in notes]})
 
