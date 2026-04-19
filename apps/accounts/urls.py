@@ -26,6 +26,18 @@ urlpatterns = [
         name='coverage_area_remove',
     ),
 
+    # Note API
+    path('accounts/<int:pk>/notes/', views.note_list, name='note_list'),
+    path('accounts/<int:pk>/notes/create/', views.note_create, name='note_create'),
+    path('accounts/<int:pk>/notes/assignees/', views.assignee_list, name='note_assignee_list'),
+    path('accounts/<int:pk>/notes/<int:npk>/update/', views.note_update, name='note_update'),
+    path('accounts/<int:pk>/notes/<int:npk>/delete/', views.note_delete, name='note_delete'),
+    path(
+        'accounts/<int:pk>/notes/<int:npk>/photos/<int:ppk>/delete/',
+        views.note_photo_delete,
+        name='note_photo_delete',
+    ),
+
     # Contact API
     path('accounts/<int:pk>/contacts/', views.contact_list, name='contact_list'),
     path('accounts/<int:pk>/contacts/create/', views.contact_create, name='contact_create'),

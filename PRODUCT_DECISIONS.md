@@ -3098,4 +3098,51 @@ with no mocking required.
   pre-populate the account field
 - Dashboard only for now; modal pattern is expandable to other pages
 
+---
+
+## Account Notes
+
+### Models
+- **AccountNote**: account (FK), note_type, visit_date, body, is_task,
+  task_priority, task_assignee (FK User), created_by (FK User),
+  created_at, updated_at
+- **AccountNotePhoto**: note (FK), photo_url, created_at
+
+### Note Types
+- `visit` — requires `visit_date`
+- `general` — no visit date required
+
+### Task Flag
+- `is_task = True` requires `task_priority` (high / medium / low)
+- `task_assignee` defaults to the creating user in the UI (optional)
+
+### Permission
+- `can_manage_account_notes` assigned to: supplier_admin, sales_manager,
+  territory_manager, distributor_contact
+- ambassador and ambassador_manager excluded
+
+### Delete Rules
+- Creator can always delete their own note
+- Users with supplier_admin, sales_manager, or territory_manager role
+  can delete any note on an account within their coverage area
+- All other roles cannot delete notes they did not create
+
+### Photo Storage
+- Stored via `default_storage` (same pattern as event photos)
+- Path: `notes/<note_pk>/<uuid><ext>`
+- Delete via `delete_note_photo()` — never raises on failure
+
+### UI
+- Scrollable modal (`#accountNotesModal`, `modal-dialog-scrollable modal-lg`)
+  with fixed form footer
+- Note type toggle (Visit / General) with conditional visit date row
+- Task checkbox reveals priority select and assignee select (AJAX populated)
+- Assignee list loaded via `GET /accounts/<pk>/notes/assignees/`
+- Photo upload (multiple images); thumbnails shown with per-photo delete
+
+### Entry Points
+- Dashboard Account Actions modal: "Add Visit Note" closes AAM and opens
+  Notes modal for that account
+- Future: account detail page, Activity feed
+
 *Last updated: April 2026*

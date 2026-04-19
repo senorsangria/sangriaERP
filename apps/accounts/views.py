@@ -16,7 +16,7 @@ from apps.distribution.models import Distributor
 from apps.events.models import Event
 from utils.normalize import normalize_address
 
-from .models import Account, AccountContact, UserCoverageArea
+from .models import Account, AccountContact, AccountNote, AccountNotePhoto, UserCoverageArea
 from .forms import AccountForm
 from .constants import US_STATES, US_STATES_DICT
 from .utils import get_account_associations
@@ -1226,3 +1226,233 @@ def contact_delete(request, pk, cpk):
     contact = get_object_or_404(AccountContact, pk=cpk, account=account)
     contact.delete()
     return JsonResponse({'success': True})
+
+
+# ---------------------------------------------------------------------------
+# Note API views
+# ---------------------------------------------------------------------------
+
+def _can_delete_note(user, note, account):
+    if note.created_by == user:
+        return True
+    if (user.has_role('supplier_admin') or
+            user.has_role('sales_manager') or
+            user.has_role('territory_manager')):
+        from apps.accounts.utils import get_accounts_for_user
+        return account in get_accounts_for_user(user)
+    return False
+
+
+def _note_to_dict(note, request_user, account):
+    return {
+        'id': note.pk,
+        'note_type': note.note_type,
+        'note_type_display': note.get_note_type_display(),
+        'visit_date': note.visit_date.isoformat() if note.visit_date else None,
+        'body': note.body,
+        'is_task': note.is_task,
+        'task_priority': note.task_priority,
+        'task_assignee_id': note.task_assignee_id,
+        'task_assignee_name': (
+            note.task_assignee.get_full_name() or note.task_assignee.email
+            if note.task_assignee else None
+        ),
+        'created_by_name': (
+            note.created_by.get_full_name() or note.created_by.email
+            if note.created_by else None
+        ),
+        'created_at': note.created_at.isoformat(),
+        'updated_at': note.updated_at.isoformat(),
+        'can_delete': _can_delete_note(request_user, note, account),
+        'photos': [
+            {'id': p.pk, 'url': p.photo_url}
+            for p in note.photos.all()
+        ],
+    }
+
+
+@login_required
+def note_list(request, pk):
+    """GET /accounts/<pk>/notes/"""
+    if not request.user.has_permission('can_view_accounts'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    account = get_object_or_404(Account, pk=pk, company=request.user.company)
+    notes = (
+        account.notes
+        .select_related('task_assignee', 'created_by')
+        .prefetch_related('photos')
+        .order_by('-created_at')
+    )
+    return JsonResponse({'notes': [_note_to_dict(n, request.user, account) for n in notes]})
+
+
+@login_required
+def note_create(request, pk):
+    """POST /accounts/<pk>/notes/create/"""
+    if not request.user.has_permission('can_manage_account_notes'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    account = get_object_or_404(Account, pk=pk, company=request.user.company)
+
+    note_type = request.POST.get('note_type', AccountNote.NoteType.VISIT)
+    body = (request.POST.get('body') or '').strip()
+    visit_date_raw = (request.POST.get('visit_date') or '').strip()
+    is_task = request.POST.get('is_task') in ('true', '1', 'on', 'True')
+    task_priority = (request.POST.get('task_priority') or '').strip() or None
+    task_assignee_id = (request.POST.get('task_assignee') or '').strip() or None
+
+    if not body:
+        return JsonResponse({'success': False, 'error': 'Note body is required.'})
+    if note_type == AccountNote.NoteType.VISIT and not visit_date_raw:
+        return JsonResponse({'success': False, 'error': 'Visit date is required for visit notes.'})
+    if is_task and not task_priority:
+        return JsonResponse({'success': False, 'error': 'Priority is required when marking as a task.'})
+
+    visit_date = None
+    if visit_date_raw:
+        from datetime import date as _date
+        try:
+            visit_date = _date.fromisoformat(visit_date_raw)
+        except ValueError:
+            return JsonResponse({'success': False, 'error': 'Invalid visit date format.'})
+
+    task_assignee = None
+    if task_assignee_id:
+        try:
+            task_assignee = User.objects.get(pk=task_assignee_id, company=request.user.company)
+        except User.DoesNotExist:
+            pass
+
+    note = AccountNote.objects.create(
+        account=account,
+        note_type=note_type,
+        visit_date=visit_date,
+        body=body,
+        is_task=is_task,
+        task_priority=task_priority if is_task else None,
+        task_assignee=task_assignee if is_task else None,
+        created_by=request.user,
+    )
+
+    from .note_storage import save_note_photo
+    for photo_file in request.FILES.getlist('photos'):
+        url = save_note_photo(photo_file, note.pk)
+        AccountNotePhoto.objects.create(note=note, photo_url=url)
+
+    note.refresh_from_db()
+    note.task_assignee  # re-select
+    return JsonResponse({'success': True, 'note': _note_to_dict(note, request.user, account)})
+
+
+@login_required
+def note_update(request, pk, npk):
+    """POST /accounts/<pk>/notes/<npk>/update/"""
+    if not request.user.has_permission('can_manage_account_notes'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    account = get_object_or_404(Account, pk=pk, company=request.user.company)
+    note = get_object_or_404(AccountNote, pk=npk, account=account)
+
+    note_type = request.POST.get('note_type', note.note_type)
+    body = (request.POST.get('body') or '').strip()
+    visit_date_raw = (request.POST.get('visit_date') or '').strip()
+    is_task = request.POST.get('is_task') in ('true', '1', 'on', 'True')
+    task_priority = (request.POST.get('task_priority') or '').strip() or None
+    task_assignee_id = (request.POST.get('task_assignee') or '').strip() or None
+
+    if not body:
+        return JsonResponse({'success': False, 'error': 'Note body is required.'})
+    if note_type == AccountNote.NoteType.VISIT and not visit_date_raw:
+        return JsonResponse({'success': False, 'error': 'Visit date is required for visit notes.'})
+    if is_task and not task_priority:
+        return JsonResponse({'success': False, 'error': 'Priority is required when marking as a task.'})
+
+    visit_date = None
+    if visit_date_raw:
+        from datetime import date as _date
+        try:
+            visit_date = _date.fromisoformat(visit_date_raw)
+        except ValueError:
+            return JsonResponse({'success': False, 'error': 'Invalid visit date format.'})
+
+    task_assignee = None
+    if task_assignee_id:
+        try:
+            task_assignee = User.objects.get(pk=task_assignee_id, company=request.user.company)
+        except User.DoesNotExist:
+            pass
+
+    note.note_type = note_type
+    note.visit_date = visit_date
+    note.body = body
+    note.is_task = is_task
+    note.task_priority = task_priority if is_task else None
+    note.task_assignee = task_assignee if is_task else None
+    note.save()
+
+    from .note_storage import save_note_photo
+    for photo_file in request.FILES.getlist('photos'):
+        url = save_note_photo(photo_file, note.pk)
+        AccountNotePhoto.objects.create(note=note, photo_url=url)
+
+    note.refresh_from_db()
+    return JsonResponse({'success': True, 'note': _note_to_dict(note, request.user, account)})
+
+
+@login_required
+def note_delete(request, pk, npk):
+    """POST /accounts/<pk>/notes/<npk>/delete/"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    account = get_object_or_404(Account, pk=pk, company=request.user.company)
+    note = get_object_or_404(AccountNote, pk=npk, account=account)
+
+    if not _can_delete_note(request.user, note, account):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    from .note_storage import delete_note_photo
+    for photo in note.photos.all():
+        delete_note_photo(photo.photo_url)
+    note.delete()
+    return JsonResponse({'success': True})
+
+
+@login_required
+def note_photo_delete(request, pk, npk, ppk):
+    """POST /accounts/<pk>/notes/<npk>/photos/<ppk>/delete/"""
+    if not request.user.has_permission('can_manage_account_notes'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    account = get_object_or_404(Account, pk=pk, company=request.user.company)
+    note = get_object_or_404(AccountNote, pk=npk, account=account)
+    photo = get_object_or_404(AccountNotePhoto, pk=ppk, note=note)
+
+    from .note_storage import delete_note_photo
+    delete_note_photo(photo.photo_url)
+    photo.delete()
+    return JsonResponse({'success': True})
+
+
+@login_required
+def assignee_list(request, pk):
+    """GET /accounts/<pk>/notes/assignees/"""
+    if not request.user.has_permission('can_view_accounts'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    account = get_object_or_404(Account, pk=pk, company=request.user.company)
+    from .utils import get_users_covering_account
+    users = get_users_covering_account(
+        account,
+        roles=['supplier_admin', 'sales_manager', 'territory_manager', 'distributor_contact'],
+    )
+    return JsonResponse({
+        'assignees': [
+            {
+                'id': u.pk,
+                'name': u.get_full_name() or u.email,
+            }
+            for u in users
+        ]
+    })

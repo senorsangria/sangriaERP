@@ -1094,3 +1094,197 @@ class ContactAPITest(TestCase):
         resp = self._post(url, {'name': 'Hacked', 'title': 'other'})
         # account.pk is in other company — should 404
         self.assertEqual(resp.status_code, 404)
+
+
+# ---------------------------------------------------------------------------
+# AccountNote API tests
+# ---------------------------------------------------------------------------
+
+import datetime as _dt
+from apps.accounts.models import AccountNote, AccountNotePhoto, UserCoverageArea
+from apps.distribution.models import Distributor as _Distributor
+
+
+class NoteAPITest(TestCase):
+    """Tests for the AccountNote CRUD API views."""
+
+    def setUp(self):
+        self.company = make_company('Note Test Co')
+        self.distributor = make_distributor(self.company, 'Note Dist')
+        self.account = make_account(self.company, self.distributor, 'Note Store')
+
+        # Users
+        self.admin = make_user(self.company, 'supplier_admin', 'note_admin')
+        self.sm = make_user(self.company, 'sales_manager', 'note_sm')
+        self.tm = make_user(self.company, 'territory_manager', 'note_tm')
+        self.amb_mgr = make_user(self.company, 'ambassador_manager', 'note_amb_mgr')
+
+        # Give sales_manager coverage of the distributor (so _can_delete_note works)
+        UserCoverageArea.objects.create(
+            company=self.company,
+            user=self.sm,
+            coverage_type=UserCoverageArea.CoverageType.DISTRIBUTOR,
+            distributor=self.distributor,
+        )
+
+        self.client = Client()
+        self.client.login(username='note_admin', password='testpass123')
+
+    def _post(self, url, data=None):
+        return self.client.post(url, data=data or {})
+
+    def test_note_create(self):
+        """POST creates an AccountNote with correct fields."""
+        url = reverse('note_create', args=[self.account.pk])
+        today = _dt.date.today().isoformat()
+        resp = self._post(url, {
+            'note_type': 'visit',
+            'visit_date': today,
+            'body': 'Great visit today.',
+            'is_task': 'false',
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        self.assertTrue(data['success'], data.get('error'))
+        self.assertEqual(data['note']['body'], 'Great visit today.')
+        self.assertEqual(data['note']['note_type'], 'visit')
+        self.assertEqual(AccountNote.objects.filter(account=self.account).count(), 1)
+
+    def test_note_create_visit_requires_date(self):
+        """Visit note without date returns error."""
+        url = reverse('note_create', args=[self.account.pk])
+        resp = self._post(url, {
+            'note_type': 'visit',
+            'visit_date': '',
+            'body': 'Missing date.',
+            'is_task': 'false',
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        self.assertFalse(data['success'])
+        self.assertIn('Visit date', data['error'])
+        self.assertEqual(AccountNote.objects.filter(account=self.account).count(), 0)
+
+    def test_note_create_task_requires_priority(self):
+        """Task note without priority returns error."""
+        url = reverse('note_create', args=[self.account.pk])
+        resp = self._post(url, {
+            'note_type': 'general',
+            'body': 'Follow up needed.',
+            'is_task': 'true',
+            'task_priority': '',
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        self.assertFalse(data['success'])
+        self.assertIn('Priority', data['error'])
+        self.assertEqual(AccountNote.objects.filter(account=self.account).count(), 0)
+
+    def test_note_update(self):
+        """POST updates existing note body and type."""
+        note = AccountNote.objects.create(
+            account=self.account,
+            note_type='visit',
+            visit_date=_dt.date.today(),
+            body='Original body.',
+            created_by=self.admin,
+        )
+        url = reverse('note_update', args=[self.account.pk, note.pk])
+        resp = self._post(url, {
+            'note_type': 'general',
+            'body': 'Updated body.',
+            'is_task': 'false',
+        })
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        self.assertTrue(data['success'], data.get('error'))
+        note.refresh_from_db()
+        self.assertEqual(note.body, 'Updated body.')
+        self.assertEqual(note.note_type, 'general')
+
+    def test_note_delete_by_creator(self):
+        """Creator can delete their own note."""
+        note = AccountNote.objects.create(
+            account=self.account,
+            note_type='general',
+            body='Creator note.',
+            created_by=self.admin,
+        )
+        url = reverse('note_delete', args=[self.account.pk, note.pk])
+        resp = self._post(url)
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        self.assertTrue(data['success'])
+        self.assertFalse(AccountNote.objects.filter(pk=note.pk).exists())
+
+    def test_note_delete_by_sales_manager(self):
+        """Sales manager with coverage can delete any note on covered account."""
+        note = AccountNote.objects.create(
+            account=self.account,
+            note_type='general',
+            body='SM can delete this.',
+            created_by=self.admin,  # created by admin, deleted by SM
+        )
+        self.client.login(username='note_sm', password='testpass123')
+        url = reverse('note_delete', args=[self.account.pk, note.pk])
+        resp = self._post(url)
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        self.assertTrue(data['success'])
+        self.assertFalse(AccountNote.objects.filter(pk=note.pk).exists())
+
+    def test_note_delete_denied_for_ambassador_manager(self):
+        """Ambassador manager cannot delete a note they didn't create."""
+        note = AccountNote.objects.create(
+            account=self.account,
+            note_type='general',
+            body='Amb mgr cannot delete.',
+            created_by=self.admin,
+        )
+        self.client.login(username='note_amb_mgr', password='testpass123')
+        url = reverse('note_delete', args=[self.account.pk, note.pk])
+        resp = self._post(url)
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(AccountNote.objects.filter(pk=note.pk).exists())
+
+    def test_note_list_returns_notes_for_account(self):
+        """GET returns only notes for the requested account, not others."""
+        other_account = make_account(self.company, self.distributor, 'Other Store')
+        AccountNote.objects.create(
+            account=self.account, note_type='general',
+            body='Mine.', created_by=self.admin,
+        )
+        AccountNote.objects.create(
+            account=other_account, note_type='general',
+            body='Other.', created_by=self.admin,
+        )
+        url = reverse('note_list', args=[self.account.pk])
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        self.assertEqual(len(data['notes']), 1)
+        self.assertEqual(data['notes'][0]['body'], 'Mine.')
+
+    def test_note_requires_permission(self):
+        """User without can_manage_account_notes gets 403 on create."""
+        self.client.login(username='note_amb_mgr', password='testpass123')
+        url = reverse('note_create', args=[self.account.pk])
+        resp = self._post(url, {
+            'note_type': 'general',
+            'body': 'Should be blocked.',
+            'is_task': 'false',
+        })
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(AccountNote.objects.filter(account=self.account).count(), 0)
+
+    def test_assignee_list_returns_covering_users(self):
+        """GET assignees returns users with coverage over this account."""
+        url = reverse('note_assignee_list', args=[self.account.pk])
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        data = _json.loads(resp.content)
+        ids = [a['id'] for a in data['assignees']]
+        # admin is supplier_admin — always included
+        self.assertIn(self.admin.pk, ids)
+        # sm has distributor coverage
+        self.assertIn(self.sm.pk, ids)

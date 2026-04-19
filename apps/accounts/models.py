@@ -278,6 +278,76 @@ class AccountContact(models.Model):
         return f'{self.name} ({self.account.name})'
 
 
+class AccountNote(models.Model):
+    class NoteType(models.TextChoices):
+        VISIT   = 'visit',   'Visit Note'
+        GENERAL = 'general', 'General Note'
+
+    class Priority(models.TextChoices):
+        HIGH   = 'high',   'High'
+        MEDIUM = 'medium', 'Medium'
+        LOW    = 'low',    'Low'
+
+    account = models.ForeignKey(
+        'Account',
+        on_delete=models.CASCADE,
+        related_name='notes',
+    )
+    note_type = models.CharField(
+        max_length=10,
+        choices=NoteType.choices,
+        default=NoteType.VISIT,
+    )
+    visit_date = models.DateField(
+        null=True, blank=True,
+        help_text='Date of visit (visit notes only)',
+    )
+    body = models.TextField()
+    is_task = models.BooleanField(default=False)
+    task_priority = models.CharField(
+        max_length=10,
+        choices=Priority.choices,
+        null=True, blank=True,
+    )
+    task_assignee = models.ForeignKey(
+        'core.User',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='assigned_notes',
+    )
+    created_by = models.ForeignKey(
+        'core.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='created_notes',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = 'accounts'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.get_note_type_display()} — {self.account.name}'
+
+
+class AccountNotePhoto(models.Model):
+    note = models.ForeignKey(
+        AccountNote,
+        on_delete=models.CASCADE,
+        related_name='photos',
+    )
+    photo_url = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = 'accounts'
+
+    def __str__(self):
+        return f'Photo for {self.note}'
+
+
 class AccountItemPriceHistory(models.Model):
     """
     Historical record of shelf prices for an AccountItem.

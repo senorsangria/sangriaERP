@@ -284,6 +284,8 @@
   </div>{# /modal-dialog #}
 </div>{# /modal #}
 
+{% include "accounts/_notes_modal.html" %}
+
 {% endblock %}
 
 {% block extra_css %}
@@ -566,10 +568,22 @@
     });
   }
 
-  // ---- 8. Add Visit Note: placeholder ----
+  // ---- 8. Add Visit Note: open notes modal ----
   if (aamVisitNoteBtn) {
     aamVisitNoteBtn.addEventListener('click', function () {
-      // Placeholder — no action
+      var accountName = aamLabel ? aamLabel.textContent : '';
+      if (modal) modal.hide();
+      if (typeof window.openNotesModal === 'function') {
+        // Wait for AAM to finish hiding before opening notes modal
+        if (modalEl) {
+          modalEl.addEventListener('hidden.bs.modal', function onAamHidden() {
+            modalEl.removeEventListener('hidden.bs.modal', onAamHidden);
+            window.openNotesModal(currentAccountId, accountName);
+          });
+        } else {
+          window.openNotesModal(currentAccountId, accountName);
+        }
+      }
     });
   }
 
