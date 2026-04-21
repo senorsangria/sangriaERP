@@ -1136,29 +1136,12 @@ class NoteAPITest(TestCase):
     def test_note_create(self):
         """POST creates an AccountNote with correct fields."""
         url = reverse('note_create', args=[self.account.pk])
-        resp = self._post(url, {
-            'body': 'Great visit today.',
-            'is_task': 'false',
-        })
+        resp = self._post(url, {'body': 'Great visit today.'})
         self.assertEqual(resp.status_code, 200)
         data = _json.loads(resp.content)
         self.assertTrue(data['success'], data.get('error'))
         self.assertEqual(data['note']['body'], 'Great visit today.')
         self.assertEqual(AccountNote.objects.filter(account=self.account).count(), 1)
-
-    def test_note_create_task_requires_priority(self):
-        """Task note without priority returns error."""
-        url = reverse('note_create', args=[self.account.pk])
-        resp = self._post(url, {
-            'body': 'Follow up needed.',
-            'is_task': 'true',
-            'task_priority': '',
-        })
-        self.assertEqual(resp.status_code, 200)
-        data = _json.loads(resp.content)
-        self.assertFalse(data['success'])
-        self.assertIn('Priority', data['error'])
-        self.assertEqual(AccountNote.objects.filter(account=self.account).count(), 0)
 
     def test_note_update(self):
         """POST updates existing note body."""
@@ -1168,10 +1151,7 @@ class NoteAPITest(TestCase):
             created_by=self.admin,
         )
         url = reverse('note_update', args=[self.account.pk, note.pk])
-        resp = self._post(url, {
-            'body': 'Updated body.',
-            'is_task': 'false',
-        })
+        resp = self._post(url, {'body': 'Updated body.'})
         self.assertEqual(resp.status_code, 200)
         data = _json.loads(resp.content)
         self.assertTrue(data['success'], data.get('error'))
@@ -1242,21 +1222,6 @@ class NoteAPITest(TestCase):
         """User without can_manage_account_notes gets 403 on create."""
         self.client.login(username='note_amb_mgr', password='testpass123')
         url = reverse('note_create', args=[self.account.pk])
-        resp = self._post(url, {
-            'body': 'Should be blocked.',
-            'is_task': 'false',
-        })
+        resp = self._post(url, {'body': 'Should be blocked.'})
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(AccountNote.objects.filter(account=self.account).count(), 0)
-
-    def test_assignee_list_returns_covering_users(self):
-        """GET assignees returns users with coverage over this account."""
-        url = reverse('note_assignee_list', args=[self.account.pk])
-        resp = self.client.get(url)
-        self.assertEqual(resp.status_code, 200)
-        data = _json.loads(resp.content)
-        ids = [a['id'] for a in data['assignees']]
-        # admin is supplier_admin — always included
-        self.assertIn(self.admin.pk, ids)
-        # sm has distributor coverage
-        self.assertIn(self.sm.pk, ids)

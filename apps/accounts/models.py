@@ -279,29 +279,12 @@ class AccountContact(models.Model):
 
 
 class AccountNote(models.Model):
-    class Priority(models.TextChoices):
-        HIGH   = 'high',   'High'
-        MEDIUM = 'medium', 'Medium'
-        LOW    = 'low',    'Low'
-
     account = models.ForeignKey(
         'Account',
         on_delete=models.CASCADE,
         related_name='notes',
     )
     body = models.TextField()
-    is_task = models.BooleanField(default=False)
-    task_priority = models.CharField(
-        max_length=10,
-        choices=Priority.choices,
-        null=True, blank=True,
-    )
-    task_assignee = models.ForeignKey(
-        'core.User',
-        on_delete=models.SET_NULL,
-        null=True, blank=True,
-        related_name='assigned_notes',
-    )
     created_by = models.ForeignKey(
         'core.User',
         on_delete=models.SET_NULL,

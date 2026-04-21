@@ -38,34 +38,6 @@
                       placeholder="Write your note..."></textarea>
           </div>
 
-          {# Task row #}
-          <div class="mb-2">
-            <div class="form-check mb-1">
-              <input class="form-check-input" type="checkbox"
-                     id="notes-is-task">
-              <label class="form-check-label small" for="notes-is-task">
-                Mark as Task
-              </label>
-            </div>
-            <div id="notes-task-fields" style="display:none" class="ps-3">
-              <div class="row g-2">
-                <div class="col-6">
-                  <select id="notes-priority" class="form-select form-select-sm">
-                    <option value="">— Priority —</option>
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
-                  </select>
-                </div>
-                <div class="col-6">
-                  <select id="notes-assignee" class="form-select form-select-sm">
-                    <option value="">— Assignee —</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          </div>
-
           {# Error area #}
           <div id="notes-form-error" class="mb-2"></div>
 
@@ -102,65 +74,25 @@
   }
 
   // ---- State ----
-  var notesAccountId   = null;
-  var notesEditingId   = null;  // null = create, number = update
-  var canManageNotes   = {{ user|has_perm:'can_manage_account_notes'|yesno:'true,false' }};
-  var currentUserId    = {{ user.pk }};
+  var notesAccountId = null;
+  var notesEditingId = null;  // null = create, number = update
+  var canManageNotes = {{ user|has_perm:'can_manage_account_notes'|yesno:'true,false' }};
 
   // ---- Elements ----
-  var modalEl          = document.getElementById('accountNotesModal');
-  var modal            = modalEl ? new bootstrap.Modal(modalEl) : null;
-  var modalTitle       = document.getElementById('notesModalLabel');
-  var notesList        = document.getElementById('notes-list');
-  var notesEmpty       = document.getElementById('notes-empty');
-  var formError        = document.getElementById('notes-form-error');
-  var cancelEditBtn    = document.getElementById('notes-cancel-edit-btn');
-  var saveBtn          = document.getElementById('notes-save-btn');
-  var bodyEl           = document.getElementById('notes-body');
-  var isTaskEl         = document.getElementById('notes-is-task');
-  var taskFields       = document.getElementById('notes-task-fields');
-  var priorityEl       = document.getElementById('notes-priority');
-  var assigneeEl       = document.getElementById('notes-assignee');
-
-  // ---- Task checkbox ----
-  if (isTaskEl) {
-    isTaskEl.addEventListener('change', function () {
-      if (taskFields) taskFields.style.display = isTaskEl.checked ? '' : 'none';
-      if (isTaskEl.checked) loadAssignees();
-    });
-  }
-
-  // ---- Load assignees ----
-  function loadAssignees() {
-    if (!notesAccountId || !assigneeEl) return;
-    fetch('/accounts/' + notesAccountId + '/notes/assignees/', {
-      headers: {'X-Requested-With': 'XMLHttpRequest'},
-    })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      var pending = assigneeEl.dataset.pendingValue || '';
-      var current = pending || String(currentUserId);
-      assigneeEl.innerHTML = '<option value="">— Assignee —</option>';
-      (data.assignees || []).forEach(function (a) {
-        var opt = document.createElement('option');
-        opt.value = a.id;
-        opt.textContent = a.name;
-        assigneeEl.appendChild(opt);
-      });
-      if (current) assigneeEl.value = current;
-      delete assigneeEl.dataset.pendingValue;
-    })
-    .catch(function () {});
-  }
+  var modalEl       = document.getElementById('accountNotesModal');
+  var modal         = modalEl ? new bootstrap.Modal(modalEl) : null;
+  var modalTitle    = document.getElementById('notesModalLabel');
+  var notesList     = document.getElementById('notes-list');
+  var notesEmpty    = document.getElementById('notes-empty');
+  var formError     = document.getElementById('notes-form-error');
+  var cancelEditBtn = document.getElementById('notes-cancel-edit-btn');
+  var saveBtn       = document.getElementById('notes-save-btn');
+  var bodyEl        = document.getElementById('notes-body');
 
   // ---- Reset form ----
   function resetForm() {
     notesEditingId = null;
     if (bodyEl) bodyEl.value = '';
-    if (isTaskEl) isTaskEl.checked = false;
-    if (taskFields) taskFields.style.display = 'none';
-    if (priorityEl) priorityEl.value = '';
-    if (assigneeEl) assigneeEl.innerHTML = '<option value="">— Assignee —</option>';
     if (formError) formError.innerHTML = '';
     if (cancelEditBtn) cancelEditBtn.style.display = 'none';
     if (saveBtn) saveBtn.textContent = 'Save Note';
@@ -171,18 +103,6 @@
     var card = document.createElement('div');
     card.className = 'card mb-2';
     card.dataset.noteId = note.id;
-
-    var taskBadge = '';
-    if (note.is_task) {
-      var pri = note.task_priority || '';
-      var priColor = pri === 'high' ? 'danger' : (pri === 'medium' ? 'warning' : 'info');
-      taskBadge = '<span class="badge bg-' + priColor + ' me-1">Task</span>';
-      if (pri) taskBadge += '<span class="badge bg-light text-dark border me-1">' + pri + '</span>';
-      if (note.task_assignee_name) {
-        taskBadge += '<span class="text-muted small"><i class="bi bi-person me-1"></i>' +
-          escHtml(note.task_assignee_name) + '</span>';
-      }
-    }
 
     var canDel  = note.can_delete;
     var canEdit = canManageNotes;
@@ -199,7 +119,6 @@
 
     card.innerHTML =
       '<div class="card-body py-2 px-3">' +
-        (note.is_task ? '<div class="mb-1">' + taskBadge + '</div>' : '') +
         '<p class="mb-1" style="white-space:pre-wrap">' + escHtml(note.body) + '</p>' +
         '<div class="d-flex justify-content-between align-items-center mt-2">' +
           '<small class="text-muted">' +
@@ -244,11 +163,6 @@
       if (formError) formError.innerHTML = '';
       var fd = new FormData();
       if (bodyEl) fd.append('body', bodyEl.value);
-      fd.append('is_task', isTaskEl && isTaskEl.checked ? 'true' : 'false');
-      if (isTaskEl && isTaskEl.checked) {
-        if (priorityEl) fd.append('task_priority', priorityEl.value);
-        if (assigneeEl)  fd.append('task_assignee', assigneeEl.value);
-      }
 
       var url = notesEditingId
         ? '/accounts/' + notesAccountId + '/notes/' + notesEditingId + '/update/'
@@ -290,15 +204,12 @@
   // ---- Delegated: edit, delete note ----
   if (notesList) {
     notesList.addEventListener('click', function (e) {
-      // Edit note
       var editBtn = e.target.closest('.note-edit-btn');
       if (editBtn) {
-        var noteId = editBtn.dataset.noteId;
-        populateFormForEdit(noteId);
+        populateFormForEdit(editBtn.dataset.noteId);
         return;
       }
 
-      // Delete note
       var delBtn = e.target.closest('.note-del-btn');
       if (delBtn) {
         if (!confirm('Delete this note?')) return;
@@ -333,19 +244,10 @@
       notesEditingId = note.id;
 
       if (bodyEl) bodyEl.value = note.body || '';
-      if (isTaskEl) isTaskEl.checked = !!note.is_task;
-      if (taskFields) taskFields.style.display = note.is_task ? '' : 'none';
-      if (priorityEl) priorityEl.value = note.task_priority || '';
       if (formError) formError.innerHTML = '';
       if (cancelEditBtn) cancelEditBtn.style.display = '';
       if (saveBtn) saveBtn.textContent = 'Update Note';
 
-      if (note.is_task) {
-        if (assigneeEl) assigneeEl.dataset.pendingValue = note.task_assignee_id || '';
-        loadAssignees();
-      }
-
-      // Scroll to form
       var footer = document.querySelector('#accountNotesModal .modal-footer');
       if (footer) footer.scrollIntoView({behavior: 'smooth'});
     })

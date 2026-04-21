@@ -3103,13 +3103,9 @@ with no mocking required.
 ## Account Notes
 
 ### Models
-- **AccountNote**: account (FK), body, is_task, task_priority,
-  task_assignee (FK User), created_by (FK User), created_at, updated_at
-- No note_type, no visit_date, no photos
-
-### Task Flag
-- `is_task = True` requires `task_priority` (high / medium / low)
-- `task_assignee` defaults to the creating user in the UI (optional)
+- **AccountNote**: account (FK), body, created_by (FK User),
+  created_at, updated_at
+- No note_type, no visit_date, no photos, no task fields
 
 ### Permission
 - `can_manage_account_notes` assigned to: supplier_admin, sales_manager,
@@ -3123,14 +3119,17 @@ with no mocking required.
 - All other roles cannot delete notes they did not create
 
 ### UI
+- Dashboard AAM: "Add/View Notes" button opens inline notes sub-flow with
+  note count badge
 - Scrollable modal (`#accountNotesModal`, `modal-dialog-scrollable modal-lg`)
-  with fixed form footer
-- Task checkbox reveals priority select and assignee select (AJAX populated)
-- Assignee list loaded via `GET /accounts/<pk>/notes/assignees/`
+  with fixed form footer (used from account detail page)
 
 ### Entry Points
-- Dashboard Account Actions modal: "Add Note" button opens inline notes
-  sub-flow for the selected account
+- Dashboard Account Actions modal: "Add/View Notes" button
 - Future: account detail page, Activity feed
+
+### Tasks
+- Task/to-do functionality has been removed from notes entirely.
+  Tasks will be a separate feature built independently when needed.
 
 *Last updated: April 2026*

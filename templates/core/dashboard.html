@@ -308,38 +308,6 @@
                       rows="3"
                       placeholder="Write your note..."></textarea>
 
-            {# Task option #}
-            <div class="mb-2">
-              <div class="form-check form-check-inline">
-                <input type="checkbox"
-                       class="form-check-input"
-                       id="aam-note-is-task">
-                <label class="form-check-label small"
-                       for="aam-note-is-task">Mark as Task</label>
-              </div>
-            </div>
-
-            {# Task fields #}
-            <div id="aam-note-task-fields" class="d-none mb-2">
-              <div class="row g-2">
-                <div class="col-6">
-                  <select id="aam-note-priority"
-                          class="form-select form-select-sm">
-                    <option value="">Priority...</option>
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
-                  </select>
-                </div>
-                <div class="col-6">
-                  <select id="aam-note-assignee"
-                          class="form-select form-select-sm">
-                    <option value="">Assignee...</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
             {# Error #}
             <div id="aam-note-error"
                  class="d-none alert alert-danger py-1 px-2 small mb-2">
@@ -724,46 +692,14 @@
 
   function resetNoteForm() {
     editingNoteId = null;
-    var bodyEl     = document.getElementById('aam-note-body');
-    var isTaskEl   = document.getElementById('aam-note-is-task');
-    var taskFields = document.getElementById('aam-note-task-fields');
-    var priorityEl = document.getElementById('aam-note-priority');
-    var assigneeEl = document.getElementById('aam-note-assignee');
-    var errorEl    = document.getElementById('aam-note-error');
-    var cancelBtn  = document.getElementById('aam-note-cancel-edit-btn');
-    var saveBtn    = document.getElementById('aam-note-save-btn');
-    if (bodyEl)     bodyEl.value = '';
-    if (isTaskEl)   isTaskEl.checked = false;
-    if (taskFields) taskFields.classList.add('d-none');
-    if (priorityEl) priorityEl.value = '';
-    if (assigneeEl) assigneeEl.innerHTML = '<option value="">Assignee...</option>';
-    if (errorEl)    { errorEl.textContent = ''; errorEl.classList.add('d-none'); }
-    if (cancelBtn)  cancelBtn.classList.add('d-none');
-    if (saveBtn)    saveBtn.textContent = 'Save Note';
-  }
-
-  function loadNoteAssignees() {
-    if (!currentAccountId) return;
-    var assigneeEl = document.getElementById('aam-note-assignee');
-    if (!assigneeEl) return;
-    fetch('/accounts/' + currentAccountId + '/notes/assignees/', {
-      headers: {'X-Requested-With': 'XMLHttpRequest'},
-    })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      var pending = assigneeEl.dataset.pendingValue || '';
-      var current = pending || (currentUserId ? String(currentUserId) : '');
-      assigneeEl.innerHTML = '<option value="">Assignee...</option>';
-      (data.assignees || []).forEach(function (a) {
-        var opt = document.createElement('option');
-        opt.value = a.id;
-        opt.textContent = a.name;
-        assigneeEl.appendChild(opt);
-      });
-      if (current) assigneeEl.value = current;
-      delete assigneeEl.dataset.pendingValue;
-    })
-    .catch(function () {});
+    var bodyEl    = document.getElementById('aam-note-body');
+    var errorEl   = document.getElementById('aam-note-error');
+    var cancelBtn = document.getElementById('aam-note-cancel-edit-btn');
+    var saveBtn   = document.getElementById('aam-note-save-btn');
+    if (bodyEl)    bodyEl.value = '';
+    if (errorEl)   { errorEl.textContent = ''; errorEl.classList.add('d-none'); }
+    if (cancelBtn) cancelBtn.classList.add('d-none');
+    if (saveBtn)   saveBtn.textContent = 'Save Note';
   }
 
   function loadAccountNotes(accountId) {
@@ -803,19 +739,6 @@
     div.className = 'aam-note-card border-bottom pb-2 mb-2';
     div.dataset.noteId = note.id;
 
-    // Task badge + assignee
-    var taskBadgeHtml = '';
-    if (note.is_task) {
-      var priColor = note.task_priority === 'high' ? 'danger'
-        : note.task_priority === 'medium' ? 'warning' : 'success';
-      taskBadgeHtml = '<span class="badge bg-' + priColor + ' me-1">' +
-        escHtmlNote(note.task_priority || '') + '</span>';
-      if (note.task_assignee_name) {
-        taskBadgeHtml += '<span class="text-muted small">' +
-          escHtmlNote(note.task_assignee_name) + '</span>';
-      }
-    }
-
     // Three-dot dropdown menu
     var menuHtml = '';
     if (note.can_delete) {
@@ -838,12 +761,9 @@
     }
 
     div.innerHTML =
-      // Row 1: date + task badge + menu
+      // Row 1: date + menu
       '<div class="d-flex justify-content-between align-items-center mb-1">' +
-        '<div class="d-flex align-items-center gap-2">' +
-          '<span class="text-muted small">' + formatNoteDate(note.created_at_date) + '</span>' +
-          taskBadgeHtml +
-        '</div>' +
+        '<span class="text-muted small">' + formatNoteDate(note.created_at_date) + '</span>' +
         menuHtml +
       '</div>' +
       // Row 2: body
@@ -856,40 +776,17 @@
     return div;
   }
 
-  // ---- Task checkbox ----
-  var aamNoteIsTask = document.getElementById('aam-note-is-task');
-  if (aamNoteIsTask) {
-    aamNoteIsTask.addEventListener('change', function () {
-      var taskFields = document.getElementById('aam-note-task-fields');
-      if (!taskFields) return;
-      if (aamNoteIsTask.checked) {
-        taskFields.classList.remove('d-none');
-        loadNoteAssignees();
-      } else {
-        taskFields.classList.add('d-none');
-      }
-    });
-  }
-
   // ---- Note save ----
   var aamNoteSaveBtn = document.getElementById('aam-note-save-btn');
   if (aamNoteSaveBtn) {
     aamNoteSaveBtn.addEventListener('click', function () {
-      var errorEl    = document.getElementById('aam-note-error');
-      var bodyEl     = document.getElementById('aam-note-body');
-      var isTaskEl   = document.getElementById('aam-note-is-task');
-      var priorityEl = document.getElementById('aam-note-priority');
-      var assigneeEl = document.getElementById('aam-note-assignee');
+      var errorEl = document.getElementById('aam-note-error');
+      var bodyEl  = document.getElementById('aam-note-body');
 
       if (errorEl) { errorEl.textContent = ''; errorEl.classList.add('d-none'); }
 
       var fd = new FormData();
       if (bodyEl) fd.append('body', bodyEl.value);
-      fd.append('is_task', isTaskEl && isTaskEl.checked ? 'true' : 'false');
-      if (isTaskEl && isTaskEl.checked) {
-        if (priorityEl) fd.append('task_priority', priorityEl.value);
-        if (assigneeEl) fd.append('task_assignee', assigneeEl.value);
-      }
 
       var url = editingNoteId
         ? '/accounts/' + currentAccountId + '/notes/' + editingNoteId + '/update/'
@@ -977,30 +874,15 @@
 
       editingNoteId = note.id;
 
-      var bodyEl     = document.getElementById('aam-note-body');
-      var isTaskEl   = document.getElementById('aam-note-is-task');
-      var taskFields = document.getElementById('aam-note-task-fields');
-      var priorityEl = document.getElementById('aam-note-priority');
-      var assigneeEl = document.getElementById('aam-note-assignee');
-      var errorEl    = document.getElementById('aam-note-error');
-      var cancelBtn  = document.getElementById('aam-note-cancel-edit-btn');
-      var saveBtn    = document.getElementById('aam-note-save-btn');
+      var bodyEl    = document.getElementById('aam-note-body');
+      var errorEl   = document.getElementById('aam-note-error');
+      var cancelBtn = document.getElementById('aam-note-cancel-edit-btn');
+      var saveBtn   = document.getElementById('aam-note-save-btn');
 
-      if (bodyEl)     bodyEl.value        = note.body || '';
-      if (isTaskEl)   isTaskEl.checked    = !!note.is_task;
-      if (taskFields) {
-        if (note.is_task) taskFields.classList.remove('d-none');
-        else              taskFields.classList.add('d-none');
-      }
-      if (priorityEl) priorityEl.value    = note.task_priority || '';
-      if (errorEl)    { errorEl.textContent = ''; errorEl.classList.add('d-none'); }
-      if (cancelBtn)  cancelBtn.classList.remove('d-none');
-      if (saveBtn)    saveBtn.textContent = 'Update Note';
-
-      if (note.is_task && assigneeEl) {
-        assigneeEl.dataset.pendingValue = note.task_assignee_id || '';
-        loadNoteAssignees();
-      }
+      if (bodyEl)    bodyEl.value = note.body || '';
+      if (errorEl)   { errorEl.textContent = ''; errorEl.classList.add('d-none'); }
+      if (cancelBtn) cancelBtn.classList.remove('d-none');
+      if (saveBtn)   saveBtn.textContent = 'Update Note';
 
       // Scroll form into view
       var formEl = document.querySelector('#aam-notes-section .border-top');

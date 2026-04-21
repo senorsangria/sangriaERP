@@ -29,7 +29,6 @@ urlpatterns = [
     # Note API
     path('accounts/<int:pk>/notes/', views.note_list, name='note_list'),
     path('accounts/<int:pk>/notes/create/', views.note_create, name='note_create'),
-    path('accounts/<int:pk>/notes/assignees/', views.assignee_list, name='note_assignee_list'),
     path('accounts/<int:pk>/notes/<int:npk>/update/', views.note_update, name='note_update'),
     path('accounts/<int:pk>/notes/<int:npk>/delete/', views.note_delete, name='note_delete'),
 

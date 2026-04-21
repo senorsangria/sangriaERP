@@ -1247,13 +1247,6 @@ def _note_to_dict(note, request_user, account):
     return {
         'id': note.pk,
         'body': note.body,
-        'is_task': note.is_task,
-        'task_priority': note.task_priority,
-        'task_assignee_id': note.task_assignee_id,
-        'task_assignee_name': (
-            note.task_assignee.get_full_name() or note.task_assignee.email
-            if note.task_assignee else None
-        ),
         'created_by_name': (
             note.created_by.get_full_name() or note.created_by.email
             if note.created_by else None
@@ -1273,7 +1266,7 @@ def note_list(request, pk):
     account = get_object_or_404(Account, pk=pk, company=request.user.company)
     notes = (
         account.notes
-        .select_related('task_assignee', 'created_by')
+        .select_related('created_by')
         .order_by('-created_at')
     )
     return JsonResponse({'notes': [_note_to_dict(n, request.user, account) for n in notes]})
@@ -1289,33 +1282,17 @@ def note_create(request, pk):
     account = get_object_or_404(Account, pk=pk, company=request.user.company)
 
     body = (request.POST.get('body') or '').strip()
-    is_task = request.POST.get('is_task') in ('true', '1', 'on', 'True')
-    task_priority = (request.POST.get('task_priority') or '').strip() or None
-    task_assignee_id = (request.POST.get('task_assignee') or '').strip() or None
 
     if not body:
         return JsonResponse({'success': False, 'error': 'Note body is required.'})
-    if is_task and not task_priority:
-        return JsonResponse({'success': False, 'error': 'Priority is required when marking as a task.'})
-
-    task_assignee = None
-    if task_assignee_id:
-        try:
-            task_assignee = User.objects.get(pk=task_assignee_id, company=request.user.company)
-        except User.DoesNotExist:
-            pass
 
     note = AccountNote.objects.create(
         account=account,
         body=body,
-        is_task=is_task,
-        task_priority=task_priority if is_task else None,
-        task_assignee=task_assignee if is_task else None,
         created_by=request.user,
     )
 
     note.refresh_from_db()
-    note.task_assignee  # re-select
     return JsonResponse({'success': True, 'note': _note_to_dict(note, request.user, account)})
 
 
@@ -1330,26 +1307,11 @@ def note_update(request, pk, npk):
     note = get_object_or_404(AccountNote, pk=npk, account=account)
 
     body = (request.POST.get('body') or '').strip()
-    is_task = request.POST.get('is_task') in ('true', '1', 'on', 'True')
-    task_priority = (request.POST.get('task_priority') or '').strip() or None
-    task_assignee_id = (request.POST.get('task_assignee') or '').strip() or None
 
     if not body:
         return JsonResponse({'success': False, 'error': 'Note body is required.'})
-    if is_task and not task_priority:
-        return JsonResponse({'success': False, 'error': 'Priority is required when marking as a task.'})
-
-    task_assignee = None
-    if task_assignee_id:
-        try:
-            task_assignee = User.objects.get(pk=task_assignee_id, company=request.user.company)
-        except User.DoesNotExist:
-            pass
 
     note.body = body
-    note.is_task = is_task
-    note.task_priority = task_priority if is_task else None
-    note.task_assignee = task_assignee if is_task else None
     note.save()
 
     note.refresh_from_db()
@@ -1371,23 +1333,3 @@ def note_delete(request, pk, npk):
     return JsonResponse({'success': True})
 
 
-@login_required
-def assignee_list(request, pk):
-    """GET /accounts/<pk>/notes/assignees/"""
-    if not request.user.has_permission('can_view_accounts'):
-        return JsonResponse({'error': 'Forbidden'}, status=403)
-    account = get_object_or_404(Account, pk=pk, company=request.user.company)
-    from .utils import get_users_covering_account
-    users = get_users_covering_account(
-        account,
-        roles=['supplier_admin', 'sales_manager', 'territory_manager', 'distributor_contact'],
-    )
-    return JsonResponse({
-        'assignees': [
-            {
-                'id': u.pk,
-                'name': u.get_full_name() or u.email,
-            }
-            for u in users
-        ]
-    })
