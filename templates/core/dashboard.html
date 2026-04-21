@@ -125,6 +125,11 @@
       {# Thin header #}
       <div class="modal-header py-2">
         <div class="d-flex align-items-center gap-2">
+          <button type="button"
+                  class="btn btn-sm btn-link p-0 me-2 d-none"
+                  id="aam-header-back-btn">
+            <i class="bi bi-arrow-left fs-5"></i>
+          </button>
           <span id="aam-on-off-icon" class="text-muted"></span>
           <div>
             <div id="aamModalLabel" class="fw-semibold lh-sm"></div>
@@ -282,15 +287,6 @@
         {# SECTION 3 — Notes inline sub-flow #}
         <div id="aam-notes-section" style="display:none" class="p-0">
 
-          <div class="px-3 pt-3 pb-2 border-bottom d-flex align-items-center">
-            <button type="button"
-                    class="btn btn-sm btn-link px-0 me-2"
-                    id="aam-notes-back-btn">
-              <i class="bi bi-arrow-left"></i>
-            </button>
-            <span class="fw-semibold">Notes</span>
-          </div>
-
           {# Scrollable notes list #}
           <div id="aam-notes-list"
                style="max-height:300px; overflow-y:auto;"
@@ -412,9 +408,10 @@
       ? bootstrap.Modal.getInstance(modalEl)
       : null;
   }
-  var aamOnOffIcon   = document.getElementById('aam-on-off-icon');
-  var aamLabel       = document.getElementById('aamModalLabel');
-  var aamCity        = document.getElementById('aam-city');
+  var aamOnOffIcon      = document.getElementById('aam-on-off-icon');
+  var aamLabel          = document.getElementById('aamModalLabel');
+  var aamCity           = document.getElementById('aam-city');
+  var aamHeaderBackBtn  = document.getElementById('aam-header-back-btn');
 
   var aamMainMenu    = document.getElementById('aam-main-menu');
   var aamRouteSection= document.getElementById('aam-route-section');
@@ -446,12 +443,17 @@
   var currentDistributorId   = null;
   var currentUserId          = {{ user.pk }};
 
+  function toTitleCase(str) {
+    return str.toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+  }
+
   // ---- Helper: reset modal to main menu ----
   function resetToMainMenu() {
     if (aamMainMenu)     aamMainMenu.style.display = '';
     if (aamRouteSection) aamRouteSection.style.display = 'none';
     var aamNotesSection = document.getElementById('aam-notes-section');
     if (aamNotesSection) aamNotesSection.style.display = 'none';
+    if (aamHeaderBackBtn) aamHeaderBackBtn.classList.add('d-none');
     resetNoteForm();
     if (aamEventTypes)   aamEventTypes.style.display = 'none';
     if (aamChevron) {
@@ -480,8 +482,8 @@
     currentDistributorId = distributorId;
 
     // Populate header
-    if (aamLabel) aamLabel.textContent = accountName;
-    if (aamCity)  aamCity.textContent  = accountCity;
+    if (aamLabel) aamLabel.textContent = toTitleCase(accountName);
+    if (aamCity)  aamCity.textContent  = toTitleCase(accountCity);
     if (aamOnOffIcon) {
       if (onOff === 'ON') {
         aamOnOffIcon.innerHTML = '<i class="bi bi-cup-hot" title="On Premise"></i>';
@@ -668,17 +670,19 @@
         aamMainMenu.style.display = 'none';
       var notesSection = document.getElementById('aam-notes-section');
       if (notesSection) notesSection.style.display = '';
+      if (aamHeaderBackBtn) aamHeaderBackBtn.classList.remove('d-none');
       loadAccountNotes(currentAccountId);
     });
   }
 
-  // ---- 9. Notes back button ----
-  var aamNotesBackBtn = document.getElementById('aam-notes-back-btn');
-  if (aamNotesBackBtn) {
-    aamNotesBackBtn.addEventListener('click', function () {
+  // ---- 9. Header back button (notes) ----
+  if (aamHeaderBackBtn) {
+    aamHeaderBackBtn.addEventListener('click', function () {
       var notesSection = document.getElementById('aam-notes-section');
       if (notesSection) notesSection.style.display = 'none';
       if (aamMainMenu) aamMainMenu.style.display = '';
+      aamHeaderBackBtn.classList.add('d-none');
+      resetNoteForm();
     });
   }
 
@@ -693,10 +697,12 @@
       .replace(/"/g, '&quot;');
   }
 
-  function formatNoteDate(iso) {
-    if (!iso) return '';
-    try { return new Date(iso).toLocaleDateString(); }
-    catch (e) { return iso; }
+  function formatNoteDate(dateStr) {
+    if (!dateStr) return '';
+    try {
+      var d = new Date(dateStr + 'T00:00:00');
+      return d.toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'});
+    } catch (e) { return dateStr; }
   }
 
   var editingNoteId = null;
@@ -781,43 +787,54 @@
     div.className = 'aam-note-card border-bottom pb-2 mb-2';
     div.dataset.noteId = note.id;
 
-    var taskHtml = '';
+    // Task badge + assignee
+    var taskBadgeHtml = '';
     if (note.is_task) {
       var priColor = note.task_priority === 'high' ? 'danger'
         : note.task_priority === 'medium' ? 'warning' : 'success';
-      taskHtml = ' <span class="badge bg-secondary">Task</span>' +
-        ' <span class="badge bg-' + priColor + '">' +
+      taskBadgeHtml = '<span class="badge bg-' + priColor + ' me-1">' +
         escHtmlNote(note.task_priority || '') + '</span>';
       if (note.task_assignee_name) {
-        taskHtml += ' <span class="text-muted small">' +
+        taskBadgeHtml += '<span class="text-muted small">' +
           escHtmlNote(note.task_assignee_name) + '</span>';
       }
     }
 
-    var actionBtns = '';
+    // Three-dot dropdown menu
+    var menuHtml = '';
     if (note.can_delete) {
-      actionBtns +=
-        '<button type="button"' +
-        ' class="btn btn-link btn-sm p-0 text-primary aam-note-edit-btn me-2"' +
-        ' data-note-id="' + note.id + '">' +
-        '<i class="bi bi-pencil"></i></button>';
-      actionBtns +=
-        '<button type="button"' +
-        ' class="btn btn-link btn-sm p-0 text-danger aam-note-delete-btn"' +
-        ' data-note-id="' + note.id + '">' +
-        '<i class="bi bi-trash"></i></button>';
+      menuHtml =
+        '<div class="dropdown">' +
+          '<button class="btn btn-link btn-sm p-0 text-muted"' +
+          ' type="button" data-bs-toggle="dropdown" aria-expanded="false">' +
+            '<i class="bi bi-three-dots-vertical"></i>' +
+          '</button>' +
+          '<ul class="dropdown-menu dropdown-menu-end">' +
+            '<li><button class="dropdown-item aam-note-edit-btn"' +
+            ' data-note-id="' + note.id + '">' +
+            '<i class="bi bi-pencil me-2"></i>Edit</button></li>' +
+            '<li><hr class="dropdown-divider"></li>' +
+            '<li><button class="dropdown-item text-danger aam-note-delete-btn"' +
+            ' data-note-id="' + note.id + '">' +
+            '<i class="bi bi-trash me-2"></i>Delete</button></li>' +
+          '</ul>' +
+        '</div>';
     }
 
     div.innerHTML =
-      '<div class="d-flex justify-content-between align-items-start">' +
-        '<div>' + taskHtml + '</div>' +
-        '<div>' + actionBtns + '</div>' +
+      // Row 1: date + task badge + menu
+      '<div class="d-flex justify-content-between align-items-center mb-1">' +
+        '<div class="d-flex align-items-center gap-2">' +
+          '<span class="text-muted small">' + formatNoteDate(note.created_at_date) + '</span>' +
+          taskBadgeHtml +
+        '</div>' +
+        menuHtml +
       '</div>' +
-      '<p class="small mb-1 mt-1" style="white-space:pre-wrap">' +
-        escHtmlNote(note.body) + '</p>' +
+      // Row 2: body
+      '<p class="mb-1 small" style="white-space:pre-wrap">' + escHtmlNote(note.body) + '</p>' +
+      // Row 3: created by
       '<div class="text-muted" style="font-size:0.7rem">' +
         escHtmlNote(note.created_by_name || '') +
-        ' &middot; ' + formatNoteDate(note.created_at) +
       '</div>';
 
     return div;

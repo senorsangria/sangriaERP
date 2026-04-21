@@ -1259,6 +1259,7 @@ def _note_to_dict(note, request_user, account):
             if note.created_by else None
         ),
         'created_at': note.created_at.isoformat(),
+        'created_at_date': note.created_at.strftime('%Y-%m-%d'),
         'updated_at': note.updated_at.isoformat(),
         'can_delete': _can_delete_note(request_user, note, account),
     }
