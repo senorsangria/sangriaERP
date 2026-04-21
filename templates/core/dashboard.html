@@ -53,7 +53,8 @@
               data-account-city="{{ account.city }}"
               data-account-on-off="{{ account.on_off_premise }}"
               data-account-distributor-id="{{ account.distributor_id }}"
-              data-account-distributor-name="{{ account.distributor.name }}">
+              data-account-distributor-name="{{ account.distributor.name }}"
+              data-account-note-count="{{ account.note_count }}">
             <td class="text-center">
               {% if account.on_off_premise == 'ON' %}
               <i class="bi bi-cup-hot text-muted"
@@ -153,8 +154,9 @@
             <button type="button"
                     id="aam-add-note-btn"
                     class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
-              <i class="bi bi-journal-plus text-secondary"></i>
-              <span>Add Note</span>
+              <i class="bi bi-journal-text text-secondary"></i>
+              <span>Add/View Notes</span>
+              <span class="badge bg-secondary ms-1" id="aam-note-count-badge">0</span>
             </button>
 
             <div>
@@ -477,9 +479,14 @@
     var accountCity    = row.dataset.accountCity;
     var onOff          = row.dataset.accountOnOff;
     var distributorId  = row.dataset.accountDistributorId;
+    var noteCount      = parseInt(row.dataset.accountNoteCount || '0', 10);
 
     currentAccountId     = accountId;
     currentDistributorId = distributorId;
+
+    // Update note count badge
+    var badge = document.getElementById('aam-note-count-badge');
+    if (badge) badge.textContent = noteCount;
 
     // Populate header
     if (aamLabel) aamLabel.textContent = toTitleCase(accountName);
@@ -678,6 +685,7 @@
   // ---- 9. Header back button (notes) ----
   if (aamHeaderBackBtn) {
     aamHeaderBackBtn.addEventListener('click', function () {
+      updateNoteCountBadge();
       var notesSection = document.getElementById('aam-notes-section');
       if (notesSection) notesSection.style.display = 'none';
       if (aamMainMenu) aamMainMenu.style.display = '';
@@ -687,6 +695,13 @@
   }
 
   // ---- NOTES FUNCTIONS ----
+
+  function updateNoteCountBadge() {
+    var badge = document.getElementById('aam-note-count-badge');
+    if (!badge) return;
+    var cards = document.querySelectorAll('#aam-notes-list .aam-note-card');
+    badge.textContent = cards.length;
+  }
 
   function escHtmlNote(str) {
     if (!str) return '';
@@ -773,6 +788,7 @@
           listEl.appendChild(buildNoteCard(note));
         });
       }
+      updateNoteCountBadge();
     })
     .catch(function () {
       var errP = document.createElement('p');

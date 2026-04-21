@@ -159,10 +159,13 @@ def dashboard(request):
                     Q(street__icontains=word) |
                     Q(city__icontains=word)
                 )
+            from django.db.models import Count
             base_qs = base_qs.order_by('name')
             total = base_qs.count()
             has_more = total > 30
-            accounts = list(base_qs[:30])
+            accounts = list(
+                base_qs.annotate(note_count=Count('notes'))[:30]
+            )
 
     return render(request, 'core/dashboard.html', {
         'can_search': can_search,
