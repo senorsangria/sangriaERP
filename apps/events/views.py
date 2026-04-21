@@ -896,6 +896,28 @@ def event_create(request):
         selected_item_pks = set()
 
     initial_account_id = request.GET.get('account', '')
+    selected_account_name = ''
+    selected_account_address = ''
+
+    if initial_account_id:
+        try:
+            from apps.accounts.models import Account
+            initial_account = Account.objects.get(
+                pk=initial_account_id,
+                company=request.user.company
+            )
+            selected_account_name = initial_account.name
+            selected_account_address = ' '.join(
+                filter(None, [
+                    initial_account.street,
+                    initial_account.city,
+                    initial_account.state,
+                ])
+            )
+        except Account.DoesNotExist:
+            initial_account_id = ''
+
+    return_to = request.GET.get('return_to', '')
 
     locked_event_type_display = dict(Event.EventType.choices).get(locked_event_type, locked_event_type.title())
     items_by_brand = _get_items_by_brand(company)
@@ -905,13 +927,15 @@ def event_create(request):
         'form_title':              'Create Event',
         'is_create':               True,
         'account_search_disabled': _account_search_disabled(request.user),
-        'selected_account_name':   '',
+        'selected_account_name':   selected_account_name,
         'locked_event_type':         locked_event_type,
         'locked_event_type_display': locked_event_type_display,
         'items_by_brand':            items_by_brand,
         'selected_item_pks':         selected_item_pks,
         'can_manage_contacts':       request.user.has_permission('can_manage_contacts'),
         'initial_account_id':        initial_account_id,
+        'selected_account_address':  selected_account_address,
+        'return_to':                 return_to,
     })
 
 

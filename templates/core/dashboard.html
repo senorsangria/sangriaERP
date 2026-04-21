@@ -158,32 +158,27 @@
               <span>Add/View Notes</span>
               <span class="badge bg-secondary ms-1" id="aam-note-count-badge">0</span>
             </button>
+            {% endif %}
 
-            <div>
-              <button type="button"
-                      id="aam-create-event-btn"
-                      class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3 w-100 border-0 bg-transparent text-start">
-                <i class="bi bi-calendar-plus text-secondary"></i>
-                <span class="flex-grow-1">Create Event</span>
-                <i class="bi bi-chevron-right" id="aam-create-chevron"></i>
-              </button>
-              <div id="aam-event-types" style="display:none"
-                   class="ps-4 pb-2 border-bottom">
-                <a id="aam-create-tasting"
-                   href="#"
-                   class="list-group-item list-group-item-action py-2 small">
-                  <i class="bi bi-cup-hot me-2 text-secondary"></i>Tasting
-                </a>
-                <a id="aam-create-special"
-                   href="#"
-                   class="list-group-item list-group-item-action py-2 small">
-                  <i class="bi bi-star me-2 text-secondary"></i>Special Event
-                </a>
-                <a id="aam-create-admin"
-                   href="#"
-                   class="list-group-item list-group-item-action py-2 small">
-                  <i class="bi bi-briefcase me-2 text-secondary"></i>Admin
-                </a>
+            {% if user|has_perm:'can_create_events' %}
+            <div id="aam-create-event-wrapper">
+              <a id="aam-create-event-link"
+                 href="#"
+                 class="aam-menu-item d-block py-3 px-4
+                        text-decoration-none text-dark
+                        border-bottom btn btn-light
+                        rounded-0 w-100 text-start">
+                <i class="bi bi-calendar-plus me-2"></i>
+                Create Event
+              </a>
+              <div id="aam-create-event-unknown"
+                   class="d-none py-3 px-4 border-bottom
+                          bg-warning bg-opacity-10">
+                <i class="bi bi-exclamation-triangle
+                          text-warning me-2"></i>
+                <span class="small">Update On/Off Premise
+                  field for this account before creating
+                  an event</span>
               </div>
             </div>
             {% endif %}
@@ -386,13 +381,9 @@
   var aamMainMenu    = document.getElementById('aam-main-menu');
   var aamRouteSection= document.getElementById('aam-route-section');
 
-  var aamAddNoteBtn  = document.getElementById('aam-add-note-btn');
-  var aamCreateBtn   = document.getElementById('aam-create-event-btn');
-  var aamChevron     = document.getElementById('aam-create-chevron');
-  var aamEventTypes  = document.getElementById('aam-event-types');
-  var aamTasting     = document.getElementById('aam-create-tasting');
-  var aamSpecial     = document.getElementById('aam-create-special');
-  var aamAdmin       = document.getElementById('aam-create-admin');
+  var aamAddNoteBtn      = document.getElementById('aam-add-note-btn');
+  var createEventLink    = document.getElementById('aam-create-event-link');
+  var createEventUnknown = document.getElementById('aam-create-event-unknown');
 
   var aamAddRouteBtn = document.getElementById('aam-add-route-btn');
   var aamViewSales   = document.getElementById('aam-view-sales');
@@ -425,11 +416,6 @@
     if (aamNotesSection) aamNotesSection.style.display = 'none';
     if (aamHeaderBackBtn) aamHeaderBackBtn.classList.add('d-none');
     resetNoteForm();
-    if (aamEventTypes)   aamEventTypes.style.display = 'none';
-    if (aamChevron) {
-      aamChevron.classList.remove('bi-chevron-down');
-      aamChevron.classList.add('bi-chevron-right');
-    }
     if (aamRouteMsg) aamRouteMsg.innerHTML = '';
     if (aamNewRouteName) aamNewRouteName.value = '';
     if (aamRouteNew) aamRouteNew.checked = true;
@@ -477,15 +463,32 @@
       aamViewDetails.href = '/accounts/' + accountId + '/detail/';
     }
 
-    // Set create event sub-links
-    if (aamTasting) {
-      aamTasting.href = '/events/create/?event_type=tasting&account=' + accountId;
-    }
-    if (aamSpecial) {
-      aamSpecial.href = '/events/create/?event_type=special_event&account=' + accountId;
-    }
-    if (aamAdmin) {
-      aamAdmin.href = '/events/create/?event_type=admin&account=' + accountId;
+    // Set create event link based on on/off premise
+    if (onOff === 'OFF') {
+      if (createEventLink) {
+        createEventLink.classList.remove('d-none');
+        createEventLink.href =
+          '/events/create/?event_type=tasting' +
+          '&account=' + accountId +
+          '&return_to=dashboard';
+      }
+      if (createEventUnknown)
+        createEventUnknown.classList.add('d-none');
+    } else if (onOff === 'ON') {
+      if (createEventLink) {
+        createEventLink.classList.remove('d-none');
+        createEventLink.href =
+          '/events/create/?event_type=special_event' +
+          '&account=' + accountId +
+          '&return_to=dashboard';
+      }
+      if (createEventUnknown)
+        createEventUnknown.classList.add('d-none');
+    } else {
+      if (createEventLink)
+        createEventLink.classList.add('d-none');
+      if (createEventUnknown)
+        createEventUnknown.classList.remove('d-none');
     }
 
     resetToMainMenu();
@@ -497,24 +500,6 @@
   if (modalEl) {
     modalEl.addEventListener('hidden.bs.modal', function () {
       resetToMainMenu();
-    });
-  }
-
-  // ---- 3. Create Event toggle ----
-  if (aamCreateBtn) {
-    aamCreateBtn.addEventListener('click', function () {
-      if (!aamEventTypes) return;
-      var isHidden = aamEventTypes.style.display === 'none';
-      aamEventTypes.style.display = isHidden ? '' : 'none';
-      if (aamChevron) {
-        if (isHidden) {
-          aamChevron.classList.remove('bi-chevron-right');
-          aamChevron.classList.add('bi-chevron-down');
-        } else {
-          aamChevron.classList.remove('bi-chevron-down');
-          aamChevron.classList.add('bi-chevron-right');
-        }
-      }
     });
   }
 
