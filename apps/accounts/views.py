@@ -16,7 +16,7 @@ from apps.distribution.models import Distributor
 from apps.events.models import Event
 from utils.normalize import normalize_address
 
-from .models import Account, AccountContact, AccountNote, AccountNotePhoto, UserCoverageArea
+from .models import Account, AccountContact, AccountNote, UserCoverageArea
 from .forms import AccountForm
 from .constants import US_STATES, US_STATES_DICT
 from .utils import get_account_associations
@@ -1246,9 +1246,6 @@ def _can_delete_note(user, note, account):
 def _note_to_dict(note, request_user, account):
     return {
         'id': note.pk,
-        'note_type': note.note_type,
-        'note_type_display': note.get_note_type_display(),
-        'visit_date': note.visit_date.isoformat() if note.visit_date else None,
         'body': note.body,
         'is_task': note.is_task,
         'task_priority': note.task_priority,
@@ -1264,10 +1261,6 @@ def _note_to_dict(note, request_user, account):
         'created_at': note.created_at.isoformat(),
         'updated_at': note.updated_at.isoformat(),
         'can_delete': _can_delete_note(request_user, note, account),
-        'photos': [
-            {'id': p.pk, 'url': p.photo_url}
-            for p in note.photos.all()
-        ],
     }
 
 
@@ -1277,19 +1270,10 @@ def note_list(request, pk):
     if not request.user.has_permission('can_view_accounts'):
         return JsonResponse({'error': 'Forbidden'}, status=403)
     account = get_object_or_404(Account, pk=pk, company=request.user.company)
-    from django.db.models.functions import Coalesce, Cast
-    from django.db.models import DateField
     notes = (
         account.notes
         .select_related('task_assignee', 'created_by')
-        .prefetch_related('photos')
-        .annotate(
-            sort_date=Coalesce(
-                'visit_date',
-                Cast('created_at', DateField()),
-            )
-        )
-        .order_by('-sort_date', '-created_at')
+        .order_by('-created_at')
     )
     return JsonResponse({'notes': [_note_to_dict(n, request.user, account) for n in notes]})
 
@@ -1303,27 +1287,15 @@ def note_create(request, pk):
         return JsonResponse({'error': 'Method not allowed'}, status=405)
     account = get_object_or_404(Account, pk=pk, company=request.user.company)
 
-    note_type = request.POST.get('note_type', AccountNote.NoteType.VISIT)
     body = (request.POST.get('body') or '').strip()
-    visit_date_raw = (request.POST.get('visit_date') or '').strip()
     is_task = request.POST.get('is_task') in ('true', '1', 'on', 'True')
     task_priority = (request.POST.get('task_priority') or '').strip() or None
     task_assignee_id = (request.POST.get('task_assignee') or '').strip() or None
 
     if not body:
         return JsonResponse({'success': False, 'error': 'Note body is required.'})
-    if note_type == AccountNote.NoteType.VISIT and not visit_date_raw:
-        return JsonResponse({'success': False, 'error': 'Visit date is required for visit notes.'})
     if is_task and not task_priority:
         return JsonResponse({'success': False, 'error': 'Priority is required when marking as a task.'})
-
-    visit_date = None
-    if visit_date_raw:
-        from datetime import date as _date
-        try:
-            visit_date = _date.fromisoformat(visit_date_raw)
-        except ValueError:
-            return JsonResponse({'success': False, 'error': 'Invalid visit date format.'})
 
     task_assignee = None
     if task_assignee_id:
@@ -1334,19 +1306,12 @@ def note_create(request, pk):
 
     note = AccountNote.objects.create(
         account=account,
-        note_type=note_type,
-        visit_date=visit_date,
         body=body,
         is_task=is_task,
         task_priority=task_priority if is_task else None,
         task_assignee=task_assignee if is_task else None,
         created_by=request.user,
     )
-
-    from .note_storage import save_note_photo
-    for photo_file in request.FILES.getlist('photos'):
-        url = save_note_photo(photo_file, note.pk)
-        AccountNotePhoto.objects.create(note=note, photo_url=url)
 
     note.refresh_from_db()
     note.task_assignee  # re-select
@@ -1363,27 +1328,15 @@ def note_update(request, pk, npk):
     account = get_object_or_404(Account, pk=pk, company=request.user.company)
     note = get_object_or_404(AccountNote, pk=npk, account=account)
 
-    note_type = request.POST.get('note_type', note.note_type)
     body = (request.POST.get('body') or '').strip()
-    visit_date_raw = (request.POST.get('visit_date') or '').strip()
     is_task = request.POST.get('is_task') in ('true', '1', 'on', 'True')
     task_priority = (request.POST.get('task_priority') or '').strip() or None
     task_assignee_id = (request.POST.get('task_assignee') or '').strip() or None
 
     if not body:
         return JsonResponse({'success': False, 'error': 'Note body is required.'})
-    if note_type == AccountNote.NoteType.VISIT and not visit_date_raw:
-        return JsonResponse({'success': False, 'error': 'Visit date is required for visit notes.'})
     if is_task and not task_priority:
         return JsonResponse({'success': False, 'error': 'Priority is required when marking as a task.'})
-
-    visit_date = None
-    if visit_date_raw:
-        from datetime import date as _date
-        try:
-            visit_date = _date.fromisoformat(visit_date_raw)
-        except ValueError:
-            return JsonResponse({'success': False, 'error': 'Invalid visit date format.'})
 
     task_assignee = None
     if task_assignee_id:
@@ -1392,18 +1345,11 @@ def note_update(request, pk, npk):
         except User.DoesNotExist:
             pass
 
-    note.note_type = note_type
-    note.visit_date = visit_date
     note.body = body
     note.is_task = is_task
     note.task_priority = task_priority if is_task else None
     note.task_assignee = task_assignee if is_task else None
     note.save()
-
-    from .note_storage import save_note_photo
-    for photo_file in request.FILES.getlist('photos'):
-        url = save_note_photo(photo_file, note.pk)
-        AccountNotePhoto.objects.create(note=note, photo_url=url)
 
     note.refresh_from_db()
     return JsonResponse({'success': True, 'note': _note_to_dict(note, request.user, account)})
@@ -1420,27 +1366,7 @@ def note_delete(request, pk, npk):
     if not _can_delete_note(request.user, note, account):
         return JsonResponse({'error': 'Forbidden'}, status=403)
 
-    from .note_storage import delete_note_photo
-    for photo in note.photos.all():
-        delete_note_photo(photo.photo_url)
     note.delete()
-    return JsonResponse({'success': True})
-
-
-@login_required
-def note_photo_delete(request, pk, npk, ppk):
-    """POST /accounts/<pk>/notes/<npk>/photos/<ppk>/delete/"""
-    if not request.user.has_permission('can_manage_account_notes'):
-        return JsonResponse({'error': 'Forbidden'}, status=403)
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Method not allowed'}, status=405)
-    account = get_object_or_404(Account, pk=pk, company=request.user.company)
-    note = get_object_or_404(AccountNote, pk=npk, account=account)
-    photo = get_object_or_404(AccountNotePhoto, pk=ppk, note=note)
-
-    from .note_storage import delete_note_photo
-    delete_note_photo(photo.photo_url)
-    photo.delete()
     return JsonResponse({'success': True})
 
 

@@ -31,31 +31,6 @@
       <div class="modal-footer d-block p-3 border-top">
         <div id="notes-form">
 
-          {# Note type toggle #}
-          <div class="mb-2">
-            <div class="btn-group w-100" role="group" aria-label="Note type">
-              <input type="radio" class="btn-check" name="notes-type-radio"
-                     id="notes-type-visit" value="visit" autocomplete="off" checked>
-              <label class="btn btn-outline-primary btn-sm" for="notes-type-visit">
-                <i class="bi bi-journal-check me-1"></i>Visit Note
-              </label>
-
-              <input type="radio" class="btn-check" name="notes-type-radio"
-                     id="notes-type-general" value="general" autocomplete="off">
-              <label class="btn btn-outline-primary btn-sm" for="notes-type-general">
-                <i class="bi bi-journal-text me-1"></i>General Note
-              </label>
-            </div>
-          </div>
-
-          {# Visit date (visit notes only) #}
-          <div id="notes-visit-date-row" class="mb-2">
-            <label for="notes-visit-date" class="form-label form-label-sm small mb-1">
-              Visit Date
-            </label>
-            <input type="date" id="notes-visit-date" class="form-control form-control-sm">
-          </div>
-
           {# Body #}
           <div class="mb-2">
             <textarea id="notes-body" class="form-control form-control-sm"
@@ -89,16 +64,6 @@
                 </div>
               </div>
             </div>
-          </div>
-
-          {# Photos #}
-          <div class="mb-2">
-            <label class="form-label form-label-sm small mb-1">
-              <i class="bi bi-images me-1"></i>Photos
-            </label>
-            <input type="file" id="notes-photos" class="form-control form-control-sm"
-                   multiple accept="image/*">
-            <div id="notes-photo-count" class="form-text small"></div>
           </div>
 
           {# Error area #}
@@ -152,44 +117,16 @@
   var cancelEditBtn    = document.getElementById('notes-cancel-edit-btn');
   var saveBtn          = document.getElementById('notes-save-btn');
   var bodyEl           = document.getElementById('notes-body');
-  var visitDateRow     = document.getElementById('notes-visit-date-row');
-  var visitDateEl      = document.getElementById('notes-visit-date');
   var isTaskEl         = document.getElementById('notes-is-task');
   var taskFields       = document.getElementById('notes-task-fields');
   var priorityEl       = document.getElementById('notes-priority');
   var assigneeEl       = document.getElementById('notes-assignee');
-  var photosEl         = document.getElementById('notes-photos');
-  var photoCount       = document.getElementById('notes-photo-count');
-  var typeVisit        = document.getElementById('notes-type-visit');
-  var typeGeneral      = document.getElementById('notes-type-general');
-
-  // ---- Today's date as ISO string ----
-  function todayIso() {
-    return new Date().toISOString().slice(0, 10);
-  }
-
-  // ---- Note type toggle ----
-  function handleTypeToggle() {
-    var isVisit = typeVisit && typeVisit.checked;
-    if (visitDateRow) visitDateRow.style.display = isVisit ? '' : 'none';
-  }
-
-  if (typeVisit)   typeVisit.addEventListener('change', handleTypeToggle);
-  if (typeGeneral) typeGeneral.addEventListener('change', handleTypeToggle);
 
   // ---- Task checkbox ----
   if (isTaskEl) {
     isTaskEl.addEventListener('change', function () {
       if (taskFields) taskFields.style.display = isTaskEl.checked ? '' : 'none';
       if (isTaskEl.checked) loadAssignees();
-    });
-  }
-
-  // ---- Photo count ----
-  if (photosEl) {
-    photosEl.addEventListener('change', function () {
-      var n = photosEl.files ? photosEl.files.length : 0;
-      if (photoCount) photoCount.textContent = n > 0 ? n + ' file(s) selected' : '';
     });
   }
 
@@ -201,7 +138,8 @@
     })
     .then(function (r) { return r.json(); })
     .then(function (data) {
-      var current = assigneeEl.value;
+      var pending = assigneeEl.dataset.pendingValue || '';
+      var current = pending || String(currentUserId);
       assigneeEl.innerHTML = '<option value="">— Assignee —</option>';
       (data.assignees || []).forEach(function (a) {
         var opt = document.createElement('option');
@@ -209,13 +147,8 @@
         opt.textContent = a.name;
         assigneeEl.appendChild(opt);
       });
-      // default to current user if present
-      if (!current) {
-        var selfOpt = assigneeEl.querySelector('option[value="' + currentUserId + '"]');
-        if (selfOpt) selfOpt.selected = true;
-      } else {
-        assigneeEl.value = current;
-      }
+      if (current) assigneeEl.value = current;
+      delete assigneeEl.dataset.pendingValue;
     })
     .catch(function () {});
   }
@@ -223,17 +156,11 @@
   // ---- Reset form ----
   function resetForm() {
     notesEditingId = null;
-    if (typeVisit) typeVisit.checked = true;
-    if (typeGeneral) typeGeneral.checked = false;
-    handleTypeToggle();
-    if (visitDateEl) visitDateEl.value = todayIso();
     if (bodyEl) bodyEl.value = '';
     if (isTaskEl) isTaskEl.checked = false;
     if (taskFields) taskFields.style.display = 'none';
     if (priorityEl) priorityEl.value = '';
     if (assigneeEl) assigneeEl.innerHTML = '<option value="">— Assignee —</option>';
-    if (photosEl) photosEl.value = '';
-    if (photoCount) photoCount.textContent = '';
     if (formError) formError.innerHTML = '';
     if (cancelEditBtn) cancelEditBtn.style.display = 'none';
     if (saveBtn) saveBtn.textContent = 'Save Note';
@@ -245,15 +172,6 @@
     card.className = 'card mb-2';
     card.dataset.noteId = note.id;
 
-    var typeBadge = note.note_type === 'visit'
-      ? '<span class="badge bg-primary me-1">Visit</span>'
-      : '<span class="badge bg-secondary me-1">General</span>';
-
-    var visitDateStr = '';
-    if (note.note_type === 'visit' && note.visit_date) {
-      visitDateStr = '<span class="text-muted small ms-1">' + note.visit_date + '</span>';
-    }
-
     var taskBadge = '';
     if (note.is_task) {
       var pri = note.task_priority || '';
@@ -264,24 +182,6 @@
         taskBadge += '<span class="text-muted small"><i class="bi bi-person me-1"></i>' +
           escHtml(note.task_assignee_name) + '</span>';
       }
-    }
-
-    var photosHtml = '';
-    if (note.photos && note.photos.length > 0) {
-      photosHtml = '<div class="d-flex flex-wrap gap-1 mt-2">';
-      note.photos.forEach(function (p) {
-        var delBtn = canManageNotes
-          ? '<button type="button" class="btn btn-sm btn-danger note-photo-del-btn"' +
-            ' data-photo-id="' + p.id + '" data-note-id="' + note.id + '"' +
-            ' style="position:absolute;top:2px;right:2px;padding:1px 4px;font-size:.65rem">' +
-            '<i class="bi bi-x"></i></button>'
-          : '';
-        photosHtml += '<div style="position:relative;display:inline-block">' +
-          '<a href="' + escHtml(p.url) + '" target="_blank">' +
-          '<img src="' + escHtml(p.url) + '" style="width:80px;height:80px;object-fit:cover;border-radius:4px" alt="photo">' +
-          '</a>' + delBtn + '</div>';
-      });
-      photosHtml += '</div>';
     }
 
     var canDel  = note.can_delete;
@@ -299,12 +199,8 @@
 
     card.innerHTML =
       '<div class="card-body py-2 px-3">' +
-        '<div class="d-flex flex-wrap align-items-center gap-1 mb-1">' +
-          typeBadge + visitDateStr +
-        '</div>' +
         (note.is_task ? '<div class="mb-1">' + taskBadge + '</div>' : '') +
         '<p class="mb-1" style="white-space:pre-wrap">' + escHtml(note.body) + '</p>' +
-        photosHtml +
         '<div class="d-flex justify-content-between align-items-center mt-2">' +
           '<small class="text-muted">' +
             escHtml(note.created_by_name || '') +
@@ -347,19 +243,11 @@
     saveBtn.addEventListener('click', function () {
       if (formError) formError.innerHTML = '';
       var fd = new FormData();
-      var noteType = (typeVisit && typeVisit.checked) ? 'visit' : 'general';
-      fd.append('note_type', noteType);
-      if (noteType === 'visit' && visitDateEl) fd.append('visit_date', visitDateEl.value);
       if (bodyEl) fd.append('body', bodyEl.value);
       fd.append('is_task', isTaskEl && isTaskEl.checked ? 'true' : 'false');
       if (isTaskEl && isTaskEl.checked) {
         if (priorityEl) fd.append('task_priority', priorityEl.value);
         if (assigneeEl)  fd.append('task_assignee', assigneeEl.value);
-      }
-      if (photosEl && photosEl.files) {
-        for (var i = 0; i < photosEl.files.length; i++) {
-          fd.append('photos', photosEl.files[i]);
-        }
       }
 
       var url = notesEditingId
@@ -399,7 +287,7 @@
     });
   }
 
-  // ---- Delegated: edit, delete note, delete photo ----
+  // ---- Delegated: edit, delete note ----
   if (notesList) {
     notesList.addEventListener('click', function (e) {
       // Edit note
@@ -429,35 +317,11 @@
         .catch(function () {});
         return;
       }
-
-      // Delete photo
-      var photoDelBtn = e.target.closest('.note-photo-del-btn');
-      if (photoDelBtn) {
-        var pid = photoDelBtn.dataset.photoId;
-        var nid2 = photoDelBtn.dataset.noteId;
-        fetch('/accounts/' + notesAccountId + '/notes/' + nid2 + '/photos/' + pid + '/delete/', {
-          method: 'POST',
-          headers: {
-            'X-CSRFToken': getCsrf(),
-            'X-Requested-With': 'XMLHttpRequest',
-          },
-        })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          if (data.success) {
-            var thumb = photoDelBtn.closest('[style*="position:relative"]');
-            if (thumb) thumb.remove();
-          }
-        })
-        .catch(function () {});
-        return;
-      }
     });
   }
 
   // ---- Populate form for editing ----
   function populateFormForEdit(noteId) {
-    // Find the note data by re-fetching the list
     fetch('/accounts/' + notesAccountId + '/notes/', {
       headers: {'X-Requested-With': 'XMLHttpRequest'},
     })
@@ -468,14 +332,6 @@
 
       notesEditingId = note.id;
 
-      if (note.note_type === 'visit') {
-        if (typeVisit) typeVisit.checked = true;
-      } else {
-        if (typeGeneral) typeGeneral.checked = true;
-      }
-      handleTypeToggle();
-
-      if (visitDateEl) visitDateEl.value = note.visit_date || '';
       if (bodyEl) bodyEl.value = note.body || '';
       if (isTaskEl) isTaskEl.checked = !!note.is_task;
       if (taskFields) taskFields.style.display = note.is_task ? '' : 'none';
@@ -485,9 +341,8 @@
       if (saveBtn) saveBtn.textContent = 'Update Note';
 
       if (note.is_task) {
-        loadAssignees();
-        // set assignee after load (handled inside loadAssignees via current value)
         if (assigneeEl) assigneeEl.dataset.pendingValue = note.task_assignee_id || '';
+        loadAssignees();
       }
 
       // Scroll to form
@@ -496,30 +351,6 @@
     })
     .catch(function () {});
   }
-
-  // After assignees load, set pending value if editing
-  var origLoadAssignees = loadAssignees;
-  loadAssignees = function () {
-    if (!notesAccountId || !assigneeEl) return;
-    fetch('/accounts/' + notesAccountId + '/notes/assignees/', {
-      headers: {'X-Requested-With': 'XMLHttpRequest'},
-    })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      var pending = assigneeEl.dataset.pendingValue || '';
-      var current = pending || String(currentUserId);
-      assigneeEl.innerHTML = '<option value="">— Assignee —</option>';
-      (data.assignees || []).forEach(function (a) {
-        var opt = document.createElement('option');
-        opt.value = a.id;
-        opt.textContent = a.name;
-        assigneeEl.appendChild(opt);
-      });
-      if (current) assigneeEl.value = current;
-      delete assigneeEl.dataset.pendingValue;
-    })
-    .catch(function () {});
-  };
 
   // ---- Cancel edit ----
   if (cancelEditBtn) {
@@ -561,7 +392,6 @@
     notesAccountId = accountId;
     if (modalTitle) modalTitle.textContent = accountName;
     resetForm();
-    if (visitDateEl) visitDateEl.value = todayIso();
     loadNotes();
     if (modal) modal.show();
   };

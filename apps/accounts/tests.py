@@ -1101,7 +1101,7 @@ class ContactAPITest(TestCase):
 # ---------------------------------------------------------------------------
 
 import datetime as _dt
-from apps.accounts.models import AccountNote, AccountNotePhoto, UserCoverageArea
+from apps.accounts.models import AccountNote, UserCoverageArea
 from apps.distribution.models import Distributor as _Distributor
 
 
@@ -1136,10 +1136,7 @@ class NoteAPITest(TestCase):
     def test_note_create(self):
         """POST creates an AccountNote with correct fields."""
         url = reverse('note_create', args=[self.account.pk])
-        today = _dt.date.today().isoformat()
         resp = self._post(url, {
-            'note_type': 'visit',
-            'visit_date': today,
             'body': 'Great visit today.',
             'is_task': 'false',
         })
@@ -1147,29 +1144,12 @@ class NoteAPITest(TestCase):
         data = _json.loads(resp.content)
         self.assertTrue(data['success'], data.get('error'))
         self.assertEqual(data['note']['body'], 'Great visit today.')
-        self.assertEqual(data['note']['note_type'], 'visit')
         self.assertEqual(AccountNote.objects.filter(account=self.account).count(), 1)
-
-    def test_note_create_visit_requires_date(self):
-        """Visit note without date returns error."""
-        url = reverse('note_create', args=[self.account.pk])
-        resp = self._post(url, {
-            'note_type': 'visit',
-            'visit_date': '',
-            'body': 'Missing date.',
-            'is_task': 'false',
-        })
-        self.assertEqual(resp.status_code, 200)
-        data = _json.loads(resp.content)
-        self.assertFalse(data['success'])
-        self.assertIn('Visit date', data['error'])
-        self.assertEqual(AccountNote.objects.filter(account=self.account).count(), 0)
 
     def test_note_create_task_requires_priority(self):
         """Task note without priority returns error."""
         url = reverse('note_create', args=[self.account.pk])
         resp = self._post(url, {
-            'note_type': 'general',
             'body': 'Follow up needed.',
             'is_task': 'true',
             'task_priority': '',
@@ -1181,17 +1161,14 @@ class NoteAPITest(TestCase):
         self.assertEqual(AccountNote.objects.filter(account=self.account).count(), 0)
 
     def test_note_update(self):
-        """POST updates existing note body and type."""
+        """POST updates existing note body."""
         note = AccountNote.objects.create(
             account=self.account,
-            note_type='visit',
-            visit_date=_dt.date.today(),
             body='Original body.',
             created_by=self.admin,
         )
         url = reverse('note_update', args=[self.account.pk, note.pk])
         resp = self._post(url, {
-            'note_type': 'general',
             'body': 'Updated body.',
             'is_task': 'false',
         })
@@ -1200,13 +1177,11 @@ class NoteAPITest(TestCase):
         self.assertTrue(data['success'], data.get('error'))
         note.refresh_from_db()
         self.assertEqual(note.body, 'Updated body.')
-        self.assertEqual(note.note_type, 'general')
 
     def test_note_delete_by_creator(self):
         """Creator can delete their own note."""
         note = AccountNote.objects.create(
             account=self.account,
-            note_type='general',
             body='Creator note.',
             created_by=self.admin,
         )
@@ -1221,7 +1196,6 @@ class NoteAPITest(TestCase):
         """Sales manager with coverage can delete any note on covered account."""
         note = AccountNote.objects.create(
             account=self.account,
-            note_type='general',
             body='SM can delete this.',
             created_by=self.admin,  # created by admin, deleted by SM
         )
@@ -1237,7 +1211,6 @@ class NoteAPITest(TestCase):
         """Ambassador manager cannot delete a note they didn't create."""
         note = AccountNote.objects.create(
             account=self.account,
-            note_type='general',
             body='Amb mgr cannot delete.',
             created_by=self.admin,
         )
@@ -1251,11 +1224,11 @@ class NoteAPITest(TestCase):
         """GET returns only notes for the requested account, not others."""
         other_account = make_account(self.company, self.distributor, 'Other Store')
         AccountNote.objects.create(
-            account=self.account, note_type='general',
+            account=self.account,
             body='Mine.', created_by=self.admin,
         )
         AccountNote.objects.create(
-            account=other_account, note_type='general',
+            account=other_account,
             body='Other.', created_by=self.admin,
         )
         url = reverse('note_list', args=[self.account.pk])
@@ -1270,7 +1243,6 @@ class NoteAPITest(TestCase):
         self.client.login(username='note_amb_mgr', password='testpass123')
         url = reverse('note_create', args=[self.account.pk])
         resp = self._post(url, {
-            'note_type': 'general',
             'body': 'Should be blocked.',
             'is_task': 'false',
         })

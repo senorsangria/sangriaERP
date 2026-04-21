@@ -146,10 +146,10 @@
 
             {% if user|has_perm:'can_manage_account_notes' %}
             <button type="button"
-                    id="aam-visit-note-btn"
+                    id="aam-add-note-btn"
                     class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
               <i class="bi bi-journal-plus text-secondary"></i>
-              <span>Add Visit Note</span>
+              <span>Add Note</span>
             </button>
 
             <div>
@@ -304,31 +304,6 @@
           {# Fixed form at bottom #}
           <div class="border-top p-3">
 
-            {# Note type toggle #}
-            <div class="btn-group btn-group-sm w-100 mb-2">
-              <input type="radio" class="btn-check"
-                     name="aam_note_type"
-                     id="aam-note-type-visit"
-                     value="visit" checked
-                     autocomplete="off">
-              <label class="btn btn-outline-secondary"
-                     for="aam-note-type-visit">Visit Note</label>
-              <input type="radio" class="btn-check"
-                     name="aam_note_type"
-                     id="aam-note-type-general"
-                     value="general"
-                     autocomplete="off">
-              <label class="btn btn-outline-secondary"
-                     for="aam-note-type-general">General Note</label>
-            </div>
-
-            {# Visit date #}
-            <div id="aam-note-date-row" class="mb-2">
-              <input type="date"
-                     id="aam-note-date"
-                     class="form-control form-control-sm">
-            </div>
-
             {# Body #}
             <textarea id="aam-note-body"
                       class="form-control form-control-sm mb-2"
@@ -365,15 +340,6 @@
                   </select>
                 </div>
               </div>
-            </div>
-
-            {# Photos #}
-            <div class="mb-2">
-              <input type="file"
-                     id="aam-note-photos"
-                     class="form-control form-control-sm"
-                     multiple
-                     accept="image/*">
             </div>
 
             {# Error #}
@@ -453,7 +419,7 @@
   var aamMainMenu    = document.getElementById('aam-main-menu');
   var aamRouteSection= document.getElementById('aam-route-section');
 
-  var aamVisitNoteBtn= document.getElementById('aam-visit-note-btn');
+  var aamAddNoteBtn  = document.getElementById('aam-add-note-btn');
   var aamCreateBtn   = document.getElementById('aam-create-event-btn');
   var aamChevron     = document.getElementById('aam-create-chevron');
   var aamEventTypes  = document.getElementById('aam-event-types');
@@ -695,16 +661,14 @@
     });
   }
 
-  // ---- 8. Add Visit Note: content swap (same pattern as Add to Route) ----
-  if (aamVisitNoteBtn) {
-    aamVisitNoteBtn.addEventListener('click', function () {
+  // ---- 8. Add Note: content swap (same pattern as Add to Route) ----
+  if (aamAddNoteBtn) {
+    aamAddNoteBtn.addEventListener('click', function () {
       if (aamMainMenu)
         aamMainMenu.style.display = 'none';
       var notesSection = document.getElementById('aam-notes-section');
       if (notesSection) notesSection.style.display = '';
       loadAccountNotes(currentAccountId);
-      var dateEl = document.getElementById('aam-note-date');
-      if (dateEl) dateEl.value = todayStr();
     });
   }
 
@@ -719,10 +683,6 @@
   }
 
   // ---- NOTES FUNCTIONS ----
-
-  function todayStr() {
-    return new Date().toISOString().split('T')[0];
-  }
 
   function escHtmlNote(str) {
     if (!str) return '';
@@ -743,37 +703,22 @@
 
   function resetNoteForm() {
     editingNoteId = null;
-    var typeVisit   = document.getElementById('aam-note-type-visit');
-    var typeGeneral = document.getElementById('aam-note-type-general');
-    if (typeVisit)   typeVisit.checked   = true;
-    if (typeGeneral) typeGeneral.checked = false;
-    toggleNoteVisitDate();
-    var dateEl     = document.getElementById('aam-note-date');
     var bodyEl     = document.getElementById('aam-note-body');
     var isTaskEl   = document.getElementById('aam-note-is-task');
     var taskFields = document.getElementById('aam-note-task-fields');
     var priorityEl = document.getElementById('aam-note-priority');
     var assigneeEl = document.getElementById('aam-note-assignee');
-    var photosEl   = document.getElementById('aam-note-photos');
     var errorEl    = document.getElementById('aam-note-error');
     var cancelBtn  = document.getElementById('aam-note-cancel-edit-btn');
     var saveBtn    = document.getElementById('aam-note-save-btn');
-    if (dateEl)     dateEl.value = todayStr();
     if (bodyEl)     bodyEl.value = '';
     if (isTaskEl)   isTaskEl.checked = false;
     if (taskFields) taskFields.classList.add('d-none');
     if (priorityEl) priorityEl.value = '';
     if (assigneeEl) assigneeEl.innerHTML = '<option value="">Assignee...</option>';
-    if (photosEl)   photosEl.value = '';
     if (errorEl)    { errorEl.textContent = ''; errorEl.classList.add('d-none'); }
     if (cancelBtn)  cancelBtn.classList.add('d-none');
     if (saveBtn)    saveBtn.textContent = 'Save Note';
-  }
-
-  function toggleNoteVisitDate() {
-    var typeVisit = document.getElementById('aam-note-type-visit');
-    var dateRow   = document.getElementById('aam-note-date-row');
-    if (dateRow) dateRow.style.display = (typeVisit && typeVisit.checked) ? '' : 'none';
   }
 
   function loadNoteAssignees() {
@@ -836,16 +781,6 @@
     div.className = 'aam-note-card border-bottom pb-2 mb-2';
     div.dataset.noteId = note.id;
 
-    var typeBadge = note.note_type === 'visit'
-      ? '<span class="badge bg-primary me-1">Visit</span>'
-      : '<span class="badge bg-secondary me-1">General</span>';
-
-    var visitDateStr = '';
-    if (note.note_type === 'visit' && note.visit_date) {
-      visitDateStr = '<span class="text-muted small ms-1">' +
-        'Visit: ' + escHtmlNote(note.visit_date) + '</span>';
-    }
-
     var taskHtml = '';
     if (note.is_task) {
       var priColor = note.task_priority === 'high' ? 'danger'
@@ -857,18 +792,6 @@
         taskHtml += ' <span class="text-muted small">' +
           escHtmlNote(note.task_assignee_name) + '</span>';
       }
-    }
-
-    var photosHtml = '';
-    if (note.photos && note.photos.length > 0) {
-      photosHtml = '<div class="d-flex flex-wrap gap-1 mt-1">';
-      note.photos.forEach(function (p) {
-        photosHtml += '<a href="' + escHtmlNote(p.url) + '" target="_blank">' +
-          '<img src="' + escHtmlNote(p.url) +
-          '" style="width:56px;height:56px;object-fit:cover;border-radius:4px" alt="photo">' +
-          '</a>';
-      });
-      photosHtml += '</div>';
     }
 
     var actionBtns = '';
@@ -887,12 +810,11 @@
 
     div.innerHTML =
       '<div class="d-flex justify-content-between align-items-start">' +
-        '<div>' + typeBadge + visitDateStr + taskHtml + '</div>' +
+        '<div>' + taskHtml + '</div>' +
         '<div>' + actionBtns + '</div>' +
       '</div>' +
       '<p class="small mb-1 mt-1" style="white-space:pre-wrap">' +
         escHtmlNote(note.body) + '</p>' +
-      photosHtml +
       '<div class="text-muted" style="font-size:0.7rem">' +
         escHtmlNote(note.created_by_name || '') +
         ' &middot; ' + formatNoteDate(note.created_at) +
@@ -900,12 +822,6 @@
 
     return div;
   }
-
-  // ---- Note type radio toggle ----
-  var aamNoteTypeVisit   = document.getElementById('aam-note-type-visit');
-  var aamNoteTypeGeneral = document.getElementById('aam-note-type-general');
-  if (aamNoteTypeVisit)   aamNoteTypeVisit.addEventListener('change', toggleNoteVisitDate);
-  if (aamNoteTypeGeneral) aamNoteTypeGeneral.addEventListener('change', toggleNoteVisitDate);
 
   // ---- Task checkbox ----
   var aamNoteIsTask = document.getElementById('aam-note-is-task');
@@ -927,30 +843,19 @@
   if (aamNoteSaveBtn) {
     aamNoteSaveBtn.addEventListener('click', function () {
       var errorEl    = document.getElementById('aam-note-error');
-      var typeVisit  = document.getElementById('aam-note-type-visit');
-      var dateEl     = document.getElementById('aam-note-date');
       var bodyEl     = document.getElementById('aam-note-body');
       var isTaskEl   = document.getElementById('aam-note-is-task');
       var priorityEl = document.getElementById('aam-note-priority');
       var assigneeEl = document.getElementById('aam-note-assignee');
-      var photosEl   = document.getElementById('aam-note-photos');
 
       if (errorEl) { errorEl.textContent = ''; errorEl.classList.add('d-none'); }
 
-      var noteType = (typeVisit && typeVisit.checked) ? 'visit' : 'general';
       var fd = new FormData();
-      fd.append('note_type', noteType);
-      if (noteType === 'visit' && dateEl) fd.append('visit_date', dateEl.value);
       if (bodyEl) fd.append('body', bodyEl.value);
       fd.append('is_task', isTaskEl && isTaskEl.checked ? 'true' : 'false');
       if (isTaskEl && isTaskEl.checked) {
         if (priorityEl) fd.append('task_priority', priorityEl.value);
         if (assigneeEl) fd.append('task_assignee', assigneeEl.value);
-      }
-      if (photosEl && photosEl.files) {
-        for (var i = 0; i < photosEl.files.length; i++) {
-          fd.append('photos', photosEl.files[i]);
-        }
       }
 
       var url = editingNoteId
@@ -1039,16 +944,6 @@
 
       editingNoteId = note.id;
 
-      var typeVisit   = document.getElementById('aam-note-type-visit');
-      var typeGeneral = document.getElementById('aam-note-type-general');
-      if (note.note_type === 'visit') {
-        if (typeVisit)   typeVisit.checked   = true;
-      } else {
-        if (typeGeneral) typeGeneral.checked = true;
-      }
-      toggleNoteVisitDate();
-
-      var dateEl     = document.getElementById('aam-note-date');
       var bodyEl     = document.getElementById('aam-note-body');
       var isTaskEl   = document.getElementById('aam-note-is-task');
       var taskFields = document.getElementById('aam-note-task-fields');
@@ -1058,7 +953,6 @@
       var cancelBtn  = document.getElementById('aam-note-cancel-edit-btn');
       var saveBtn    = document.getElementById('aam-note-save-btn');
 
-      if (dateEl)     dateEl.value        = note.visit_date || '';
       if (bodyEl)     bodyEl.value        = note.body || '';
       if (isTaskEl)   isTaskEl.checked    = !!note.is_task;
       if (taskFields) {
