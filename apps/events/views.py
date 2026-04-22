@@ -439,10 +439,20 @@ def event_list(request):
 
     active_tab = request.GET.get('tab', 'active')
 
+    filter_account_id = request.GET.get('account', '')
+    return_url = request.GET.get('return_url', '')
+
     # ---- Base queryset (before filters) ----
     base_qs = _get_visible_events(request.user)
     if not _can_view_drafts(request.user):
         base_qs = base_qs.exclude(status=Event.Status.DRAFT)
+
+    if filter_account_id:
+        try:
+            filter_account_id = int(filter_account_id)
+            base_qs = base_qs.filter(account_id=filter_account_id)
+        except (ValueError, TypeError):
+            filter_account_id = ''
 
     # Split base into active and paid before applying filters
     base_active_qs = base_qs.exclude(status=Event.Status.PAID)
@@ -571,6 +581,8 @@ def event_list(request):
             (5,'May'),(6,'Jun'),(7,'Jul'),(8,'Aug'),
             (9,'Sep'),(10,'Oct'),(11,'Nov'),(12,'Dec'),
         ],
+        'filter_account_id': filter_account_id,
+        'return_url':        return_url,
     })
 
 
@@ -918,6 +930,7 @@ def event_create(request):
             initial_account_id = ''
 
     return_to = request.GET.get('return_to', '')
+    return_url = request.GET.get('return_url', '')
 
     locked_event_type_display = dict(Event.EventType.choices).get(locked_event_type, locked_event_type.title())
     items_by_brand = _get_items_by_brand(company)
@@ -936,6 +949,7 @@ def event_create(request):
         'initial_account_id':        initial_account_id,
         'selected_account_address':  selected_account_address,
         'return_to':                 return_to,
+        'return_url':                return_url,
     })
 
 

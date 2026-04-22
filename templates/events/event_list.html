@@ -75,6 +75,15 @@
 {% endblock %}
 
 {% block content %}
+{% if return_url %}
+<div class="mb-3">
+  <a href="{{ return_url }}"
+     class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>
+    Back to Dashboard
+  </a>
+</div>
+{% endif %}
 <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
   <h4 class="mb-0 fw-semibold"><i class="bi bi-calendar-event me-2"></i>Events</h4>
   <div class="d-flex align-items-center gap-2">

@@ -23,6 +23,7 @@ from apps.accounts.constants import US_STATES, US_STATES_DICT
 from apps.accounts.views import _build_enhanced_coverage_areas
 from apps.accounts.models import Account
 from apps.accounts.utils import get_accounts_for_user
+from apps.events.models import Event
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +149,8 @@ def dashboard(request):
     query = ''
     has_more = False
 
+    open_account_id = request.GET.get('open_account', '')
+
     if can_search:
         query = request.GET.get('q', '').strip()
         if query:
@@ -164,7 +167,15 @@ def dashboard(request):
             total = base_qs.count()
             has_more = total > 30
             accounts = list(
-                base_qs.annotate(note_count=Count('notes'))[:30]
+                base_qs.annotate(
+                    note_count=Count('notes', distinct=True),
+                    route_count=Count('route_accounts', distinct=True),
+                    active_event_count=Count(
+                        'events',
+                        filter=~Q(events__status=Event.Status.PAID),
+                        distinct=True,
+                    ),
+                )[:30]
             )
 
     return render(request, 'core/dashboard.html', {
@@ -172,6 +183,7 @@ def dashboard(request):
         'query': query,
         'accounts': accounts,
         'has_more': has_more,
+        'open_account_id': open_account_id,
     })
 
 
