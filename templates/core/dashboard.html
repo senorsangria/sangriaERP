@@ -576,7 +576,7 @@ function toTitleCase(str) {
     // Set view events link
     var viewEventsLink = document.getElementById('aam-view-events');
     if (viewEventsLink) {
-      viewEventsLink.href = '/events/?account_name=' + encodeURIComponent(accountName);
+      viewEventsLink.href = '/events/?account=' + accountId + '&return_url=' + encodeURIComponent(returnUrl);
     }
 
     if (onOff === 'OFF') {
