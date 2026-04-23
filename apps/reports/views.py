@@ -17,7 +17,7 @@ from apps.catalog.models import Item
 from apps.routes.models import Route
 from apps.events.models import Event
 from apps.sales.models import SalesRecord
-from apps.reports.utils import _month_add, _last_day, get_portfolio_status
+from apps.reports.utils import _month_add, _last_day, get_portfolio_status, get_order_history
 
 
 # ---------------------------------------------------------------------------
@@ -1024,7 +1024,11 @@ def account_portfolio_json(request, account_id):
         if not get_accounts_for_user(user).filter(pk=account_id).exists():
             return JsonResponse({'error': 'Forbidden'}, status=403)
 
-    data = get_portfolio_status(account)
-    if data is None:
-        return JsonResponse({'years': [], 'rows': [], 'totals': {}, 'lfm_year': None, 'lfm_month': None})
-    return JsonResponse(data)
+    portfolio = get_portfolio_status(account)
+    orders = get_order_history(account)
+    if portfolio is None:
+        return JsonResponse({
+            'years': [], 'rows': [], 'totals': {}, 'lfm_year': None, 'lfm_month': None,
+            'orders': orders['orders'],
+        })
+    return JsonResponse({**portfolio, 'orders': orders['orders']})

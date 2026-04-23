@@ -3144,4 +3144,16 @@ with no mocking required.
 - L12M = trailing 12 months ending last active sales month for the
   account's distributor
 
+### View Sales Order History (AAM)
+- `get_order_history(account)` utility in `apps/reports/utils.py` returns
+  all SalesRecords for the account grouped by `sale_date`
+- Orders grouped by `sale_date` — all items on the same date are treated
+  as one order; grouping done in Python for item-level detail
+- JSON endpoint `/reports/account/<id>/portfolio/` includes `orders` key
+  alongside portfolio data
+- Three-level expandable tree: year → order → line items
+- Year rows clickable to expand/collapse all orders in that year
+- Order rows clickable to expand/collapse line items
+- Appears below portfolio grid in the View Sales section of the AAM
+
 *Last updated: April 2026*

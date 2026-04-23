@@ -2,6 +2,7 @@
 Shared utilities for the reports app.
 """
 from calendar import monthrange
+from collections import defaultdict
 from datetime import date
 
 from django.db.models import Max, Sum
@@ -209,3 +210,92 @@ def get_portfolio_status(account, today=None):
         'lfm_year': lfm_year,
         'lfm_month': lfm_month,
     }
+
+
+def get_order_history(account):
+    """
+    Return order history for a single account, grouped by sale_date.
+
+    All SalesRecords on the same date are treated as one order.
+    Returns records sorted by date descending.
+
+    Return shape:
+    {
+        'orders': [
+            {
+                'date': '2025-03-15',
+                'date_display': 'Mar 15, 2025',
+                'year': 2025,
+                'item_count': 2,
+                'total_qty': 13,
+                'total_amount': 142.50,
+                'items': [
+                    {
+                        'item_code': 'SS-CL-RED',
+                        'item_name': 'Classic Red',
+                        'qty': 5,
+                        'cost': 12.50,
+                        'amount': 62.50,
+                    },
+                    ...
+                ]
+            },
+            ...
+        ]
+    }
+    """
+    records = (
+        SalesRecord.objects
+        .filter(account=account)
+        .select_related('item')
+        .order_by('-sale_date', 'item__item_code')
+    )
+
+    # Group by date in Python since we need item-level detail
+    by_date = defaultdict(list)
+    for rec in records:
+        by_date[rec.sale_date].append(rec)
+
+    orders = []
+    for sale_date in sorted(by_date.keys(), reverse=True):
+        date_records = by_date[sale_date]
+
+        # Group by item within this date
+        by_item = defaultdict(list)
+        for rec in date_records:
+            by_item[rec.item_id].append(rec)
+
+        items = []
+        for item_id, item_recs in by_item.items():
+            item = item_recs[0].item
+            qty = sum(r.quantity for r in item_recs)
+            amount = float(sum(
+                r.quantity * r.distributor_wholesale_price
+                for r in item_recs
+                if r.distributor_wholesale_price is not None
+            ))
+            cost = (amount / qty) if qty != 0 else 0.0
+            items.append({
+                'item_code': item.item_code,
+                'item_name': item.name,
+                'qty': qty,
+                'cost': round(cost, 2),
+                'amount': round(amount, 2),
+            })
+
+        items.sort(key=lambda x: x['item_code'])
+
+        total_qty = sum(i['qty'] for i in items)
+        total_amount = round(sum(i['amount'] for i in items), 2)
+
+        orders.append({
+            'date': sale_date.strftime('%Y-%m-%d'),
+            'date_display': sale_date.strftime('%b %-d, %Y'),
+            'year': sale_date.year,
+            'item_count': len(items),
+            'total_qty': total_qty,
+            'total_amount': total_amount,
+            'items': items,
+        })
+
+    return {'orders': orders}

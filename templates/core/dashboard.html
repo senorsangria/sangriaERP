@@ -376,6 +376,66 @@
             L12M = trailing 12 months ending last active sales month &middot; values in cases
           </div>
 
+          <div class="border-top px-0 pt-0">
+            <div style="padding:8px 16px 6px;
+                        background:var(--color-background-secondary,#f5f5f5);
+                        border-bottom:0.5px solid var(--color-border-tertiary,#ddd);">
+              <span style="font-size:12px; font-weight:500;">Order history</span>
+            </div>
+            <div style="overflow-x:auto; max-height:350px; overflow-y:auto;">
+              <table id="aam-orders-table"
+                     style="width:100%; border-collapse:collapse; font-size:12px;">
+                <thead>
+                  <tr style="background:var(--color-background-secondary,#f5f5f5);">
+                    <th style="padding:6px 12px; text-align:left; font-weight:500; font-size:11px;
+                               color:var(--color-text-secondary,#666);
+                               border-bottom:0.5px solid var(--color-border-tertiary,#ddd);
+                               position:sticky; top:0;
+                               background:var(--color-background-secondary,#f5f5f5);">
+                      Date
+                    </th>
+                    <th style="padding:6px 10px; text-align:left; font-weight:500; font-size:11px;
+                               color:var(--color-text-secondary,#666);
+                               border-bottom:0.5px solid var(--color-border-tertiary,#ddd);
+                               position:sticky; top:0;
+                               background:var(--color-background-secondary,#f5f5f5);">
+                      Item
+                    </th>
+                    <th style="padding:6px 10px; text-align:right; font-weight:500; font-size:11px;
+                               color:var(--color-text-secondary,#666);
+                               border-bottom:0.5px solid var(--color-border-tertiary,#ddd);
+                               position:sticky; top:0;
+                               background:var(--color-background-secondary,#f5f5f5);">
+                      Qty
+                    </th>
+                    <th style="padding:6px 10px; text-align:right; font-weight:500; font-size:11px;
+                               color:var(--color-text-secondary,#666);
+                               border-bottom:0.5px solid var(--color-border-tertiary,#ddd);
+                               position:sticky; top:0;
+                               background:var(--color-background-secondary,#f5f5f5);">
+                      Cost
+                    </th>
+                    <th style="padding:6px 12px; text-align:right; font-weight:500; font-size:11px;
+                               color:var(--color-text-secondary,#666);
+                               border-bottom:0.5px solid var(--color-border-tertiary,#ddd);
+                               position:sticky; top:0;
+                               background:var(--color-background-secondary,#f5f5f5);">
+                      Amount
+                    </th>
+                  </tr>
+                </thead>
+                <tbody id="aam-orders-tbody"></tbody>
+              </table>
+            </div>
+            <div style="padding:6px 16px;
+                        border-top:0.5px solid var(--color-border-tertiary,#ddd);
+                        background:var(--color-background-secondary,#f5f5f5);">
+              <span style="font-size:10px; color:var(--color-text-tertiary,#999);">
+                Orders grouped by date &middot; click an order to see line items &middot; click a year to expand or collapse all orders
+              </span>
+            </div>
+          </div>
+
         </div>{# /aam-sales-section #}
 
       </div>{# /modal-body #}
@@ -449,6 +509,8 @@ function toTitleCase(str) {
   var aamViewDetails = document.getElementById('aam-view-details');
 
   var aamSalesOldYearsVisible = false;
+  var aamOrderYearStates = {};
+  var aamOrderStates = {};
 
   var aamRouteNew    = document.getElementById('aamRouteNew');
   var aamRouteExisting = document.getElementById('aamRouteExisting');
@@ -551,6 +613,8 @@ function toTitleCase(str) {
     if (aamSalesSection) aamSalesSection.style.display = 'none';
     if (aamHeaderBackBtn) aamHeaderBackBtn.classList.add('d-none');
     aamSalesOldYearsVisible = false;
+    aamOrderYearStates = {};
+    aamOrderStates = {};
     resetNoteForm();
     if (aamRouteMsg) aamRouteMsg.innerHTML = '';
     if (aamNewRouteName) aamNewRouteName.value = '';
@@ -1234,6 +1298,9 @@ function toTitleCase(str) {
     tbody.innerHTML = rowsHtml;
 
     updateOldYearVisibility();
+    if (data.orders) {
+      renderOrderHistory(data.orders);
+    }
   }
 
   function buildSalesRow(label, yearTotals, diffYr, last12, diffL12, years, isTotals, borderBottom) {
@@ -1300,6 +1367,135 @@ function toTitleCase(str) {
     aamSalesToggleBtn.addEventListener('click', function () {
       aamSalesOldYearsVisible = !aamSalesOldYearsVisible;
       updateOldYearVisibility();
+    });
+  }
+
+  function renderOrderHistory(orders) {
+    var tbody = document.getElementById('aam-orders-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    aamOrderYearStates = {};
+    aamOrderStates = {};
+
+    if (!orders || orders.length === 0) {
+      var emptyRow = document.createElement('tr');
+      emptyRow.innerHTML = '<td colspan="5" style="padding:12px;text-align:center;' +
+        'font-size:12px;color:var(--color-text-tertiary,#999);">No order history found.</td>';
+      tbody.appendChild(emptyRow);
+      return;
+    }
+
+    // Group by year
+    var yearGroups = {};
+    orders.forEach(function(order, oi) {
+      if (!yearGroups[order.year]) yearGroups[order.year] = [];
+      yearGroups[order.year].push({ order: order, oi: oi });
+    });
+
+    var years = Object.keys(yearGroups).map(Number).sort(function(a,b){return b-a;});
+
+    // Default all years expanded
+    years.forEach(function(yr) {
+      if (aamOrderYearStates[yr] === undefined) aamOrderYearStates[yr] = true;
+    });
+
+    buildOrderTable(years, yearGroups, tbody);
+  }
+
+  function buildOrderTable(years, yearGroups, tbody) {
+    tbody.innerHTML = '';
+    var lastYear = null;
+
+    years.forEach(function(year) {
+      // Year separator (not before first year)
+      if (lastYear !== null) {
+        var sepRow = document.createElement('tr');
+        sepRow.innerHTML = '<td colspan="5" style="padding:0;border-top:2px solid ' +
+          'var(--color-border-secondary,#ccc);"></td>';
+        tbody.appendChild(sepRow);
+      }
+      lastYear = year;
+
+      var group = yearGroups[year];
+      var yearQty = group.reduce(function(s,g){ return s + g.order.total_qty; }, 0);
+      var yearAmt = group.reduce(function(s,g){ return s + g.order.total_amount; }, 0);
+      var expanded = aamOrderYearStates[year];
+
+      // Year header row
+      var yearRow = document.createElement('tr');
+      yearRow.style.cssText =
+        'background:var(--color-background-secondary,#f5f5f5);cursor:pointer;' +
+        'border-bottom:0.5px solid var(--color-border-tertiary,#ddd);user-select:none;';
+      yearRow.innerHTML =
+        '<td style="padding:6px 12px;font-size:12px;font-weight:500;color:var(--color-text-primary);">' +
+        '<span style="margin-right:5px;font-size:9px;">' + (expanded ? '▼' : '▶') + '</span>' +
+        year +
+        '<span style="font-size:10px;font-weight:400;color:var(--color-text-tertiary,#999);margin-left:6px;">' +
+        'click to ' + (expanded ? 'collapse' : 'expand all') + '</span></td>' +
+        '<td style="padding:6px 10px;font-size:11px;color:var(--color-text-tertiary,#999);">' +
+        group.length + ' order' + (group.length > 1 ? 's' : '') + '</td>' +
+        '<td style="padding:6px 10px;text-align:right;font-size:12px;font-weight:500;' +
+        'color:var(--color-text-primary);">' + yearQty + '</td>' +
+        '<td style="padding:6px 10px;"></td>' +
+        '<td style="padding:6px 12px;text-align:right;font-size:12px;font-weight:500;' +
+        'color:var(--color-text-primary);">$' + yearAmt.toFixed(2) + '</td>';
+
+      yearRow.addEventListener('click', function() {
+        aamOrderYearStates[year] = !expanded;
+        buildOrderTable(years, yearGroups, tbody);
+      });
+      tbody.appendChild(yearRow);
+
+      if (!expanded) return;
+
+      group.forEach(function(g) {
+        var order = g.order;
+        var oi = g.oi;
+        var orderExpanded = aamOrderStates[oi] === true;
+
+        var orderRow = document.createElement('tr');
+        orderRow.style.cssText =
+          'cursor:pointer;border-bottom:0.5px solid var(--color-border-tertiary,#ddd);';
+        orderRow.innerHTML =
+          '<td style="padding:7px 12px 7px 26px;font-size:12px;font-weight:500;' +
+          'color:var(--color-text-primary);">' +
+          '<span style="margin-right:4px;font-size:9px;color:var(--color-text-tertiary,#999);">' +
+          (orderExpanded ? '▼' : '▶') + '</span>' +
+          order.date_display + '</td>' +
+          '<td style="padding:7px 10px;font-size:11px;color:var(--color-text-tertiary,#999);">' +
+          order.item_count + ' item' + (order.item_count > 1 ? 's' : '') + '</td>' +
+          '<td style="padding:7px 10px;text-align:right;font-weight:500;font-size:12px;' +
+          'color:var(--color-text-primary);">' + order.total_qty + '</td>' +
+          '<td style="padding:7px 10px;"></td>' +
+          '<td style="padding:7px 12px;text-align:right;font-weight:500;font-size:12px;' +
+          'color:var(--color-text-primary);">$' + order.total_amount.toFixed(2) + '</td>';
+
+        orderRow.addEventListener('click', function() {
+          aamOrderStates[oi] = !orderExpanded;
+          buildOrderTable(years, yearGroups, tbody);
+        });
+        tbody.appendChild(orderRow);
+
+        if (!orderExpanded) return;
+
+        order.items.forEach(function(item) {
+          var detailRow = document.createElement('tr');
+          detailRow.style.cssText =
+            'border-bottom:0.5px solid var(--color-border-tertiary,#ddd);';
+          detailRow.innerHTML =
+            '<td style="padding:5px 12px 5px 40px;font-size:11px;' +
+            'color:var(--color-text-tertiary,#999);">↳</td>' +
+            '<td style="padding:5px 10px;font-size:11px;color:var(--color-text-secondary,#666);">' +
+            escHtml(item.item_code) + '</td>' +
+            '<td style="padding:5px 10px;text-align:right;font-size:11px;' +
+            'color:var(--color-text-secondary,#666);">' + item.qty + '</td>' +
+            '<td style="padding:5px 10px;text-align:right;font-size:11px;' +
+            'color:var(--color-text-secondary,#666);">$' + item.cost.toFixed(2) + '</td>' +
+            '<td style="padding:5px 12px;text-align:right;font-size:11px;' +
+            'color:var(--color-text-secondary,#666);">$' + item.amount.toFixed(2) + '</td>';
+          tbody.appendChild(detailRow);
+        });
+      });
     });
   }
 
