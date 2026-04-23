@@ -202,12 +202,11 @@
             {# --- VIEW ITEMS --- #}
 
             {% if user|has_perm:'can_view_report_account_sales' %}
-            <a id="aam-view-sales"
-               href="#"
-               class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
-              <i class="bi bi-bar-chart text-secondary"></i>
-              <span>View Sales</span>
-            </a>
+            <button class="aam-menu-item w-100 text-start btn btn-light rounded-0 py-3 px-4 border-bottom"
+                    id="aam-view-sales-btn">
+              <i class="bi bi-bar-chart me-2"></i>
+              View Sales
+            </button>
             {% endif %}
 
             {% if user|has_perm:'can_view_events' %}
@@ -338,6 +337,47 @@
           </div>{# /form #}
         </div>{# /aam-notes-section #}
 
+        {# SECTION 4 — View Sales portfolio grid #}
+        <div id="aam-sales-section" style="display:none" class="p-0">
+
+          {# Header bar with toggle button #}
+          <div class="px-3 pt-2 pb-2 border-bottom d-flex align-items-center justify-content-between">
+            <span class="text-muted small" id="aam-sales-subtitle"></span>
+            <button type="button"
+                    class="btn btn-outline-secondary btn-sm"
+                    id="aam-sales-toggle-btn"
+                    style="font-size:11px;">
+              Show older years
+            </button>
+          </div>
+
+          {# Scrollable grid #}
+          <div style="overflow-x:auto; max-height:380px; overflow-y:auto;">
+            <table id="aam-sales-table"
+                   style="width:100%; border-collapse:collapse; font-size:12px; white-space:nowrap;">
+              <thead id="aam-sales-thead"></thead>
+              <tbody id="aam-sales-tbody"></tbody>
+            </table>
+          </div>
+
+          <div id="aam-sales-empty"
+               class="text-muted small text-center py-3 d-none px-3">
+            No sales data found for this account.
+          </div>
+
+          <div id="aam-sales-loading"
+               class="text-muted small text-center py-3 px-3">
+            <div class="spinner-border spinner-border-sm me-1"></div>
+            Loading sales data...
+          </div>
+
+          <div class="px-3 py-2 border-top"
+               style="font-size:10px; color:var(--color-text-tertiary, #888);">
+            L12M = trailing 12 months ending last active sales month &middot; values in cases
+          </div>
+
+        </div>{# /aam-sales-section #}
+
       </div>{# /modal-body #}
     </div>{# /modal-content #}
   </div>{# /modal-dialog #}
@@ -406,8 +446,9 @@ function toTitleCase(str) {
   var createEventUnknown = document.getElementById('aam-create-event-unknown');
 
   var aamAddRouteBtn = document.getElementById('aam-add-route-btn');
-  var aamViewSales   = document.getElementById('aam-view-sales');
   var aamViewDetails = document.getElementById('aam-view-details');
+
+  var aamSalesOldYearsVisible = false;
 
   var aamRouteNew    = document.getElementById('aamRouteNew');
   var aamRouteExisting = document.getElementById('aamRouteExisting');
@@ -506,7 +547,10 @@ function toTitleCase(str) {
     if (aamRouteSection) aamRouteSection.style.display = 'none';
     var aamNotesSection = document.getElementById('aam-notes-section');
     if (aamNotesSection) aamNotesSection.style.display = 'none';
+    var aamSalesSection = document.getElementById('aam-sales-section');
+    if (aamSalesSection) aamSalesSection.style.display = 'none';
     if (aamHeaderBackBtn) aamHeaderBackBtn.classList.add('d-none');
+    aamSalesOldYearsVisible = false;
     resetNoteForm();
     if (aamRouteMsg) aamRouteMsg.innerHTML = '';
     if (aamNewRouteName) aamNewRouteName.value = '';
@@ -561,9 +605,6 @@ function toTitleCase(str) {
     }
 
     // Set view links
-    if (aamViewSales) {
-      aamViewSales.href = '/accounts/' + accountId + '/detail/?tab=sales';
-    }
     if (aamViewDetails) {
       aamViewDetails.href = '/accounts/' + accountId + '/detail/';
     }
@@ -670,11 +711,12 @@ function toTitleCase(str) {
     });
   }
 
-  // ---- 5. Header back button (notes and routes) ----
+  // ---- 5. Header back button (notes, routes, and sales) ----
   if (aamHeaderBackBtn) {
     aamHeaderBackBtn.addEventListener('click', function () {
       var notesSection = document.getElementById('aam-notes-section');
       var routeSection = document.getElementById('aam-route-section');
+      var salesSection = document.getElementById('aam-sales-section');
 
       if (notesSection && notesSection.style.display !== 'none') {
         updateNoteCountBadge();
@@ -683,6 +725,8 @@ function toTitleCase(str) {
       } else if (routeSection && routeSection.style.display !== 'none') {
         routeSection.style.display = 'none';
         if (aamRouteMsg) aamRouteMsg.innerHTML = '';
+      } else if (salesSection && salesSection.style.display !== 'none') {
+        salesSection.style.display = 'none';
       }
 
       if (aamMainMenu) aamMainMenu.style.display = '';
@@ -1088,6 +1132,182 @@ function toTitleCase(str) {
       if (formEl) formEl.scrollIntoView({behavior: 'smooth'});
     })
     .catch(function () {});
+  }
+
+  // ---- View Sales button ----
+  var aamViewSalesBtn = document.getElementById('aam-view-sales-btn');
+  if (aamViewSalesBtn) {
+    aamViewSalesBtn.addEventListener('click', function () {
+      if (aamMainMenu) aamMainMenu.style.display = 'none';
+      var salesSection = document.getElementById('aam-sales-section');
+      if (salesSection) salesSection.style.display = '';
+      if (aamHeaderBackBtn) aamHeaderBackBtn.classList.remove('d-none');
+      loadAccountSales(currentAccountId);
+    });
+  }
+
+  // ---- Sales functions ----
+
+  function loadAccountSales(accountId) {
+    var loading = document.getElementById('aam-sales-loading');
+    var empty   = document.getElementById('aam-sales-empty');
+    var table   = document.getElementById('aam-sales-table');
+    if (loading) loading.classList.remove('d-none');
+    if (empty)   empty.classList.add('d-none');
+    if (table)   table.style.display = 'none';
+
+    fetch('/reports/account/' + accountId + '/portfolio/', {
+      headers: {'X-Requested-With': 'XMLHttpRequest'}
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (loading) loading.classList.add('d-none');
+      if (!data.rows || data.rows.length === 0) {
+        if (empty) empty.classList.remove('d-none');
+        return;
+      }
+      if (table) table.style.display = '';
+      renderSalesGrid(data);
+    })
+    .catch(function () {
+      if (loading) loading.classList.add('d-none');
+      if (empty) {
+        empty.textContent = 'Error loading sales data.';
+        empty.classList.remove('d-none');
+      }
+    });
+  }
+
+  function renderSalesGrid(data) {
+    var thead    = document.getElementById('aam-sales-thead');
+    var tbody    = document.getElementById('aam-sales-tbody');
+    var subtitle = document.getElementById('aam-sales-subtitle');
+    if (!thead || !tbody) return;
+
+    var years      = data.years;
+    var oldYears    = years.slice(0, 2);
+    var recentYears = years.slice(2);
+
+    if (subtitle && data.lfm_year) {
+      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      subtitle.textContent = 'L12M through ' + months[data.lfm_month - 1] + ' ' + data.lfm_year;
+    }
+
+    var hHtml = '<tr style="background:var(--color-background-secondary,#f5f5f5);">';
+    hHtml += '<th style="padding:6px 10px;text-align:left;font-weight:500;font-size:11px;' +
+      'border-bottom:0.5px solid var(--color-border-tertiary,#ddd);' +
+      'position:sticky;left:0;background:var(--color-background-secondary,#f5f5f5);">Item</th>';
+
+    oldYears.forEach(function (yr) {
+      hHtml += '<th class="aam-old-year" style="display:none;padding:6px 8px;text-align:right;' +
+        'font-weight:500;font-size:11px;border-bottom:0.5px solid var(--color-border-tertiary,#ddd);">' +
+        "'" + String(yr).slice(2) + '</th>';
+    });
+    recentYears.forEach(function (yr) {
+      hHtml += '<th style="padding:6px 8px;text-align:right;font-weight:500;font-size:11px;' +
+        'border-bottom:0.5px solid var(--color-border-tertiary,#ddd);">' +
+        "'" + String(yr).slice(2) + '</th>';
+    });
+    hHtml += '<th style="padding:6px 8px;text-align:right;font-weight:500;font-size:11px;' +
+      'border-bottom:0.5px solid var(--color-border-tertiary,#ddd);">+/&#8722;</th>';
+    hHtml += '<th style="padding:6px 8px;text-align:right;font-weight:500;font-size:11px;' +
+      'border-bottom:0.5px solid var(--color-border-tertiary,#ddd);' +
+      'border-left:1.5px solid var(--color-border-secondary,#ccc);">L12M</th>';
+    hHtml += '<th style="padding:6px 8px;text-align:right;font-weight:500;font-size:11px;' +
+      'border-bottom:0.5px solid var(--color-border-tertiary,#ddd);">+/&#8722;</th>';
+    hHtml += '</tr>';
+
+    var t = data.totals;
+    var totHtml = buildSalesRow(
+      'Total', t.year_totals, t.diff_yr, t.last_12, t.diff_l12, years,
+      true, '1.5px solid var(--color-border-secondary,#ccc)'
+    );
+    thead.innerHTML = hHtml + totHtml;
+
+    var rowsHtml = '';
+    data.rows.forEach(function (row) {
+      rowsHtml += buildSalesRow(
+        row.item_code, row.year_totals, row.diff_yr, row.last_12, row.diff_l12, years,
+        false, '0.5px solid var(--color-border-tertiary,#ddd)'
+      );
+    });
+    tbody.innerHTML = rowsHtml;
+
+    updateOldYearVisibility();
+  }
+
+  function buildSalesRow(label, yearTotals, diffYr, last12, diffL12, years, isTotals, borderBottom) {
+    var oldYears    = years.slice(0, 2);
+    var recentYears = years.slice(2);
+    var bg = isTotals
+      ? 'background:var(--color-background-secondary,#f5f5f5);font-weight:500;'
+      : '';
+    var html = '<tr style="border-bottom:' + borderBottom + ';' + bg + '">';
+
+    html += '<td style="padding:6px 10px;font-size:12px;position:sticky;left:0;background:' +
+      (isTotals
+        ? 'var(--color-background-secondary,#f5f5f5)'
+        : 'var(--color-background-primary,#fff)') +
+      ';">' + escHtml(String(label)) + '</td>';
+
+    oldYears.forEach(function (yr) {
+      var val = yearTotals[yr] || 0;
+      html += '<td class="aam-old-year" style="display:none;padding:6px 8px;text-align:right;' +
+        'font-size:12px;color:var(--color-text-secondary,#666);">' + (val || '&#8212;') + '</td>';
+    });
+    recentYears.forEach(function (yr) {
+      var val = yearTotals[yr] || 0;
+      html += '<td style="padding:6px 8px;text-align:right;font-size:12px;' +
+        'color:var(--color-text-secondary,#666);">' + (val || '&#8212;') + '</td>';
+    });
+
+    var diffColor = diffYr > 0
+      ? 'color:var(--color-text-success,green)'
+      : diffYr < 0
+      ? 'color:var(--color-text-danger,red)'
+      : 'color:var(--color-text-secondary,#666)';
+    html += '<td style="padding:6px 8px;text-align:right;font-size:12px;' + diffColor + ';">' +
+      (diffYr > 0 ? '+' : '') + diffYr + '</td>';
+
+    html += '<td style="padding:6px 8px;text-align:right;font-size:12px;font-weight:500;' +
+      'border-left:1.5px solid var(--color-border-secondary,#ccc);">' + last12 + '</td>';
+
+    var dl12Color = diffL12 > 0
+      ? 'color:var(--color-text-success,green)'
+      : diffL12 < 0
+      ? 'color:var(--color-text-danger,red)'
+      : 'color:var(--color-text-secondary,#666)';
+    html += '<td style="padding:6px 8px;text-align:right;font-size:12px;' + dl12Color + ';">' +
+      (diffL12 > 0 ? '+' : '') + diffL12 + '</td>';
+
+    html += '</tr>';
+    return html;
+  }
+
+  function updateOldYearVisibility() {
+    var els = document.querySelectorAll('#aam-sales-table .aam-old-year');
+    els.forEach(function (el) {
+      el.style.display = aamSalesOldYearsVisible ? '' : 'none';
+    });
+    var btn = document.getElementById('aam-sales-toggle-btn');
+    if (btn) {
+      btn.textContent = aamSalesOldYearsVisible ? 'Hide older years' : 'Show older years';
+    }
+  }
+
+  var aamSalesToggleBtn = document.getElementById('aam-sales-toggle-btn');
+  if (aamSalesToggleBtn) {
+    aamSalesToggleBtn.addEventListener('click', function () {
+      aamSalesOldYearsVisible = !aamSalesOldYearsVisible;
+      updateOldYearVisibility();
+    });
+  }
+
+  function escHtml(str) {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
 })();

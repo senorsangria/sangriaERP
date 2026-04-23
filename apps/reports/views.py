@@ -2,15 +2,14 @@
 Reports views: Account Sales by Year report.
 """
 import csv
-from calendar import monthrange
 from datetime import date
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Max, Sum
 from django.db.models.functions import ExtractMonth
-from django.http import Http404, HttpResponse, HttpResponseForbidden
-from django.shortcuts import redirect, render
+from django.http import Http404, HttpResponse, HttpResponseForbidden, JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.accounts.models import Account
 from apps.accounts.utils import get_accounts_for_user, get_distributors_for_user
@@ -18,27 +17,12 @@ from apps.catalog.models import Item
 from apps.routes.models import Route
 from apps.events.models import Event
 from apps.sales.models import SalesRecord
+from apps.reports.utils import _month_add, _last_day, get_portfolio_status
 
 
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
-
-def _month_add(year, month, delta_months):
-    """Return (year, month) after adding delta_months (may be negative)."""
-    month += delta_months
-    while month > 12:
-        month -= 12
-        year += 1
-    while month < 1:
-        month += 12
-        year -= 1
-    return year, month
-
-
-def _last_day(year, month):
-    return monthrange(year, month)[1]
-
 
 def _truncate(s, max_len):
     s = (s or '').strip().title()
@@ -727,31 +711,19 @@ def account_detail_sales(request, account_id):
         if not get_accounts_for_user(user).filter(pk=account_id).exists():
             return HttpResponseForbidden()
 
-    # ---- Date setup -------------------------------------------------------
+    # ---- Date setup via portfolio utility ---------------------------------
     today = date.today()
     current_year = today.year
-    current_month_start = today.replace(day=1)
 
-    distributor = account.distributor
-
-    max_past_sale = (
-        SalesRecord.objects
-        .filter(
-            account__distributor=distributor,
-            account__company=account.company,
-            sale_date__lt=current_month_start,
-        )
-        .aggregate(Max('sale_date'))['sale_date__max']
-    )
-
-    if max_past_sale is None:
+    portfolio_data = get_portfolio_status(account, today=today)
+    if portfolio_data is None:
         return render(request, 'reports/account_detail_sales.html', {
             'account': account,
             'no_data': True,
         })
 
-    lfm_year = max_past_sale.year
-    lfm_month = max_past_sale.month
+    lfm_year = portfolio_data['lfm_year']
+    lfm_month = portfolio_data['lfm_month']
     lfm_end = date(lfm_year, lfm_month, _last_day(lfm_year, lfm_month))
     last_full_month_display = date(lfm_year, lfm_month, 1).strftime('%B %Y')
 
@@ -764,10 +736,13 @@ def account_detail_sales(request, account_id):
         actual_months = []
         projected_months = list(range(1, 13))
 
-    # Last 12 months window (same as main report)
+    # L12M window
     w_year, w_month = _month_add(lfm_year, lfm_month, -11)
     window_start = date(w_year, w_month, 1)
     window_end = lfm_end
+
+    # Per-item portfolio lookup for status and L12M
+    portfolio_by_id = {r['item_id']: r for r in portfolio_data['rows']}
 
     # ---- Items with sales for this account --------------------------------
     items = (
@@ -803,16 +778,6 @@ def account_detail_sales(request, account_id):
             .annotate(units=Sum('quantity'))
         ):
             actual_data[(row['item_id'], row['sale_date__month'])] = row['units']
-
-    # Last 12 months: sum per item
-    last12_data = {}
-    for row in (
-        SalesRecord.objects
-        .filter(account=account, sale_date__gte=window_start, sale_date__lte=window_end)
-        .values('item_id')
-        .annotate(units=Sum('quantity'))
-    ):
-        last12_data[row['item_id']] = row['units']
 
     # Prior year monthly data for diff calculation
     prior_year = last_full_year - 1
@@ -857,16 +822,20 @@ def account_detail_sales(request, account_id):
 
     # ---- Build per-item rows ---------------------------------------------
     all_months = list(range(1, 13))
+    _STATUS_PRIORITY = {'non_buy': 1, 'declining': 2, 'steady': 3, 'growing': 4, 'new': 5}
 
     rows = []
     for item in items:
         item_id = item.pk
 
+        if item_id not in portfolio_by_id:
+            continue
+
         last_full_year_by_month = {m: lfy_data.get((item_id, m), 0) for m in all_months}
         current_actual_by_month = {m: actual_data.get((item_id, m), 0) for m in actual_months}
 
         last_full_year_total = sum(last_full_year_by_month.values())
-        last_12_units = last12_data.get(item_id, 0)
+        last_12_units = portfolio_by_id[item_id]['last_12']
 
         # Projection multiplier = last_12m / last_full_year_total
         # New item (last_full_year_total == 0): no projection, all projected months = None
@@ -890,26 +859,9 @@ def account_detail_sales(request, account_id):
         )
         current_combined_total = current_actual_total + current_projected_total
 
-        # Exclude items with no activity in either period
-        if last_full_year_total == 0 and last_12_units == 0:
-            continue
-
-        # Determine portfolio status
-        if last_full_year_total > 0 and last_12_units == 0:
-            status = 'non_buy'
-            status_priority = 1
-        elif last_12_units < last_full_year_total:
-            status = 'declining'
-            status_priority = 2
-        elif last_12_units == last_full_year_total:
-            status = 'steady'
-            status_priority = 3
-        elif last_full_year_total == 0 and last_12_units > 0:
-            status = 'new'
-            status_priority = 5
-        else:
-            status = 'growing'
-            status_priority = 4
+        # Status from portfolio utility (exclusion already applied via portfolio_by_id)
+        status = portfolio_by_id[item_id]['status']
+        status_priority = _STATUS_PRIORITY[status]
 
         change_pct = (
             round((last_12_units - last_full_year_total) / last_full_year_total * 100, 1)
@@ -1052,3 +1004,27 @@ def account_detail_sales(request, account_id):
         'status_counts': status_counts,
         'portfolio_totals': portfolio_totals,
     })
+
+
+# ---------------------------------------------------------------------------
+# Portfolio JSON endpoint (for Account Actions Modal)
+# ---------------------------------------------------------------------------
+
+@login_required
+def account_portfolio_json(request, account_id):
+    """GET /reports/account/<id>/portfolio/ — JSON portfolio data for the AAM."""
+    user = request.user
+
+    if not user.has_permission('can_view_report_account_sales'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    account = get_object_or_404(Account, pk=account_id, company=user.company)
+
+    if not user.has_role('supplier_admin'):
+        if not get_accounts_for_user(user).filter(pk=account_id).exists():
+            return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    data = get_portfolio_status(account)
+    if data is None:
+        return JsonResponse({'years': [], 'rows': [], 'totals': {}, 'lfm_year': None, 'lfm_month': None})
+    return JsonResponse(data)

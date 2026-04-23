@@ -3077,8 +3077,9 @@ with no mocking required.
   `/events/create/?event_type=X&account=ID`
 - **Add to Route** (`can_view_report_account_sales`): opens route
   sub-flow inside modal; fetches routes via `/routes/?distributor_id=X`
-- **View Sales** (`can_view_report_account_sales`): links to
-  `/accounts/<id>/detail/?tab=sales`
+- **View Sales** (`can_view_report_account_sales`): opens inline sales
+  portfolio grid inside the modal (content-swap like Notes/Routes);
+  fetches data via `/reports/account/<id>/portfolio/`
 - **View Events** (`can_view_events`): disabled, future feature
 - **View Account Details** (`can_view_accounts`): links to
   `/accounts/<id>/detail/`
@@ -3131,5 +3132,16 @@ with no mocking required.
 ### Tasks
 - Task/to-do functionality has been removed from notes entirely.
   Tasks will be a separate feature built independently when needed.
+
+### View Sales Portfolio Grid (AAM)
+- `get_portfolio_status(account)` utility in `apps/reports/utils.py` is
+  shared by `account_detail_sales` and `account_portfolio_json`
+- JSON endpoint at `/reports/account/<id>/portfolio/` —
+  name `account_portfolio_json`; permission: `can_view_report_account_sales`
+- Grid: up to 4 calendar years (ascending) + YoY +/− + L12M + L12M +/−
+- Totals row rendered in `<thead>` above item rows
+- Older 2 years hidden by default; "Show older years" toggle reveals them
+- L12M = trailing 12 months ending last active sales month for the
+  account's distributor
 
 *Last updated: April 2026*
