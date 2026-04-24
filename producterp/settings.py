@@ -186,6 +186,9 @@ CLOUDFLARE_R2_BUCKET_NAME = os.environ.get(
 CLOUDFLARE_R2_ENDPOINT_URL = os.environ.get(
     'CLOUDFLARE_R2_ENDPOINT_URL', ''
 )
+CLOUDFLARE_R2_PUBLIC_URL = os.environ.get(
+    'CLOUDFLARE_R2_PUBLIC_URL', ''
+)
 
 _r2_configured = all([
     CLOUDFLARE_R2_ACCESS_KEY_ID,
@@ -204,13 +207,19 @@ if _r2_configured:
         CLOUDFLARE_R2_BUCKET_NAME
     AWS_S3_ENDPOINT_URL = CLOUDFLARE_R2_ENDPOINT_URL
     AWS_S3_REGION_NAME = 'auto'
-    AWS_DEFAULT_ACL = 'public-read'
     AWS_S3_FILE_OVERWRITE = False
     AWS_QUERYSTRING_AUTH = False
-    MEDIA_URL = (
-        f'{CLOUDFLARE_R2_ENDPOINT_URL}/'
-        f'{CLOUDFLARE_R2_BUCKET_NAME}/'
-    )
+    if CLOUDFLARE_R2_PUBLIC_URL:
+        MEDIA_URL = f'{CLOUDFLARE_R2_PUBLIC_URL}/'
+        AWS_S3_CUSTOM_DOMAIN = \
+            CLOUDFLARE_R2_PUBLIC_URL.replace(
+                'https://', ''
+            ).replace('http://', '')
+    else:
+        MEDIA_URL = (
+            f'{CLOUDFLARE_R2_ENDPOINT_URL}/'
+            f'{CLOUDFLARE_R2_BUCKET_NAME}/'
+        )
 
 # ---------------------------------------------------------------------------
 # Default primary key type

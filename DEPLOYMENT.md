@@ -30,6 +30,7 @@ in Cloudflare R2 (production) via `django-storages` and `boto3`.
 | `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | If using R2 | R2 Account API Token Secret Access Key (shown only once at token creation) |
 | `CLOUDFLARE_R2_BUCKET_NAME` | If using R2 | R2 bucket name (e.g. `producterp-media`; use a different bucket per environment, e.g. `producterp-staging` for staging) |
 | `CLOUDFLARE_R2_ENDPOINT_URL` | If using R2 | R2 S3 endpoint URL — format: `https://<account-id>.r2.cloudflarestorage.com` |
+| `CLOUDFLARE_R2_PUBLIC_URL` | If using R2 | Cloudflare R2 Public Development URL — format: `https://pub-<hash>.r2.dev` — required for photos to be publicly accessible |
 
 ```
 CLOUDFLARE_R2_ACCESS_KEY_ID=
@@ -47,6 +48,13 @@ CLOUDFLARE_R2_BUCKET_NAME=producterp-media
 CLOUDFLARE_R2_ENDPOINT_URL=
 # R2 S3 endpoint URL
 # Format: https://<account-id>.r2.cloudflarestorage.com
+
+CLOUDFLARE_R2_PUBLIC_URL=
+# Cloudflare R2 Public Development URL
+# Format: https://pub-<hash>.r2.dev
+# Required for photos to be publicly accessible
+# Get this from Cloudflare R2 bucket Settings
+# → Public Access → Public Development URL
 ```
 
 # Storage behavior:
