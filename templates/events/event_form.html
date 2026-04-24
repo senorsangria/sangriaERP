@@ -267,6 +267,7 @@
   'use strict';
 
   const LOCKED_EVENT_TYPE   = '{{ locked_event_type }}';
+  const IS_CREATE           = {{ is_create|yesno:"true,false" }};
 
   const ambassadorSelect    = document.getElementById('{{ form.ambassador.id_for_label }}');
   const eventManagerSelect  = document.getElementById('{{ form.event_manager.id_for_label }}');
@@ -363,8 +364,15 @@
       fetch(emUrl, {headers: {'X-Requested-With': 'XMLHttpRequest'}})
         .then(r => r.json())
         .then(function (data) {
-          // Prefer current user pre-selection; fall back to previous value
-          var emPref = data.current_user_id ? String(data.current_user_id) : managerCurrent;
+          // On create: default to the current user (they are creating the event).
+          // On edit: keep the saved manager; only fall back to current user if
+          // nothing is selected (e.g. the field was blank before the account changed).
+          var emPref;
+          if (IS_CREATE) {
+            emPref = data.current_user_id ? String(data.current_user_id) : managerCurrent;
+          } else {
+            emPref = managerCurrent || (data.current_user_id ? String(data.current_user_id) : '');
+          }
           populateSelect(eventManagerSelect, data.event_managers || [], 'id', 'name', emPref);
           if (eventManagerHint) {
             if (data.event_managers && data.event_managers.length > 0) {

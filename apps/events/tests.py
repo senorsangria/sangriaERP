@@ -2680,3 +2680,64 @@ class TastingEventRequiresAccountTest(TestCase):
     def test_admin_event_without_account_is_valid(self):
         response = self._post_create('admin', account_pk='')
         self.assertEqual(Event.objects.count(), 1)
+
+
+# ---------------------------------------------------------------------------
+# JS-side event manager override — edit form preserves saved manager
+# ---------------------------------------------------------------------------
+
+class EventManagerEditPageTest(TestCase):
+    """
+    On the edit page:
+      - GET: the rendered HTML must have the saved event_manager pre-selected.
+      - POST without changing the dropdown: the saved manager must be preserved.
+
+    This guards against the JS override bug where refreshPeopleDropdowns
+    always used current_user_id (logged-in user) instead of the saved value.
+    The Python layer (form + view) must round-trip the saved manager correctly
+    independently of any JS behaviour.
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin   = make_user(self.company, 'supplier_admin', 'admin')
+        self.mgr_a   = make_user(self.company, 'ambassador_manager', 'mgr_a')
+        self.account = make_account(self.company)
+        self.event   = make_event(
+            self.company, self.admin, Event.EventType.TASTING,
+            account=self.account,
+            date=date.today(),
+        )
+        self.event.event_manager = self.mgr_a
+        self.event.save(update_fields=['event_manager'])
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_edit_page_renders_saved_manager_selected(self):
+        """GET the edit page — the saved manager's option must be selected."""
+        url = reverse('event_edit', args=[self.event.pk])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        # The rendered form should have mgr_a's PK as the selected option value
+        self.assertContains(
+            response,
+            f'value="{self.mgr_a.pk}" selected',
+        )
+
+    def test_post_without_changing_manager_preserves_saved_manager(self):
+        """POST the edit form with the same manager — saved manager must survive."""
+        url = reverse('event_edit', args=[self.event.pk])
+        response = self.client.post(url, {
+            'event_type':       'tasting',
+            'account':          self.account.pk,
+            'date':             str(date.today()),
+            'start_time':       '13:00',
+            'duration_hours':   '2',
+            'duration_minutes': '0',
+            'ambassador':       '',
+            'event_manager':    self.mgr_a.pk,
+            'notes':            '',
+        })
+        self.assertRedirects(response, reverse('event_detail', args=[self.event.pk]))
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.event_manager, self.mgr_a)
