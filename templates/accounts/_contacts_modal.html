@@ -121,7 +121,7 @@
 
   function makeContactCard(c) {
     var card = document.createElement('div');
-    card.className = 'border rounded p-2 mb-2';
+    card.className = 'border rounded p-2 mb-2 contact-card';
     card.dataset.contactId = c.id;
 
     // Row 1: tasting badge + name + phone + email
@@ -190,13 +190,18 @@
   }
 
   function updateBadge(count) {
-    if (!countBadge) return;
-    countBadge.textContent = count;
-    var btn = countBadge.closest('button');
-    if (btn) {
-      var label = btn.querySelector('.contact-label');
-      if (label) label.textContent = count === 1 ? 'contact' : 'contacts';
+    if (countBadge) {
+      countBadge.textContent = count;
+      var btn = countBadge.closest('button');
+      if (btn) {
+        var label = btn.querySelector('.contact-label');
+        if (label) label.textContent = count === 1 ? 'contact' : 'contacts';
+      }
     }
+    var evtCount = document.getElementById('event-contact-count');
+    var evtLabel = document.getElementById('event-contact-label');
+    if (evtCount) evtCount.textContent = count;
+    if (evtLabel) evtLabel.textContent = count === 1 ? 'contact' : 'contacts';
   }
 
   function loadContacts() {

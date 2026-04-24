@@ -100,6 +100,13 @@ class EventForm(forms.ModelForm):
                     Q(company=company, is_active=True, roles__codename__in=em_roles)
                     | Q(pk=user.pk)
                 ).distinct()
+            elif self.instance.pk and self.instance.event_manager_id:
+                # On edit, force-include the currently-assigned manager so the
+                # submitted value survives validation even if their role changed.
+                em_qs = User.objects.filter(
+                    Q(company=company, is_active=True, roles__codename__in=em_roles)
+                    | Q(pk=self.instance.event_manager_id)
+                ).distinct()
             else:
                 em_qs = User.objects.filter(
                     company=company, is_active=True, roles__codename__in=em_roles,
@@ -151,3 +158,14 @@ class EventForm(forms.ModelForm):
             return int(val)
         except (TypeError, ValueError):
             return 0
+
+    def clean(self):
+        cleaned = super().clean()
+        event_type = cleaned.get('event_type')
+        account = cleaned.get('account')
+        if event_type in (Event.EventType.TASTING, Event.EventType.SPECIAL_EVENT) and not account:
+            self.add_error(
+                'account',
+                'Please select an account from the search for Tasting and Special Events.',
+            )
+        return cleaned

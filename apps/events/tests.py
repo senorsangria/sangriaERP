@@ -2580,3 +2580,103 @@ class FilterModalMultiValueTest(TestCase):
         response = self.client.get(reverse('event_list'))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context['active_filter_count'], 0)
+
+
+# ---------------------------------------------------------------------------
+# BUG 1 — Event manager can be changed on edit
+# ---------------------------------------------------------------------------
+
+class EventManagerEditTest(TestCase):
+    """
+    Changing event_manager on the edit form correctly saves the new value.
+
+    Regression: on edit, the em queryset was restricted to role-eligible users
+    and didn't include the currently-assigned manager, causing form validation
+    to reject any submitted event_manager value.
+    """
+
+    def setUp(self):
+        self.company   = make_company()
+        self.admin     = make_user(self.company, 'supplier_admin', 'admin')
+        self.mgr_a     = make_user(self.company, 'ambassador_manager', 'mgr_a')
+        self.mgr_b     = make_user(self.company, 'ambassador_manager', 'mgr_b')
+        self.account   = make_account(self.company)
+        self.event     = make_event(
+            self.company, self.admin, Event.EventType.TASTING,
+            account=self.account,
+            date=date.today(),
+        )
+        # Set mgr_a as the current event manager (make_event defaults to creator)
+        self.event.event_manager = self.mgr_a
+        self.event.save(update_fields=['event_manager'])
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_event_manager_can_be_changed_on_edit(self):
+        url = reverse('event_edit', args=[self.event.pk])
+        response = self.client.post(url, {
+            'event_type': 'tasting',
+            'account':    self.account.pk,
+            'date':       str(date.today()),
+            'start_time': '13:00',
+            'duration_hours':   '2',
+            'duration_minutes': '0',
+            'ambassador':     '',
+            'event_manager':  self.mgr_b.pk,
+            'notes':          '',
+        })
+        self.assertRedirects(response, reverse('event_detail', args=[self.event.pk]))
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.event_manager, self.mgr_b)
+
+
+# ---------------------------------------------------------------------------
+# BUG 4 — Tasting / Special Event requires account
+# ---------------------------------------------------------------------------
+
+class TastingEventRequiresAccountTest(TestCase):
+    """
+    EventForm must reject Tasting and Special Event submissions with no account.
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin   = make_user(self.company, 'supplier_admin', 'admin')
+        self.client  = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def _post_create(self, event_type, account_pk=''):
+        url = reverse('event_create') + f'?event_type={event_type}'
+        return self.client.post(url, {
+            'event_type':       event_type,
+            'account':          account_pk,
+            'date':             str(date.today()),
+            'start_time':       '13:00',
+            'duration_hours':   '2',
+            'duration_minutes': '0',
+            'ambassador':       '',
+            'event_manager':    '',
+            'notes':            '',
+        })
+
+    def test_tasting_without_account_is_invalid(self):
+        response = self._post_create('tasting', account_pk='')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Event.objects.count(), 0)
+        self.assertContains(response, 'Please select an account')
+
+    def test_special_event_without_account_is_invalid(self):
+        response = self._post_create('special_event', account_pk='')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Event.objects.count(), 0)
+        self.assertContains(response, 'Please select an account')
+
+    def test_tasting_with_account_is_valid(self):
+        account = make_account(self.company)
+        response = self._post_create('tasting', account_pk=account.pk)
+        self.assertEqual(Event.objects.count(), 1)
+        self.assertEqual(Event.objects.first().account, account)
+
+    def test_admin_event_without_account_is_valid(self):
+        response = self._post_create('admin', account_pk='')
+        self.assertEqual(Event.objects.count(), 1)

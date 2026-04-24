@@ -278,12 +278,13 @@ def get_order_history(account):
             items.append({
                 'item_code': item.item_code,
                 'item_name': item.name,
+                'sort_order': item.sort_order,
                 'qty': qty,
                 'cost': round(cost, 2),
                 'amount': round(amount, 2),
             })
 
-        items.sort(key=lambda x: x['item_code'])
+        items.sort(key=lambda x: (x['sort_order'], x['item_code']))
 
         total_qty = sum(i['qty'] for i in items)
         total_amount = round(sum(i['amount'] for i in items), 2)
