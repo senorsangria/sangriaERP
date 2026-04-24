@@ -224,7 +224,7 @@ if _r2_configured:
         'staticfiles': {
             'BACKEND':
                 'whitenoise.storage.'
-                'CompressedManifestStaticFilesStorage',
+                'CompressedStaticFilesStorage',
         },
     }
 
