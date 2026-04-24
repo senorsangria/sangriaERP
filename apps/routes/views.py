@@ -5,6 +5,7 @@ import json
 
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
+from django.shortcuts import get_object_or_404
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.models import Account
@@ -119,3 +120,55 @@ def route_save(request):
         'already_in_route': already_existed,
         'route_name': route.name,
     })
+
+
+@login_required
+def account_routes(request, account_pk):
+    """GET /routes/account/<pk>/ — list routes an account is currently in."""
+    if not request.user.has_permission('can_view_report_account_sales'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    account = get_object_or_404(Account, pk=account_pk, company=request.user.company)
+
+    from apps.accounts.utils import get_accounts_for_user
+    if account not in get_accounts_for_user(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    route_accounts = RouteAccount.objects.filter(
+        account=account
+    ).select_related('route')
+
+    return JsonResponse({
+        'routes': [
+            {
+                'route_account_id': ra.pk,
+                'route_id': ra.route.pk,
+                'route_name': ra.route.name,
+            }
+            for ra in route_accounts
+        ]
+    })
+
+
+@login_required
+def remove_account_from_route(request, route_account_pk):
+    """POST /routes/remove/<pk>/"""
+    if not request.user.has_permission('can_view_report_account_sales'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required.'}, status=405)
+
+    ra = get_object_or_404(RouteAccount, pk=route_account_pk)
+    route = ra.route
+
+    if route.created_by != request.user:
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    ra.delete()
+
+    if not route.route_accounts.exists():
+        route.delete()
+        return JsonResponse({'success': True, 'route_deleted': True})
+
+    return JsonResponse({'success': True, 'route_deleted': False})

@@ -50,7 +50,12 @@
 
 {% block content %}
 <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
-  {% if return_to == 'dashboard' %}
+  {% if return_url %}
+  <a href="{{ return_url }}"
+     class="btn btn-sm btn-outline-secondary">
+    ← Back
+  </a>
+  {% elif return_to == 'dashboard' %}
   <a href="{% url 'dashboard' %}"
      class="btn btn-sm btn-outline-secondary">
     ← Back
