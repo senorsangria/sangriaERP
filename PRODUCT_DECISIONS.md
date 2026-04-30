@@ -2292,13 +2292,29 @@ specific selections. The filter panel is collapsed by default on all screen size
   rule sets `display: none` on all `.col-sticky-1` `<th>` and `<td>` elements (the On/Off
   column), and overrides `.col-sticky-2` `left` to `0px` so Account Name becomes the first
   sticky column with no gap. Bootstrap `d-none` classes are NOT used for this column.
-- **City column width:** `style="width:100px;"` on `<th>` and `max-width:100px; overflow:hidden;
-  text-overflow:ellipsis; white-space:nowrap;` on `<td>` to prevent excess whitespace.
+- **Account and City are rendered as a single merged column** with stacked content (account
+  name on top as a bold link, city below as `.small.text-muted`). The `<th>` has two
+  independently-clickable `<span class="sortable-trigger">` elements with `data-sort-key`
+  attributes (`"account"` and `"city"`); the sort JS reads the matching `data-account` or
+  `data-city` attribute from each row's `<td>`. The `<th>` itself does not carry `class="sortable"`.
+- **Year headers are abbreviated to `'YY` format** (e.g. `'24`) using
+  `{{ year|stringformat:"s"|slice:"-2:" }}` with a literal apostrophe prefix, mirroring the
+  AAM portfolio grid label style. Both diff column headers display as `+/−` to match the AAM
+  grid; the LFY `+/−` sits to the left of L12M, and the L12M `+/−` sits to its right.
+- **Vertical separator (`.l12m-divider` class, `border-left: 1.5px solid #ccc`)** is applied
+  to the L12M `<th>` and every L12M `<td>` (totals and data rows) to visually group the year
+  columns + LFY `+/−` on the left from L12M + L12M `+/−` on the right.
+- **When `years|length > 2`, the two oldest year columns are tagged `old-year-col`** and hidden
+  by default via inline `style="display:none;"`. A "Show older years" / "Hide older years"
+  toggle button appears top-right of the "Data through: …" line (same flex row). Toggle state
+  resets on page load. The button and the `old-year-col` class are both suppressed when
+  `years|length <= 2` (nothing worth hiding).
 - Report table: sticky header, sticky first two columns on mobile, alternating row colors,
-  client-side sortable on data rows only (vanilla JS, click column header to sort asc/desc).
+  client-side sortable on data rows only (vanilla JS, click column header or sort-trigger span).
 - **Sort uses `data-value` attributes** for all numeric columns so that negative numbers
   (-50) sort below zero which sorts below positive numbers (100). Text columns fall back
-  to the `.visually-hidden` span (On/Off) or cell text content (Account, City).
+  to the `.visually-hidden` span (On/Off) or `data-account` / `data-city` on the merged
+  Account+City cell.
 - Diff column shows raw integer only (no percentage). Green (`diff-positive`) if positive,
   red (`diff-negative`) if negative, muted if zero.
 - On/Off column: `bi-cup-hot` icon for ON, `bi-shop` for OFF; tooltip with full text.

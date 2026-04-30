@@ -1326,3 +1326,105 @@ class FilterActiveNoDataTest(TestCase):
             response, 'clear_filters=1',
             msg_prefix='Empty-state Clear Filters link must include ?clear_filters=1',
         )
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for the mobile layout refactor
+# ---------------------------------------------------------------------------
+
+class MobileLayoutRefactorTest(TestCase):
+    """
+    Tests covering the narrower-layout refactor:
+    - Account and City merged into a single stacked column
+    - Year headers abbreviated to 'YY
+    - old-year-col class applied when > 2 years of data
+    - Toggle button suppressed when <= 2 years
+    - CSV export unchanged (City remains a separate column)
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        self.distributor = make_distributor(self.company)
+        self.item = make_item(self.company)
+        self.batch = make_batch(self.company, self.distributor)
+        self.account = make_account(
+            self.company, self.distributor, name='Refactor Test Bar', city='Newark'
+        )
+        self.user = make_user(self.company, 'supplier_admin', username='sa_layout')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _make_sales_for_years(self, *years):
+        for yr in years:
+            make_sale(self.company, self.batch, self.account, self.item,
+                      date(yr, 6, 1), 10)
+
+    def test_account_city_merged_column(self):
+        """data-account / data-city on TD; no standalone <th>City</th> column."""
+        self._make_sales_for_years(2024, 2025)
+        response = self.client.get(reverse('report_account_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn('data-account=', content,
+                      'data-account attribute must appear on merged Account+City TD')
+        self.assertIn('data-city=', content,
+                      'data-city attribute must appear on merged Account+City TD')
+        # The old standalone City <th> must not appear
+        self.assertNotIn('<th>City</th>', content)
+        self.assertNotIn('width:100px;">City', content)
+
+    def test_year_headers_abbreviated(self):
+        """Year headers render as 'YY (apostrophe + 2 digits), not 4-digit full year."""
+        self._make_sales_for_years(2024, 2025)
+        response = self.client.get(reverse('report_account_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # Abbreviated form present
+        self.assertIn("'24", content)
+        self.assertIn("'25", content)
+        # LFY diff header no longer says "2024 Diff" or "2025 Diff"
+        self.assertNotIn('2024 Diff', content)
+        self.assertNotIn('2025 Diff', content)
+
+    def test_old_year_col_class_applied_when_more_than_two_years(self):
+        """With 4 years of data, old-year-col class and toggle button are present."""
+        self._make_sales_for_years(2022, 2023, 2024, 2025)
+        response = self.client.get(reverse('report_account_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # Space-prefixed form as it appears in HTML class attributes (not JS .old-year-col)
+        self.assertIn(' old-year-col', content,
+                      'old-year-col class must appear on oldest year columns when > 2 years')
+        # id= form distinguishes from JS getElementById string
+        self.assertIn('id="report-older-years-toggle"', content,
+                      'Toggle button element must be present when there are > 2 years of data')
+
+    def test_old_year_toggle_hidden_when_two_or_fewer_years(self):
+        """With only 2 years of data, toggle button element and old-year-col class are absent."""
+        self._make_sales_for_years(2024, 2025)
+        response = self.client.get(reverse('report_account_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # id= form distinguishes from JS getElementById string literal
+        self.assertNotIn('id="report-older-years-toggle"', content,
+                         'Toggle button element must not appear when <= 2 years of data')
+        # Space-prefixed: only appears in HTML class attr, not in JS .old-year-col selector
+        self.assertNotIn(' old-year-col', content,
+                         'old-year-col class must not appear when <= 2 years of data')
+
+    def test_csv_export_unchanged_after_template_refactor(self):
+        """CSV still has Account Name, City, On/Off as separate columns."""
+        self._make_sales_for_years(2024, 2025)
+        response = self.client.get(reverse('report_account_sales_csv'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/csv')
+        content = response.content.decode()
+        first_line = content.splitlines()[0]
+        self.assertIn('Account Name', first_line)
+        self.assertIn('City', first_line)
+        self.assertIn('On/Off', first_line)
+        # They must be separate columns, not merged
+        cols = first_line.split(',')
+        self.assertEqual(cols[0].strip(), 'Account Name')
+        self.assertEqual(cols[1].strip(), 'City')
+        self.assertEqual(cols[2].strip(), 'On/Off')

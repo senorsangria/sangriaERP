@@ -66,7 +66,7 @@
     }
   }
 
-  /* Sort arrows in header */
+  /* Sort arrows in header — th-level (year/diff/on-off columns) */
   .report-table thead th.sortable {
     cursor: pointer;
     user-select: none;
@@ -78,6 +78,21 @@
   }
   .report-table thead th.sort-asc::after  { content: ' \2191'; opacity: 1; }
   .report-table thead th.sort-desc::after { content: ' \2193'; opacity: 1; }
+
+  /* Sort arrows — span-level triggers (Account / City stacked header) */
+  .sortable-trigger::after {
+    content: ' \2195';
+    opacity: .4;
+    font-size: .75em;
+  }
+  .sortable-trigger.sort-asc::after  { content: ' \2191'; opacity: 1; }
+  .sortable-trigger.sort-desc::after { content: ' \2193'; opacity: 1; }
+
+  /* Vertical separator left of L12M column */
+  .report-table th.l12m-divider,
+  .report-table td.l12m-divider {
+    border-left: 1.5px solid #ccc;
+  }
 
   /* Diff column coloring */
   .diff-positive { color: #198754; }
@@ -133,16 +148,25 @@
 <div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-3">
   <div>
     <h4 class="fw-bold mb-0">Account Sales by Year</h4>
-    {% if selected_distributor %}
-    <p class="text-muted mb-0 small">
-      {{ selected_distributor.name }}
-      {% if last_full_month_display %}
-      &middot; Data through: <strong>{{ last_full_month_display }}</strong>
+    <div class="d-flex align-items-center justify-content-between gap-2">
+      {% if selected_distributor %}
+      <p class="text-muted mb-0 small">
+        {{ selected_distributor.name }}
+        {% if last_full_month_display %}
+        &middot; Data through: <strong>{{ last_full_month_display }}</strong>
+        {% endif %}
+      </p>
+      {% elif last_full_month_display %}
+      <p class="text-muted mb-0 small">Data through: <strong>{{ last_full_month_display }}</strong></p>
       {% endif %}
-    </p>
-    {% elif last_full_month_display %}
-    <p class="text-muted mb-0 small">Data through: <strong>{{ last_full_month_display }}</strong></p>
-    {% endif %}
+      {% if years|length > 2 %}
+      <button type="button" id="report-older-years-toggle"
+              class="btn btn-outline-secondary btn-sm"
+              style="font-size:11px;">
+        Show older years
+      </button>
+      {% endif %}
+    </div>
   </div>
   <div class="d-flex align-items-center gap-2 flex-wrap">
     <button type="button"
@@ -220,19 +244,25 @@
             <th class="col-sticky-1 sortable text-center" style="width:40px;" data-col="1" title="On/Off Premise">
               <i class="bi bi-shop" title="On/Off"></i>
             </th>
-            <th class="col-sticky-2 sortable" data-col="2">Account</th>
-            <th class="sortable" data-col="3" style="width:100px;">City</th>
+            <th class="col-sticky-2" data-col="2">
+              <span class="sortable-trigger fw-semibold" data-sort-key="account" style="cursor:pointer;">Account</span><br>
+              <span class="sortable-trigger small text-muted" data-sort-key="city" style="cursor:pointer;">City</span>
+            </th>
             {% for year in years %}
-            <th class="sortable text-end" data-col="{{ forloop.counter|add:3 }}">{{ year }}</th>
+            <th class="sortable text-end{% if years|length > 2 and forloop.counter <= 2 %} old-year-col{% endif %}"
+                data-col="{{ forloop.counter|add:2 }}"
+                {% if years|length > 2 and forloop.counter <= 2 %}style="display:none;"{% endif %}>
+              '{{ year|stringformat:"s"|slice:"-2:" }}
+            </th>
             {% endfor %}
             {% if prior_year %}
             <th class="sortable text-end"
-                data-col="{{ years|length|add:4 }}">
-              {{ most_recent_year }} Diff
+                data-col="{{ years|length|add:3 }}">
+              +/&minus;
             </th>
             {% endif %}
-            <th class="sortable text-end" data-col="{% if prior_year %}{{ years|length|add:5 }}{% else %}{{ years|length|add:4 }}{% endif %}">Last 12m</th>
-            <th class="sortable text-end" data-col="{% if prior_year %}{{ years|length|add:6 }}{% else %}{{ years|length|add:5 }}{% endif %}">Diff</th>
+            <th class="sortable text-end l12m-divider" data-col="{% if prior_year %}{{ years|length|add:4 }}{% else %}{{ years|length|add:3 }}{% endif %}">L12M</th>
+            <th class="sortable text-end" data-col="{% if prior_year %}{{ years|length|add:5 }}{% else %}{{ years|length|add:4 }}{% endif %}">+/&minus;</th>
           </tr>
         </thead>
 
@@ -246,10 +276,11 @@
               <span class="visually-hidden">TOTAL</span>
             </td>
             <td class="col-sticky-2">Total</td>
-            <td></td>
             {% for year in years %}
             {% with val=total_by_year|get_item:year %}
-            <td class="text-end" data-value="{{ val }}">
+            <td class="text-end{% if years|length > 2 and forloop.counter <= 2 %} old-year-col{% endif %}"
+                data-value="{{ val }}"
+                {% if years|length > 2 and forloop.counter <= 2 %}style="display:none;"{% endif %}>
               {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
             </td>
             {% endwith %}
@@ -261,7 +292,7 @@
               {% endif %}
             </td>
             {% endif %}
-            <td class="text-end" data-value="{{ total_last_12 }}">
+            <td class="text-end l12m-divider" data-value="{{ total_last_12 }}">
               {% if total_last_12 %}{{ total_last_12|intcomma }}{% else %}&mdash;{% endif %}
             </td>
             <td class="text-end diff-col" data-value="{{ total_diff }}">
@@ -295,21 +326,25 @@
               {% endif %}
               <span class="visually-hidden">{{ row.on_off }}</span>
             </td>
-            <!-- Account Name -->
-            <td class="col-sticky-2 fw-semibold">
-              <a href="{% url 'account_detail_combined' row.account_id %}?tab=sales&return_to=report" class="text-reset text-decoration-none">{{ row.account_name }}</a>
+            <!-- Account + City (merged, stacked) -->
+            <td class="col-sticky-2"
+                data-account="{{ row.account_name }}"
+                data-city="{{ row.city }}">
+              <a href="{% url 'account_detail_combined' row.account_id %}?tab=sales&return_to=report"
+                 class="fw-semibold text-decoration-none">{{ row.account_name }}</a><br>
+              <span class="small text-muted">{{ row.city }}</span>
             </td>
-            <!-- City -->
-            <td style="max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ row.city }}</td>
             <!-- Year columns -->
             {% for year in years %}
             {% with units=row.year_units|get_item:year %}
-            <td class="text-end" data-value="{{ units|default:0 }}">
+            <td class="text-end{% if years|length > 2 and forloop.counter <= 2 %} old-year-col{% endif %}"
+                data-value="{{ units|default:0 }}"
+                {% if years|length > 2 and forloop.counter <= 2 %}style="display:none;"{% endif %}>
               {% if units %}{{ units|intcomma }}{% else %}&mdash;{% endif %}
             </td>
             {% endwith %}
             {% endfor %}
-            <!-- LFY Diff -->
+            <!-- LFY +/− -->
             {% if prior_year %}
             <td class="text-end diff-col" data-value="{{ row.lfy_diff|default:0 }}">
               {% if row.lfy_diff is not None %}
@@ -317,18 +352,18 @@
               {% endif %}
             </td>
             {% endif %}
-            <!-- Last 12 months -->
-            <td class="text-end" data-value="{{ row.last_12_units }}">
+            <!-- L12M -->
+            <td class="text-end l12m-divider" data-value="{{ row.last_12_units }}">
               {% if row.last_12_units %}{{ row.last_12_units|intcomma }}{% else %}&mdash;{% endif %}
             </td>
-            <!-- Diff -->
+            <!-- L12M +/− -->
             <td class="text-end diff-col" data-value="{{ row.diff }}">
               {% if row.diff > 0 %}+{% endif %}{{ row.diff|intcomma }}
             </td>
           </tr>
           {% empty %}
           <tr>
-            <td colspan="{% if prior_year %}{{ years|length|add:7 }}{% else %}{{ years|length|add:6 }}{% endif %}" class="text-center text-muted py-4">
+            <td colspan="{% if prior_year %}{{ years|length|add:6 }}{% else %}{{ years|length|add:5 }}{% endif %}" class="text-center text-muted py-4">
               No data matches the current filters.
             </td>
           </tr>
@@ -640,48 +675,70 @@
     if (!table) return;
 
     const tbody = document.getElementById('dataBody');
-    const headers = table.querySelectorAll('thead th.sortable');
-    let currentCol = -1;
-    let ascending = true;
+    const headers  = table.querySelectorAll('thead th.sortable');
+    const triggers = table.querySelectorAll('thead .sortable-trigger');
+    let currentCol     = -1;
+    let currentSortKey = null;
+    let ascending      = true;
 
-    function getCellValue(row, colIdx) {
+    // sortKey: if set, read cell.dataset[sortKey] (e.g. 'account' or 'city')
+    function getCellValue(row, colIdx, sortKey) {
       const cell = row.querySelectorAll('td')[colIdx];
       if (!cell) return '';
-      // Use data-value attribute for numeric columns (raw integer stored there)
+      if (sortKey && cell.dataset[sortKey] !== undefined) {
+        return cell.dataset[sortKey].toLowerCase();
+      }
+      // Numeric columns carry data-value
       if (cell.dataset.value !== undefined) {
         const n = parseFloat(cell.dataset.value);
         return isNaN(n) ? cell.dataset.value.toLowerCase() : n;
       }
-      // Text columns: use visually-hidden span if present (On/Off icon column)
+      // On/Off icon column uses a visually-hidden span
       const hidden = cell.querySelector('.visually-hidden');
       if (hidden) return hidden.textContent.trim().toLowerCase();
       return cell.textContent.trim().toLowerCase();
     }
 
+    function clearSortIndicators() {
+      headers.forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+      triggers.forEach(t => t.classList.remove('sort-asc', 'sort-desc'));
+    }
+
+    function sortBy(colIdx, sortKey, indicatorEl) {
+      if (currentCol === colIdx && currentSortKey === sortKey) {
+        ascending = !ascending;
+      } else {
+        currentCol     = colIdx;
+        currentSortKey = sortKey;
+        ascending      = true;
+      }
+      clearSortIndicators();
+      indicatorEl.classList.add(ascending ? 'sort-asc' : 'sort-desc');
+
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.sort((a, b) => {
+        const aVal = getCellValue(a, colIdx, sortKey);
+        const bVal = getCellValue(b, colIdx, sortKey);
+        if (aVal < bVal) return ascending ? -1 : 1;
+        if (aVal > bVal) return ascending ? 1 : -1;
+        return 0;
+      });
+      rows.forEach(r => tbody.appendChild(r));
+    }
+
+    // Standard th.sortable click (year cols, diff cols, On/Off)
     headers.forEach(th => {
       th.addEventListener('click', function () {
-        const colIdx = parseInt(this.dataset.col, 10);
-        if (currentCol === colIdx) {
-          ascending = !ascending;
-        } else {
-          currentCol = colIdx;
-          ascending = true;
-        }
+        sortBy(parseInt(this.dataset.col, 10), null, this);
+      });
+    });
 
-        // Update header classes
-        headers.forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
-        this.classList.add(ascending ? 'sort-asc' : 'sort-desc');
-
-        // Sort data rows only (totalsBody is a separate tbody and never touched)
-        const rows = Array.from(tbody.querySelectorAll('tr'));
-        rows.sort((a, b) => {
-          const aVal = getCellValue(a, colIdx);
-          const bVal = getCellValue(b, colIdx);
-          if (aVal < bVal) return ascending ? -1 : 1;
-          if (aVal > bVal) return ascending ? 1 : -1;
-          return 0;
-        });
-        rows.forEach(r => tbody.appendChild(r));
+    // Stacked Account / City span triggers
+    triggers.forEach(span => {
+      span.addEventListener('click', function () {
+        const th = this.closest('th');
+        const colIdx  = parseInt(th.dataset.col, 10);
+        sortBy(colIdx, this.dataset.sortKey, this);
       });
     });
   })();
@@ -817,5 +874,21 @@
     const m = document.cookie.match(/csrftoken=([^;]+)/);
     return m ? m[1] : '';
   }
+
+  // ---- Show / Hide older year columns ---------------------------------
+  (function () {
+    var btn = document.getElementById('report-older-years-toggle');
+    if (!btn) return;
+    var visible = false;
+    function update() {
+      var els = document.querySelectorAll('.report-table .old-year-col');
+      els.forEach(function (el) { el.style.display = visible ? '' : 'none'; });
+      btn.textContent = visible ? 'Hide older years' : 'Show older years';
+    }
+    btn.addEventListener('click', function () {
+      visible = !visible;
+      update();
+    });
+  })();
 </script>
 {% endblock %}
