@@ -144,7 +144,7 @@ def account_routes(request, account_pk):
                 'route_account_id': ra.pk,
                 'route_id': ra.route.pk,
                 'route_name': ra.route.name,
-                'account_count': ra.route.routeaccount_set.count(),
+                'account_count': ra.route.route_accounts.count(),
             }
             for ra in route_accounts
         ]
