@@ -9,6 +9,7 @@ from django.core.management import call_command
 from django.test import TestCase
 from django.urls import reverse
 
+from apps.accounts.models import Account
 from apps.core.models import Company, User
 from apps.core.rbac import Permission, Role
 
@@ -223,3 +224,84 @@ class DashboardRenderTest(TestCase):
             b'search',
             response.content.lower()
         )
+
+
+# ---------------------------------------------------------------------------
+# Dashboard search — smart state token tests
+# ---------------------------------------------------------------------------
+
+class DashboardSearchTest(TestCase):
+    """Smart state-code detection in the dashboard search query."""
+
+    def setUp(self):
+        self.company = Company.objects.create(
+            name='Search Test Co', slug='search-test-co'
+        )
+        self.user = User.objects.create_user(
+            username='searchtestadmin',
+            password='password',
+            company=self.company,
+        )
+        self.user.roles.add(Role.objects.get(codename='supplier_admin'))
+        self.client.login(username='searchtestadmin', password='password')
+
+        def acct(name, city, state):
+            return Account.objects.create(
+                company=self.company,
+                name=name,
+                city=city,
+                state=state,
+                state_normalized=state,
+            )
+
+        self.nj_total_wine = acct('Total Wine & More', 'Paramus',     'NJ')
+        self.ny_total_wine = acct('Total Wine & More', 'Garden City', 'NY')
+        self.nj_ridgewood  = acct('Corner Spirits',   'Ridgewood',   'NJ')
+        self.ny_ridgewood  = acct('Corner Spirits',   'Ridgewood',   'NY')
+        self.maplewood     = acct('Maplewood Wines',  'Maplewood',   'NJ')
+        self.ab_store      = acct('AB Fine Wine',     'Newark',      'NJ')
+
+    def _search(self, q):
+        resp = self.client.get(reverse('dashboard'), {'q': q})
+        self.assertEqual(resp.status_code, 200)
+        return list(resp.context['accounts'])
+
+    def _pks(self, results):
+        return {a.pk for a in results}
+
+    def test_state_code_alone_returns_only_that_state(self):
+        results = self._search('NJ')
+        pks = self._pks(results)
+        # NJ accounts present
+        self.assertIn(self.nj_total_wine.pk, pks)
+        self.assertIn(self.nj_ridgewood.pk,  pks)
+        self.assertIn(self.maplewood.pk,     pks)
+        self.assertIn(self.ab_store.pk,      pks)
+        # NY accounts absent
+        self.assertNotIn(self.ny_total_wine.pk, pks)
+        self.assertNotIn(self.ny_ridgewood.pk,  pks)
+
+    def test_name_and_state_returns_only_matching_state(self):
+        results = self._search('Total Wine NJ')
+        pks = self._pks(results)
+        self.assertIn(self.nj_total_wine.pk,    pks)
+        self.assertNotIn(self.ny_total_wine.pk, pks)
+
+    def test_city_and_state_narrows_to_correct_state(self):
+        results = self._search('Ridgewood NJ')
+        pks = self._pks(results)
+        self.assertIn(self.nj_ridgewood.pk,    pks)
+        self.assertNotIn(self.ny_ridgewood.pk, pks)
+
+    def test_name_only_no_state_filter_applied(self):
+        results = self._search('Maplewood')
+        pks = self._pks(results)
+        self.assertIn(self.maplewood.pk, pks)
+        # Both NJ accounts with Maplewood in name/city; NY accounts absent (no match)
+        self.assertNotIn(self.ny_total_wine.pk, pks)
+
+    def test_unknown_two_char_token_falls_back_to_text_search(self):
+        # 'AB' is not a valid state in this dataset, so it text-searches name/street/city
+        results = self._search('AB')
+        pks = self._pks(results)
+        self.assertIn(self.ab_store.pk, pks)

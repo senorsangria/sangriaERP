@@ -156,12 +156,25 @@ def dashboard(request):
         if query:
             base_qs = get_accounts_for_user(request.user)
             words = query.split()
+
+            valid_states = set(
+                base_qs
+                .exclude(state_normalized='')
+                .exclude(state_normalized__isnull=True)
+                .values_list('state_normalized', flat=True)
+                .distinct()
+            )
+
             for word in words:
-                base_qs = base_qs.filter(
-                    Q(name__icontains=word) |
-                    Q(street__icontains=word) |
-                    Q(city__icontains=word)
-                )
+                word_upper = word.upper()
+                if len(word) == 2 and word_upper in valid_states:
+                    base_qs = base_qs.filter(state_normalized=word_upper)
+                else:
+                    base_qs = base_qs.filter(
+                        Q(name__icontains=word) |
+                        Q(street__icontains=word) |
+                        Q(city__icontains=word)
+                    )
             from django.db.models import Count
             base_qs = base_qs.order_by('name')
             total = base_qs.count()
