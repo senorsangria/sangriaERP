@@ -150,27 +150,34 @@
         <div id="aam-main-menu">
           <div class="list-group list-group-flush">
 
-            {# --- ACTION ITEMS --- #}
-
+            {# 1. Add/View Notes #}
             {% if user|has_perm:'can_manage_account_notes' %}
             <button type="button"
                     id="aam-add-note-btn"
                     class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
-              <i class="bi bi-journal-text text-secondary"></i>
+              <span class="d-inline-block text-center" style="width:1.5em"><i class="bi bi-journal-text text-secondary"></i></span>
               <span>Add/View Notes</span>
               <span class="badge bg-secondary ms-1" id="aam-note-count-badge">0</span>
             </button>
             {% endif %}
 
+            {# 2. View Sales #}
+            {% if user|has_perm:'can_view_report_account_sales' %}
+            <button type="button"
+                    id="aam-view-sales-btn"
+                    class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
+              <span class="d-inline-block text-center" style="width:1.5em"><i class="bi bi-bar-chart"></i></span>
+              View Sales
+            </button>
+            {% endif %}
+
+            {# 3. Create Event #}
             {% if user|has_perm:'can_create_events' %}
             <div id="aam-create-event-wrapper">
               <a id="aam-create-event-link"
                  href="#"
-                 class="aam-menu-item d-block py-3 px-4
-                        text-decoration-none text-dark
-                        border-bottom btn btn-light
-                        rounded-0 w-100 text-start">
-                <i class="bi bi-calendar-plus me-2"></i>
+                 class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3 text-decoration-none text-dark">
+                <span class="d-inline-block text-center" style="width:1.5em"><i class="bi bi-calendar-plus"></i></span>
                 Create Event
               </a>
               <div id="aam-create-event-unknown"
@@ -185,11 +192,24 @@
             </div>
             {% endif %}
 
+            {# 4. View Events #}
+            {% if user|has_perm:'can_view_events' %}
+            <a id="aam-view-events"
+               href="#"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3 text-decoration-none text-dark">
+              <span class="d-inline-block text-center" style="width:1.5em"><i class="bi bi-calendar-event"></i></span>
+              View Events
+              <span class="badge bg-secondary ms-1"
+                    id="aam-event-count-badge">0</span>
+            </a>
+            {% endif %}
+
+            {# 5. Add to/View Routes #}
             {% if user|has_perm:'can_view_report_account_sales' %}
             <button type="button"
                     id="aam-add-route-btn"
                     class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
-              <i class="bi bi-bookmark-plus me-2"></i>
+              <span class="d-inline-block text-center" style="width:1.5em"><i class="bi bi-bookmark-plus"></i></span>
               Add to/View Routes
               <span class="badge bg-secondary ms-1"
                     id="aam-route-count-badge">0</span>
@@ -199,35 +219,12 @@
             {# --- DIVIDER --- #}
             <div class="dropdown-divider my-0"></div>
 
-            {# --- VIEW ITEMS --- #}
-
-            {% if user|has_perm:'can_view_report_account_sales' %}
-            <button class="aam-menu-item w-100 text-start btn btn-light rounded-0 py-3 px-4 border-bottom"
-                    id="aam-view-sales-btn">
-              <i class="bi bi-bar-chart me-2"></i>
-              View Sales
-            </button>
-            {% endif %}
-
-            {% if user|has_perm:'can_view_events' %}
-            <a id="aam-view-events"
-               href="#"
-               class="aam-menu-item d-block py-3 px-4
-                      text-decoration-none text-dark
-                      border-bottom btn btn-light
-                      rounded-0 w-100 text-start">
-              <i class="bi bi-calendar-event me-2"></i>
-              View Events
-              <span class="badge bg-secondary ms-1"
-                    id="aam-event-count-badge">0</span>
-            </a>
-            {% endif %}
-
+            {# 6. View Account Details #}
             {% if user|has_perm:'can_view_accounts' %}
             <a id="aam-view-details"
                href="#"
-               class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3">
-              <i class="bi bi-shop text-secondary"></i>
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3 text-decoration-none text-dark">
+              <span class="d-inline-block text-center" style="width:1.5em"><i class="bi bi-shop text-secondary"></i></span>
               <span>View Account Details</span>
             </a>
             {% endif %}
