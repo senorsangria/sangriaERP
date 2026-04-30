@@ -2303,6 +2303,16 @@ specific selections. The filter panel is collapsed by default on all screen size
   red (`diff-negative`) if negative, muted if zero.
 - On/Off column: `bi-cup-hot` icon for ON, `bi-shop` for OFF; tooltip with full text.
 - Row count shown below table.
+- **Empty-state Clear Filters link** includes `?clear_filters=1&distributor=<pk>` so the
+  view's `if 'clear_filters' in request.GET` branch is triggered and the session key
+  `report_account_sales_filters` is actually cleared. A plain `/reports/` link (no param)
+  falls through to the session-restore `else` branch and leaves filters in place.
+- **`#filterModal` is rendered outside the `{% if no_data %}` conditional**, gated only by
+  `{% if filter_options %}`. This ensures the top-bar "Filters" button (which is always
+  visible) has a valid modal target even when active filters produce zero results. When
+  `no_data=True` but `filter_options` is in context (the filter-active zero-results path),
+  the modal renders and the user can adjust or clear filters without resorting to manual
+  URL editing.
 
 **Custom template tag:** `apps/reports/templatetags/reports_tags.py`
 - `get_item` filter: `{{ dict|get_item:key }}` — used for dynamic dict key access in year_units column.

@@ -180,7 +180,7 @@
     <p class="mt-3 mb-1 fw-semibold text-muted">No data available</p>
     <p class="text-muted small">{{ no_data_reason }}</p>
     {% if filter_options and current_filters %}
-    <a href="{% url 'report_account_sales_by_year' %}" class="btn btn-sm btn-outline-secondary mt-2">
+    <a href="{% url 'report_account_sales_by_year' %}?clear_filters=1{% if selected_distributor %}&distributor={{ selected_distributor.pk }}{% endif %}" class="btn btn-sm btn-outline-secondary mt-2">
       Clear Filters
     </a>
     {% endif %}
@@ -343,7 +343,81 @@
 </div>
 
 <!-- ================================================================
-     Filter modal
+     Save to Route modal
+     ================================================================ -->
+<div class="modal fade" id="saveRouteModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Save to Route</h5>
+        <button type="button" class="btn-close"
+                data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <div class="form-check">
+            <input class="form-check-input"
+                   type="radio" name="route_action"
+                   id="action-new" value="new"
+                   checked>
+            <label class="form-check-label" for="action-new">
+              Create new route
+            </label>
+          </div>
+          <div id="new-route-section" class="mt-2 ms-4">
+            <input type="text"
+                   class="form-control form-control-sm"
+                   id="new-route-name"
+                   placeholder="Route name..."
+                   maxlength="100">
+          </div>
+        </div>
+        {% if user_routes %}
+        <div class="mb-3">
+          <div class="form-check">
+            <input class="form-check-input"
+                   type="radio" name="route_action"
+                   id="action-existing" value="existing">
+            <label class="form-check-label" for="action-existing">
+              Add to existing route
+            </label>
+          </div>
+          <div id="existing-route-section"
+               class="mt-2 ms-4 d-none">
+            <select class="form-select form-select-sm"
+                    id="existing-route-select">
+              <option value="">Select a route...</option>
+              {% for route in user_routes %}
+              <option value="{{ route.pk }}">{{ route.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        {% endif %}
+        <div id="route-save-message" class="d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button"
+                class="btn btn-secondary btn-sm"
+                data-bs-dismiss="modal">
+          Cancel
+        </button>
+        <button type="button"
+                class="btn btn-primary btn-sm"
+                id="confirm-save-route-btn">
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endif %}{# /no_data #}
+
+{% if filter_options %}
+<!-- ================================================================
+     Filter modal (rendered outside no_data conditional so the Filters
+     button works in all states, including filter-active zero results)
      ================================================================ -->
 <div class="modal fade" id="filterModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-scrollable">
@@ -513,7 +587,7 @@
         </form>
       </div>
       <div class="modal-footer py-2">
-        <a href="{% url 'report_account_sales_by_year' %}?distributor={{ selected_distributor.pk }}&clear_filters=1"
+        <a href="{% url 'report_account_sales_by_year' %}?clear_filters=1{% if selected_distributor %}&distributor={{ selected_distributor.pk }}{% endif %}"
            class="btn btn-outline-secondary btn-sm me-auto"
            id="clear-filters-link">
           <i class="bi bi-x-circle me-1"></i>Clear All
@@ -527,78 +601,7 @@
     </div>
   </div>
 </div>
-
-<!-- ================================================================
-     Save to Route modal
-     ================================================================ -->
-<div class="modal fade" id="saveRouteModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Save to Route</h5>
-        <button type="button" class="btn-close"
-                data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div class="mb-3">
-          <div class="form-check">
-            <input class="form-check-input"
-                   type="radio" name="route_action"
-                   id="action-new" value="new"
-                   checked>
-            <label class="form-check-label" for="action-new">
-              Create new route
-            </label>
-          </div>
-          <div id="new-route-section" class="mt-2 ms-4">
-            <input type="text"
-                   class="form-control form-control-sm"
-                   id="new-route-name"
-                   placeholder="Route name..."
-                   maxlength="100">
-          </div>
-        </div>
-        {% if user_routes %}
-        <div class="mb-3">
-          <div class="form-check">
-            <input class="form-check-input"
-                   type="radio" name="route_action"
-                   id="action-existing" value="existing">
-            <label class="form-check-label" for="action-existing">
-              Add to existing route
-            </label>
-          </div>
-          <div id="existing-route-section"
-               class="mt-2 ms-4 d-none">
-            <select class="form-select form-select-sm"
-                    id="existing-route-select">
-              <option value="">Select a route...</option>
-              {% for route in user_routes %}
-              <option value="{{ route.pk }}">{{ route.name }}</option>
-              {% endfor %}
-            </select>
-          </div>
-        </div>
-        {% endif %}
-        <div id="route-save-message" class="d-none"></div>
-      </div>
-      <div class="modal-footer">
-        <button type="button"
-                class="btn btn-secondary btn-sm"
-                data-bs-dismiss="modal">
-          Cancel
-        </button>
-        <button type="button"
-                class="btn btn-primary btn-sm"
-                id="confirm-save-route-btn">
-          Save
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
-{% endif %}{# /no_data #}
+{% endif %}{# /filter_options #}
 
 {% endblock %}
 

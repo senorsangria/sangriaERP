@@ -1254,3 +1254,75 @@ class AmbassadorManagerReportAccessTest(TestCase):
         response = self.client.get(reverse('report_account_sales_by_year'))
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response['Location'], reverse('dashboard'))
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for filter-clearing bugs (Bug 1 + Bug 2)
+# ---------------------------------------------------------------------------
+
+class FilterActiveNoDataTest(TestCase):
+    """
+    Regression tests for the filter-active zero-results (no_data) state.
+
+    Bug 1: Empty-state "Clear Filters" link was a plain /reports/ URL with no
+    ?clear_filters=1, so the view restored filters from session on every visit.
+
+    Bug 2: #filterModal was inside the {% else %} branch of {% if no_data %},
+    so the top-bar "Filters" button had no modal target in the DOM when filters
+    produced zero results.
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        self.distributor = make_distributor(self.company)
+        self.item = make_item(self.company)
+        self.batch = make_batch(self.company, self.distributor)
+        self.account = make_account(
+            self.company, self.distributor, name='Regression Bar', city='Newark'
+        )
+        make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 10)
+        self.user = make_user(self.company, 'supplier_admin', username='sa_reg')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _apply_nonmatching_filter(self):
+        """GET the report with a filter that produces zero results, saving it to session."""
+        return self.client.get(
+            reverse('report_account_sales_by_year'),
+            {'account_name': 'zzznomatch'},
+        )
+
+    def test_clear_filters_param_clears_session(self):
+        """GET ?clear_filters=1&distributor=<pk> removes report_account_sales_filters from session."""
+        self._apply_nonmatching_filter()
+        self.assertIn('report_account_sales_filters', self.client.session)
+
+        response = self.client.get(
+            reverse('report_account_sales_by_year'),
+            {'clear_filters': '1', 'distributor': str(self.distributor.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(
+            'report_account_sales_filters', self.client.session,
+            'Session filter key must be absent after ?clear_filters=1',
+        )
+
+    def test_no_data_state_renders_filter_modal(self):
+        """When filters produce zero results, #filterModal must be present in the DOM."""
+        response = self._apply_nonmatching_filter()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context.get('no_data'), 'Expected no_data=True')
+        self.assertContains(
+            response, 'id="filterModal"',
+            msg_prefix='#filterModal must be in the DOM even when no_data=True with active filters',
+        )
+
+    def test_no_data_state_clear_filters_link_has_param(self):
+        """The empty-state Clear Filters button must include ?clear_filters=1 in its href."""
+        response = self._apply_nonmatching_filter()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context.get('no_data'), 'Expected no_data=True')
+        self.assertContains(
+            response, 'clear_filters=1',
+            msg_prefix='Empty-state Clear Filters link must include ?clear_filters=1',
+        )
