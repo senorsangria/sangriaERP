@@ -51,6 +51,29 @@ if os.getenv('REPL_SLUG'):
         'https://*.replit.dev',
     ]
 
+# Support Replit's nested cluster subdomain format (e.g. *.riker.replit.dev).
+# REPLIT_DEV_DOMAIN holds the exact preview host; Django's single-level wildcard
+# matching can't reach it through *.replit.dev alone.
+REPLIT_DEV_DOMAIN = os.getenv('REPLIT_DEV_DOMAIN', '')
+if REPLIT_DEV_DOMAIN:
+    ALLOWED_HOSTS.append(REPLIT_DEV_DOMAIN)
+    CSRF_TRUSTED_ORIGINS.append(f'https://{REPLIT_DEV_DOMAIN}')
+
+ALLOWED_HOSTS += [
+    '*.riker.replit.dev',
+    '*.picard.replit.dev',
+    '*.janeway.replit.dev',
+    '*.sisko.replit.dev',
+    '*.kirk.replit.dev',
+]
+CSRF_TRUSTED_ORIGINS += [
+    'https://*.riker.replit.dev',
+    'https://*.picard.replit.dev',
+    'https://*.janeway.replit.dev',
+    'https://*.sisko.replit.dev',
+    'https://*.kirk.replit.dev',
+]
+
 # ---------------------------------------------------------------------------
 # Application definition
 # ---------------------------------------------------------------------------
