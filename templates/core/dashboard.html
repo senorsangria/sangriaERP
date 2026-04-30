@@ -561,6 +561,8 @@ function toTitleCase(str) {
 
   // ---- Render current routes ----
   function renderCurrentRoutes(routes) {
+    console.log('[ROUTES DEBUG] renderCurrentRoutes called with', routes ? routes.length : 'null', 'routes');
+    console.log('[ROUTES DEBUG] container element found:', !!document.getElementById('aam-current-routes'));
     var container = document.getElementById('aam-current-routes');
     var emptyEl   = document.getElementById('aam-current-routes-empty');
     if (!container) return;
@@ -571,6 +573,7 @@ function toTitleCase(str) {
       if (emptyEl) emptyEl.classList.remove('d-none');
     } else {
       if (emptyEl) emptyEl.classList.add('d-none');
+      console.log('[ROUTES DEBUG] About to render rows for routes:', JSON.stringify(routes));
       routes.forEach(function (r) {
         var isLast = routes.length === 1;
         var div = document.createElement('div');
@@ -597,6 +600,7 @@ function toTitleCase(str) {
             '</ul>' +
           '</div>';
         container.appendChild(div);
+        console.log('[ROUTES DEBUG] Appended row for route:', r.route_name);
       });
     }
 
@@ -778,6 +782,7 @@ function toTitleCase(str) {
       if (emptyEl) emptyEl.classList.add('d-none');
 
       // Fetch both in parallel
+      console.log('[ROUTES DEBUG] Fetching routes for account:', currentAccountId, 'distributor:', currentDistributorId);
       Promise.all([
         fetch('/routes/?distributor_id=' + encodeURIComponent(currentDistributorId), {
           headers: {'X-Requested-With': 'XMLHttpRequest'}
@@ -786,9 +791,13 @@ function toTitleCase(str) {
           headers: {'X-Requested-With': 'XMLHttpRequest'}
         }).then(function (r) { return r.json(); })
       ]).then(function (results) {
+        console.log('[ROUTES DEBUG] Promise.all resolved');
+        console.log('[ROUTES DEBUG] allRoutes response:', JSON.stringify(results[0]));
+        console.log('[ROUTES DEBUG] accountRoutes response:', JSON.stringify(results[1]));
         var allRoutes     = results[0];
         var accountRoutes = results[1];
 
+        console.log('[ROUTES DEBUG] About to render', (accountRoutes.routes || []).length, 'routes');
         renderCurrentRoutes(accountRoutes.routes || []);
 
         var accountRouteIds = new Set(
@@ -798,7 +807,11 @@ function toTitleCase(str) {
           return !accountRouteIds.has(r.id);
         });
         populateExistingRouteSelect(available);
-      }).catch(function () {
+      }).catch(function (err) {
+        console.log('[ROUTES DEBUG] Promise.all REJECTED:', err);
+        if (aamRouteMsg) {
+          aamRouteMsg.innerHTML = '<div class="alert alert-danger small py-1 px-2">Debug error: ' + (err && err.message ? err.message : 'unknown') + '</div>';
+        }
         if (aamExistingSelect) {
           aamExistingSelect.innerHTML = '<option value="">Error loading routes</option>';
         }
