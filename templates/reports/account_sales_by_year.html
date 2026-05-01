@@ -66,27 +66,14 @@
     }
   }
 
-  /* Sort arrows in header — th-level (year/diff/on-off columns) */
+  /* Sortable column affordance */
   .report-table thead th.sortable {
     cursor: pointer;
     user-select: none;
   }
-  .report-table thead th.sortable::after {
-    content: ' \2195';
-    opacity: .4;
-    font-size: .75em;
+  .report-table .sortable-trigger {
+    cursor: pointer;
   }
-  .report-table thead th.sort-asc::after  { content: ' \2191'; opacity: 1; }
-  .report-table thead th.sort-desc::after { content: ' \2193'; opacity: 1; }
-
-  /* Sort arrows — span-level triggers (Account / City stacked header) */
-  .sortable-trigger::after {
-    content: ' \2195';
-    opacity: .4;
-    font-size: .75em;
-  }
-  .sortable-trigger.sort-asc::after  { content: ' \2191'; opacity: 1; }
-  .sortable-trigger.sort-desc::after { content: ' \2193'; opacity: 1; }
 
   /* Vertical separator left of L12M column */
   .report-table th.l12m-divider,
@@ -241,28 +228,30 @@
               <input type="checkbox" id="select-all-accounts"
                      class="form-check-input">
             </th>
-            <th class="col-sticky-1 sortable text-center" style="width:40px;" data-col="1" title="On/Off Premise">
+            <th class="col-sticky-1 sortable text-center" style="width:40px;" data-col="1" data-sort-key="on_off" title="On/Off Premise">
               <i class="bi bi-shop" title="On/Off"></i>
             </th>
             <th class="col-sticky-2" data-col="2">
-              <span class="sortable-trigger fw-semibold" data-sort-key="account" style="cursor:pointer;">Account</span><br>
-              <span class="sortable-trigger small text-muted" data-sort-key="city" style="cursor:pointer;">City</span>
+              <span class="sortable-trigger fw-semibold" data-sort-key="account">Account</span><br>
+              <span class="sortable-trigger small" data-sort-key="city">City</span>
             </th>
             {% for year in years %}
             <th class="sortable text-end{% if years|length > 2 and forloop.counter <= 2 %} old-year-col{% endif %}"
                 data-col="{{ forloop.counter|add:2 }}"
+                data-sort-key="year_{{ year }}"
                 {% if years|length > 2 and forloop.counter <= 2 %}style="display:none;"{% endif %}>
               '{{ year|stringformat:"s"|slice:"-2:" }}
             </th>
             {% endfor %}
             {% if prior_year %}
             <th class="sortable text-end"
-                data-col="{{ years|length|add:3 }}">
+                data-col="{{ years|length|add:3 }}"
+                data-sort-key="lfy_diff">
               +/&minus;
             </th>
             {% endif %}
-            <th class="sortable text-end l12m-divider" data-col="{% if prior_year %}{{ years|length|add:4 }}{% else %}{{ years|length|add:3 }}{% endif %}">L12M</th>
-            <th class="sortable text-end" data-col="{% if prior_year %}{{ years|length|add:5 }}{% else %}{{ years|length|add:4 }}{% endif %}">+/&minus;</th>
+            <th class="sortable text-end l12m-divider" data-col="{% if prior_year %}{{ years|length|add:4 }}{% else %}{{ years|length|add:3 }}{% endif %}" data-sort-key="l12m">L12M</th>
+            <th class="sortable text-end" data-col="{% if prior_year %}{{ years|length|add:5 }}{% else %}{{ years|length|add:4 }}{% endif %}" data-sort-key="l12m_diff">+/&minus;</th>
           </tr>
         </thead>
 
@@ -332,7 +321,7 @@
                 data-city="{{ row.city }}">
               <a href="{% url 'account_detail_combined' row.account_id %}?tab=sales&return_to=report"
                  class="fw-semibold text-decoration-none">{{ row.account_name }}</a><br>
-              <span class="small text-muted">{{ row.city }}</span>
+              <span class="small">{{ row.city }}</span>
             </td>
             <!-- Year columns -->
             {% for year in years %}
@@ -641,6 +630,7 @@
 {% endblock %}
 
 {% block extra_js %}
+{{ saved_sort|json_script:"saved-sort-data" }}
 <script>
   // ---- Negative value red coloring (applied via JS from data-value) ---
   function applyNegativeColors() {
@@ -681,6 +671,9 @@
     let currentSortKey = null;
     let ascending      = true;
 
+    const savedSortEl = document.getElementById('saved-sort-data');
+    const SAVED_SORT = savedSortEl ? JSON.parse(savedSortEl.textContent) : null;
+
     // sortKey: if set, read cell.dataset[sortKey] (e.g. 'account' or 'city')
     function getCellValue(row, colIdx, sortKey) {
       const cell = row.querySelectorAll('td')[colIdx];
@@ -704,8 +697,13 @@
       triggers.forEach(t => t.classList.remove('sort-asc', 'sort-desc'));
     }
 
-    function sortBy(colIdx, sortKey, indicatorEl) {
-      if (currentCol === colIdx && currentSortKey === sortKey) {
+    // forcedAscending: if provided, use it instead of toggling
+    function performSort(colIdx, sortKey, indicatorEl, forcedAscending) {
+      if (forcedAscending !== undefined) {
+        ascending      = forcedAscending;
+        currentCol     = colIdx;
+        currentSortKey = sortKey;
+      } else if (currentCol === colIdx && currentSortKey === sortKey) {
         ascending = !ascending;
       } else {
         currentCol     = colIdx;
@@ -726,10 +724,26 @@
       rows.forEach(r => tbody.appendChild(r));
     }
 
+    function saveSortToServer(key, direction) {
+      fetch('{% url "report_account_sales_save_sort" %}', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-CSRFToken': getCsrf(),
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: 'key=' + encodeURIComponent(key) + '&direction=' + encodeURIComponent(direction),
+      }).catch(function(err) {
+        console.warn('Failed to save sort state:', err);
+      });
+    }
+
     // Standard th.sortable click (year cols, diff cols, On/Off)
     headers.forEach(th => {
       th.addEventListener('click', function () {
-        sortBy(parseInt(this.dataset.col, 10), null, this);
+        const colIdx = parseInt(this.dataset.col, 10);
+        performSort(colIdx, null, this);
+        saveSortToServer(this.dataset.sortKey || '', ascending ? 'asc' : 'desc');
       });
     });
 
@@ -737,10 +751,34 @@
     triggers.forEach(span => {
       span.addEventListener('click', function () {
         const th = this.closest('th');
-        const colIdx  = parseInt(th.dataset.col, 10);
-        sortBy(colIdx, this.dataset.sortKey, this);
+        const colIdx = parseInt(th.dataset.col, 10);
+        performSort(colIdx, this.dataset.sortKey, this);
+        saveSortToServer(this.dataset.sortKey, ascending ? 'asc' : 'desc');
       });
     });
+
+    // Apply saved sort on page load; silently skips if the column isn't in the DOM
+    function applySavedSort() {
+      if (!SAVED_SORT || !SAVED_SORT.key) return;
+      const forcedAscending = (SAVED_SORT.direction === 'asc');
+
+      // Triggers first (account, city)
+      const triggerEl = table.querySelector('.sortable-trigger[data-sort-key="' + SAVED_SORT.key + '"]');
+      if (triggerEl) {
+        const th = triggerEl.closest('th');
+        const colIdx = parseInt(th.dataset.col, 10);
+        performSort(colIdx, SAVED_SORT.key, triggerEl, forcedAscending);
+        return;
+      }
+
+      // th.sortable (on_off, year_*, lfy_diff, l12m, l12m_diff)
+      const thEl = table.querySelector('thead th.sortable[data-sort-key="' + SAVED_SORT.key + '"]');
+      if (!thEl) return;
+      const colIdx = parseInt(thEl.dataset.col, 10);
+      performSort(colIdx, null, thEl, forcedAscending);
+    }
+
+    document.addEventListener('DOMContentLoaded', applySavedSort);
   })();
 
   // ---- Select all toggle -----------------------------------------------

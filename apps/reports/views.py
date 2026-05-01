@@ -8,7 +8,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Max, Sum
 from django.db.models.functions import ExtractMonth
-from django.http import Http404, HttpResponse, HttpResponseForbidden, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseForbidden, HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.accounts.models import Account
@@ -36,6 +36,7 @@ def _truncate(s, max_len):
 # ---------------------------------------------------------------------------
 
 _REPORT_FILTER_SESSION_KEY = 'report_account_sales_filters'
+_REPORT_SORT_SESSION_KEY = 'report_account_sales_sort'
 _REPORT_FILTER_DEFAULTS = {
     'item_name': [],
     'on_off': '',
@@ -186,6 +187,7 @@ def account_sales_by_year(request):
 
     if 'clear_filters' in request.GET:
         request.session.pop(_REPORT_FILTER_SESSION_KEY, None)
+        request.session.pop(_REPORT_SORT_SESSION_KEY, None)
         filters = dict(_REPORT_FILTER_DEFAULTS)
     elif is_filter_submit:
         filters = {
@@ -205,6 +207,7 @@ def account_sales_by_year(request):
         filters = {**_REPORT_FILTER_DEFAULTS, **stored}
 
     current_filters = filters
+    saved_sort = request.session.get(_REPORT_SORT_SESSION_KEY, None)
 
     active_filter_count = sum([
         1 if current_filters.get('account_name') else 0,
@@ -289,6 +292,7 @@ def account_sales_by_year(request):
             'available_account_types': available_account_types,
             'user_routes': user_routes,
             'active_filter_count': active_filter_count,
+            'saved_sort': saved_sort,
         })
 
     lfm_year = max_past_sale.year
@@ -366,6 +370,7 @@ def account_sales_by_year(request):
             'available_account_types': available_account_types,
             'user_routes': user_routes,
             'active_filter_count': active_filter_count,
+            'saved_sort': saved_sort,
         })
 
     # ---- Fetch account objects ------------------------------------------
@@ -433,7 +438,34 @@ def account_sales_by_year(request):
         'active_filter_count': active_filter_count,
         'most_recent_year': most_recent_year,
         'prior_year': prior_year,
+        'saved_sort': saved_sort,
     })
+
+
+# ---------------------------------------------------------------------------
+# Sort state endpoint
+# ---------------------------------------------------------------------------
+
+@login_required
+def report_account_sales_save_sort(request):
+    """AJAX POST: persist column sort state for the Account Sales by Year report."""
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+    if not request.user.has_permission('can_view_report_account_sales'):
+        return HttpResponseForbidden()
+
+    key = request.POST.get('key', '').strip()
+    direction = request.POST.get('direction', '').strip()
+
+    if direction not in ('asc', 'desc'):
+        return JsonResponse({'success': False, 'error': 'invalid direction'}, status=400)
+
+    if not key:
+        request.session.pop(_REPORT_SORT_SESSION_KEY, None)
+    else:
+        request.session[_REPORT_SORT_SESSION_KEY] = {'key': key, 'direction': direction}
+
+    return JsonResponse({'success': True})
 
 
 # ---------------------------------------------------------------------------

@@ -2343,6 +2343,26 @@ specific selections. The filter panel is collapsed by default on all screen size
 - Account multi-select filter (selecting individual accounts from a searchable list).
   Not implemented due to UX complexity with potentially hundreds of accounts.
 
+**UI tweaks (May 2026):**
+- **City font color matches Account:** `text-muted` removed from the City `<span>` in both
+  the `<th>` header and the data row `<td>`. City stays smaller via the `small` class only.
+- **Sort indicator characters removed:** The ↕ ↑ ↓ `::after` pseudo-element rules are gone.
+  Sortable columns are identified by `cursor:pointer` on hover; click direction is communicated
+  by the resulting row order, not by an arrow icon. The `sort-asc` / `sort-desc` classes still
+  toggle on the active element to preserve sort state for the persistence feature.
+- **Sort state persisted globally per user:** Stored in session under key
+  `report_account_sales_sort` as `{'key': str, 'direction': 'asc'|'desc'}`. Not scoped to a
+  specific distributor — one preferred sort applies across all distributors. Each sortable
+  element carries a stable `data-sort-key` attribute: `account`, `city`, `on_off`,
+  `year_<int>` (e.g. `year_2024`), `lfy_diff`, `l12m`, `l12m_diff`. On page load,
+  `saved_sort` is passed from the view as a Python dict (serialised to JSON in the template
+  via `json_script`); JS reads it after DOM ready and applies it by querying for the matching
+  `data-sort-key`. If the column doesn't exist in the current DOM (e.g. a saved year no
+  longer in the years list, or `lfy_diff` when `prior_year` is `None`), the saved sort is
+  silently ignored and the server-side default (alphabetical by account name) stays in effect.
+  Sort writes go via AJAX POST to `/reports/save-sort/` (`report_account_sales_save_sort`).
+  The `clear_filters` action also clears the sort key.
+
 ---
 
 ### Account Detail Sales View

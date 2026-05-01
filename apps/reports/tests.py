@@ -1428,3 +1428,95 @@ class MobileLayoutRefactorTest(TestCase):
         self.assertEqual(cols[0].strip(), 'Account Name')
         self.assertEqual(cols[1].strip(), 'City')
         self.assertEqual(cols[2].strip(), 'On/Off')
+
+
+# ---------------------------------------------------------------------------
+# Sort persistence tests
+# ---------------------------------------------------------------------------
+
+class SaveSortEndpointTest(TestCase):
+    """Tests for the report_account_sales_save_sort AJAX endpoint."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.user = make_user(self.company, 'supplier_admin', username='sa_sort')
+        self.client = Client()
+        self.client.force_login(self.user)
+        self.url = reverse('report_account_sales_save_sort')
+
+    def test_save_sort_endpoint_stores_in_session(self):
+        """POST with valid key and direction stores the sort state in the session."""
+        response = self.client.post(self.url, {'key': 'account', 'direction': 'desc'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'success': True})
+        saved = self.client.session.get('report_account_sales_sort')
+        self.assertEqual(saved, {'key': 'account', 'direction': 'desc'})
+
+    def test_save_sort_endpoint_clears_when_key_empty(self):
+        """POST with an empty key removes the sort session key."""
+        session = self.client.session
+        session['report_account_sales_sort'] = {'key': 'l12m', 'direction': 'asc'}
+        session.save()
+        response = self.client.post(self.url, {'key': '', 'direction': 'asc'})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('report_account_sales_sort', self.client.session)
+
+    def test_save_sort_endpoint_rejects_invalid_direction(self):
+        """POST with an unrecognised direction returns 400."""
+        response = self.client.post(self.url, {'key': 'account', 'direction': 'sideways'})
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json().get('success'))
+
+    def test_save_sort_endpoint_rejects_get(self):
+        """GET request to the save-sort endpoint returns 405 Method Not Allowed."""
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 405)
+
+    def test_save_sort_endpoint_requires_permission(self):
+        """User without can_view_report_account_sales gets 403."""
+        user = make_user(self.company, 'ambassador', username='amb_sort')
+        self.client.force_login(user)
+        response = self.client.post(self.url, {'key': 'account', 'direction': 'asc'})
+        self.assertEqual(response.status_code, 403)
+
+    def test_clear_filters_also_clears_sort(self):
+        """GET ?clear_filters=1 removes both the filter and sort session keys."""
+        self.company2 = make_company(name='Sort Clear Co')
+        distributor = make_distributor(self.company, name='Sort Clear Dist')
+        item = make_item(self.company, item_code='SCTEST')
+        batch = make_batch(self.company, distributor)
+        account = make_account(self.company, distributor, name='Sort Clear Bar')
+        make_sale(self.company, batch, account, item, date(2024, 6, 1), 10)
+
+        # Prime both session keys
+        session = self.client.session
+        session['report_account_sales_filters'] = {'account_name': 'test'}
+        session['report_account_sales_sort'] = {'key': 'l12m', 'direction': 'desc'}
+        session.save()
+
+        response = self.client.get(
+            reverse('report_account_sales_by_year'),
+            {'clear_filters': '1'},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('report_account_sales_filters', self.client.session)
+        self.assertNotIn('report_account_sales_sort', self.client.session)
+
+    def test_saved_sort_passed_to_context(self):
+        """Setting the sort session key causes saved_sort to appear in the template context."""
+        distributor = make_distributor(self.company, name='Context Dist')
+        item = make_item(self.company, item_code='CTXTEST')
+        batch = make_batch(self.company, distributor)
+        account = make_account(self.company, distributor, name='Context Bar')
+        make_sale(self.company, batch, account, item, date(2024, 6, 1), 10)
+
+        session = self.client.session
+        session['report_account_sales_sort'] = {'key': 'city', 'direction': 'asc'}
+        session.save()
+
+        response = self.client.get(reverse('report_account_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['saved_sort'],
+            {'key': 'city', 'direction': 'asc'},
+        )
