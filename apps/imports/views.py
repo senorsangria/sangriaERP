@@ -49,6 +49,13 @@ def _require_supplier_admin(request):
     return None
 
 
+def _require_permission(request, codename):
+    """Return redirect if the authenticated user lacks the named permission, else None."""
+    if not request.user.is_authenticated or not request.user.has_permission(codename):
+        return redirect('access_denied')
+    return None
+
+
 def _temp_import_dir():
     """Return the directory used for temporary CSV uploads."""
     from django.conf import settings
@@ -747,7 +754,7 @@ def import_success(request, batch_pk):
 # ---------------------------------------------------------------------------
 
 def mapping_list(request):
-    denied = _require_supplier_admin(request)
+    denied = _require_permission(request, 'can_manage_item_mapping')
     if denied:
         return denied
 
@@ -785,7 +792,7 @@ def mapping_list(request):
 
 
 def mapping_create(request):
-    denied = _require_supplier_admin(request)
+    denied = _require_permission(request, 'can_manage_item_mapping')
     if denied:
         return denied
 
@@ -815,7 +822,7 @@ def mapping_create(request):
 
 
 def mapping_edit(request, pk):
-    denied = _require_supplier_admin(request)
+    denied = _require_permission(request, 'can_manage_item_mapping')
     if denied:
         return denied
 
@@ -843,7 +850,7 @@ def mapping_edit(request, pk):
 # ---------------------------------------------------------------------------
 
 def batch_list(request):
-    denied = _require_supplier_admin(request)
+    denied = _require_permission(request, 'can_view_import_history')
     if denied:
         return denied
 
@@ -919,7 +926,7 @@ def batch_list(request):
 
 
 def batch_detail(request, pk):
-    denied = _require_supplier_admin(request)
+    denied = _require_permission(request, 'can_view_import_history')
     if denied:
         return denied
 
@@ -940,7 +947,7 @@ def batch_detail(request, pk):
 
 
 def batch_delete(request, pk):
-    denied = _require_supplier_admin(request)
+    denied = _require_permission(request, 'can_view_import_history')
     if denied:
         return denied
 

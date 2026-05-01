@@ -1731,7 +1731,7 @@ Replaced the previous single `role` CharField on User.
 | Distributor Contact | `distributor_contact` |
 | Payroll Reviewer | `payroll_reviewer` |
 
-### Permissions (32 total)
+### Permissions (35 total)
 
 **Authentication & Navigation**
 - `can_access_dashboard` — Can access the dashboard
@@ -1755,6 +1755,9 @@ Replaced the previous single `role` CharField on User.
 
 **Imports**
 - `can_import_sales_data` — Can import sales data files
+- `can_view_import_history` — Can view sales import history (supplier_admin only)
+- `can_manage_item_mapping` — Can view and manage item mappings (supplier_admin only)
+- `can_run_historical_event_import` — Can run the historical event import tool (supplier_admin only)
 
 **Accounts**
 - `can_view_accounts` — Can view the account list and detail pages
@@ -3202,4 +3205,75 @@ with no mocking required.
 - Order rows clickable to expand/collapse line items
 - Appears below portfolio grid in the View Sales section of the AAM
 
-*Last updated: April 2026*
+## Navigation Menu Architecture
+
+### Overview
+The sidebar and mobile nav are data-driven. `NAV_SECTIONS` and `NAV_ITEMS` in
+`apps/core/nav.py` are the single source of truth. Add or move a menu item by
+editing `NAV_ITEMS` only — no template changes required.
+
+### Section structure
+| Key | Label | Collapsible |
+|-----|-------|-------------|
+| `main` | *(none — unlabeled)* | No |
+| `reports` | Reports | No |
+| `admin_tools` | Admin Tools | Yes |
+
+Empty sections (no visible items for the current user) are suppressed entirely.
+The `main` section is always unlabeled. `Reports` and `Admin Tools` show their
+labels when they have at least one visible item.
+
+### Item dict schema
+```python
+{
+  'label': str,           # Text shown in the menu
+  'url_name': str,        # Django URL name (must resolve)
+  'icon': str,            # Bootstrap Icons class, e.g. 'bi-calendar-event'
+  'permission': str,      # OR 'role_check' (see below) — exactly one required
+  'section': str,         # Key from NAV_SECTIONS
+  'active_match': str,    # Substring matched against request.resolver_match.url_name
+}
+```
+
+- `permission`: codename passed to `user.has_permission()`. Preferred for new items.
+- `role_check`: attribute name passed to `getattr(user, …)` for role-based gates
+  (e.g. `'is_staff'`). Use only when no permission codename exists.
+- Neither key: item shown to all authenticated users.
+
+### Permission gating
+Items with `permission` use `user.has_permission(codename)`.
+Items with `role_check` use `getattr(user, role_check, False)`.
+Permissions are preferred over role checks for all new items.
+
+### Admin Tools collapse
+- State persisted in Django session under `'admin_tools_collapsed'` (default: `True`).
+- AJAX endpoint `POST /ui/admin-tools-state/` (name: `save_admin_tools_state`) saves changes.
+- The context processor exposes `admin_tools_collapsed` to all templates.
+- Desktop and mobile toggles share the same session state. JavaScript syncs them on
+  click so they always agree even when both are visible (e.g. on a resize).
+
+### Shared partial
+`templates/_nav_items.html` is `{% include %}`d by both the desktop sidebar and
+the mobile navbar in `base.html`. The `nav_context` variable (`'desktop'` or
+`'mobile'`) is passed via `{% include … with nav_context='…' %}` to disambiguate
+Bootstrap collapse target IDs when both navs are in the DOM simultaneously.
+
+### Static items NOT in NAV_ITEMS (hardcoded in base.html)
+- **Dashboard** — top of sidebar and mobile nav; always shown to authenticated users.
+- **My Profile** — sidebar footer (desktop) and near-bottom of mobile nav.
+- **Django Admin** — `{% if user.is_staff %}` block; shown below nav items.
+- **Sign Out** — form POST at bottom of mobile nav; accessible via user dropdown on desktop.
+
+### Role → visible menu (post-refactor, May 2026)
+| Role | Sections visible |
+|------|-----------------|
+| Supplier Admin | main (Events, Accounts, Distributors) · Reports · Admin Tools (all 7 items, Account Import only if can_import_sales_data) |
+| Sales Manager | main (Events, Accounts) · Reports |
+| Territory Manager | main (Events, Accounts) · Reports |
+| Ambassador Manager | main (Events, Accounts) · Reports |
+| Ambassador | main (Events only) |
+| Payroll Reviewer | main (Events only) |
+| Distributor Contact | *(empty — no permissions)* |
+| SaaS Admin | main (Events, Accounts, Distributors) · Admin Tools (Users, Brands, Sales Import, Account Import) |
+
+*Last updated: May 2026*

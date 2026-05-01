@@ -24,4 +24,7 @@ urlpatterns = [
 
     # Access denied
     path('access-denied/', views.access_denied, name='access_denied'),
+
+    # UI state persistence
+    path('ui/admin-tools-state/', views.save_admin_tools_state, name='save_admin_tools_state'),
 ]

@@ -305,3 +305,272 @@ class DashboardSearchTest(TestCase):
         results = self._search('AB')
         pks = self._pks(results)
         self.assertIn(self.ab_store.pk, pks)
+
+
+# ---------------------------------------------------------------------------
+# Navigation system tests (PART 5)
+# ---------------------------------------------------------------------------
+
+class NavSystemTest(TestCase):
+    """Tests for apps.core.nav.get_nav_for_user()."""
+
+    def setUp(self):
+        self.company = make_company('NavTest Co')
+        self.factory = __import__('django.test', fromlist=['RequestFactory']).RequestFactory()
+
+    def _make_request(self, url='/'):
+        from django.urls import resolve
+        req = self.factory.get(url)
+        try:
+            req.resolver_match = resolve(url)
+        except Exception:
+            req.resolver_match = None
+        return req
+
+    def test_nav_for_supplier_admin_includes_all_sections(self):
+        from apps.core.nav import get_nav_for_user
+        user = make_user(self.company, 'supplier_admin', 'nav_sa')
+        req = self._make_request('/')
+        req.user = user
+        sections = get_nav_for_user(user, req)
+        keys = [s['key'] for s in sections]
+        self.assertIn('main', keys)
+        self.assertIn('reports', keys)
+        self.assertIn('admin_tools', keys)
+
+    def test_nav_supplier_admin_main_section_items(self):
+        from apps.core.nav import get_nav_for_user
+        user = make_user(self.company, 'supplier_admin', 'nav_sa2')
+        req = self._make_request('/')
+        req.user = user
+        sections = get_nav_for_user(user, req)
+        main = next(s for s in sections if s['key'] == 'main')
+        labels = [i['label'] for i in main['items']]
+        self.assertIn('Events', labels)
+        self.assertIn('Accounts', labels)
+        self.assertIn('Distributors', labels)
+
+    def test_nav_supplier_admin_admin_tools_items(self):
+        from apps.core.nav import get_nav_for_user
+        user = make_user(self.company, 'supplier_admin', 'nav_sa3')
+        req = self._make_request('/')
+        req.user = user
+        sections = get_nav_for_user(user, req)
+        at = next(s for s in sections if s['key'] == 'admin_tools')
+        labels = [i['label'] for i in at['items']]
+        self.assertIn('Users', labels)
+        self.assertIn('Brands', labels)
+        self.assertIn('Sales Import', labels)
+        self.assertIn('Sales Import History', labels)
+        self.assertIn('Item Mapping', labels)
+        self.assertIn('Historical Event Import', labels)
+
+    def test_nav_for_ambassador_only_main_section(self):
+        from apps.core.nav import get_nav_for_user
+        user = make_user(self.company, 'ambassador', 'nav_amb')
+        req = self._make_request('/')
+        req.user = user
+        sections = get_nav_for_user(user, req)
+        keys = [s['key'] for s in sections]
+        self.assertIn('main', keys)
+        self.assertNotIn('reports', keys)
+        self.assertNotIn('admin_tools', keys)
+        main = next(s for s in sections if s['key'] == 'main')
+        labels = [i['label'] for i in main['items']]
+        self.assertIn('Events', labels)
+        self.assertNotIn('Accounts', labels)
+
+    def test_nav_for_sales_manager_includes_main_and_reports_no_admin(self):
+        from apps.core.nav import get_nav_for_user
+        user = make_user(self.company, 'sales_manager', 'nav_sm')
+        req = self._make_request('/')
+        req.user = user
+        sections = get_nav_for_user(user, req)
+        keys = [s['key'] for s in sections]
+        self.assertIn('main', keys)
+        self.assertIn('reports', keys)
+        self.assertNotIn('admin_tools', keys)
+
+    def test_nav_filters_items_by_permission(self):
+        from apps.core.nav import get_nav_for_user
+        user = User.objects.create_user(
+            username='noperms', password='testpass123', company=self.company
+        )
+        req = self._make_request('/')
+        req.user = user
+        sections = get_nav_for_user(user, req)
+        self.assertEqual(sections, [])
+
+    def test_nav_unauthenticated_returns_empty(self):
+        from apps.core.nav import get_nav_for_user
+        from django.contrib.auth.models import AnonymousUser
+        req = self._make_request('/')
+        req.user = AnonymousUser()
+        sections = get_nav_for_user(req.user, req)
+        self.assertEqual(sections, [])
+
+    def test_nav_active_match_set_on_matching_url(self):
+        from apps.core.nav import get_nav_for_user
+        user = make_user(self.company, 'supplier_admin', 'nav_active')
+        req = self._make_request('/accounts/')
+        req.user = user
+        sections = get_nav_for_user(user, req)
+        main = next(s for s in sections if s['key'] == 'main')
+        accounts_item = next(i for i in main['items'] if i['label'] == 'Accounts')
+        events_item = next(i for i in main['items'] if i['label'] == 'Events')
+        self.assertTrue(accounts_item['is_active'])
+        self.assertFalse(events_item['is_active'])
+
+    def test_nav_for_payroll_reviewer_no_admin_tools(self):
+        from apps.core.nav import get_nav_for_user
+        user = make_user(self.company, 'payroll_reviewer', 'nav_pr')
+        req = self._make_request('/')
+        req.user = user
+        sections = get_nav_for_user(user, req)
+        keys = [s['key'] for s in sections]
+        self.assertIn('main', keys)
+        self.assertNotIn('admin_tools', keys)
+
+    def test_nav_for_distributor_contact_empty(self):
+        from apps.core.nav import get_nav_for_user
+        user = make_user(self.company, 'distributor_contact', 'nav_dc')
+        req = self._make_request('/')
+        req.user = user
+        sections = get_nav_for_user(user, req)
+        # Distributor contact has no permissions — empty nav
+        self.assertEqual(sections, [])
+
+    def test_admin_tools_section_is_collapsible(self):
+        from apps.core.nav import get_nav_for_user
+        user = make_user(self.company, 'supplier_admin', 'nav_coll')
+        req = self._make_request('/')
+        req.user = user
+        sections = get_nav_for_user(user, req)
+        at = next(s for s in sections if s['key'] == 'admin_tools')
+        self.assertTrue(at['collapsible'])
+
+    def test_reports_section_not_collapsible(self):
+        from apps.core.nav import get_nav_for_user
+        user = make_user(self.company, 'sales_manager', 'nav_rpt')
+        req = self._make_request('/')
+        req.user = user
+        sections = get_nav_for_user(user, req)
+        rpt = next(s for s in sections if s['key'] == 'reports')
+        self.assertFalse(rpt['collapsible'])
+
+
+class AdminToolsStateEndpointTest(TestCase):
+    """Tests for the /ui/admin-tools-state/ AJAX endpoint."""
+
+    def setUp(self):
+        self.company = make_company('State Co')
+        self.user = make_user(self.company, 'supplier_admin', 'state_user')
+        self.url = reverse('save_admin_tools_state')
+
+    def test_stores_true_in_session(self):
+        self.client.force_login(self.user)
+        resp = self.client.post(self.url, {'collapsed': 'true'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {'success': True})
+        self.assertTrue(self.client.session['admin_tools_collapsed'])
+
+    def test_stores_false_in_session(self):
+        self.client.force_login(self.user)
+        resp = self.client.post(self.url, {'collapsed': 'false'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(self.client.session['admin_tools_collapsed'])
+
+    def test_rejects_invalid_value(self):
+        self.client.force_login(self.user)
+        resp = self.client.post(self.url, {'collapsed': 'maybe'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(resp.json()['success'])
+
+    def test_rejects_get(self):
+        self.client.force_login(self.user)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 405)
+
+    def test_requires_login(self):
+        resp = self.client.post(self.url, {'collapsed': 'true'})
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('/login/', resp['Location'])
+
+
+class NewPermissionsTest(TestCase):
+    """Tests for the three new admin-tools permissions."""
+
+    def test_new_permissions_exist(self):
+        for codename in ('can_view_import_history', 'can_manage_item_mapping',
+                         'can_run_historical_event_import'):
+            self.assertTrue(
+                Permission.objects.filter(codename=codename).exists(),
+                msg=f'Permission {codename} does not exist',
+            )
+
+    def test_new_permissions_granted_to_supplier_admin_only(self):
+        supplier_admin = Role.objects.get(codename='supplier_admin')
+        for codename in ('can_view_import_history', 'can_manage_item_mapping',
+                         'can_run_historical_event_import'):
+            perm = Permission.objects.get(codename=codename)
+            # supplier_admin has it
+            self.assertIn(perm, supplier_admin.permissions.all(),
+                          msg=f'supplier_admin missing {codename}')
+            # no other role has it
+            other_roles = Role.objects.exclude(codename='supplier_admin').filter(
+                permissions=perm
+            )
+            self.assertFalse(
+                other_roles.exists(),
+                msg=f'{codename} granted to unexpected roles: '
+                    f'{list(other_roles.values_list("codename", flat=True))}',
+            )
+
+    def test_supplier_admin_user_has_new_permissions(self):
+        company = make_company('Perm Test Co')
+        user = make_user(company, 'supplier_admin', 'permtest_sa')
+        for codename in ('can_view_import_history', 'can_manage_item_mapping',
+                         'can_run_historical_event_import'):
+            self.assertTrue(user.has_permission(codename),
+                            msg=f'User missing {codename}')
+
+    def test_sales_manager_does_not_have_new_permissions(self):
+        company = make_company('Perm Test Co2')
+        user = make_user(company, 'sales_manager', 'permtest_sm')
+        for codename in ('can_view_import_history', 'can_manage_item_mapping',
+                         'can_run_historical_event_import'):
+            self.assertFalse(user.has_permission(codename),
+                             msg=f'sales_manager unexpectedly has {codename}')
+
+
+class NavTemplateRenderTest(TestCase):
+    """Test that the nav include renders in base.html for logged-in users."""
+
+    def setUp(self):
+        self.company = make_company('Render Co')
+        self.user = make_user(self.company, 'supplier_admin', 'render_sa')
+
+    def test_nav_renders_dashboard_link(self):
+        self.client.force_login(self.user)
+        resp = self.client.get(reverse('dashboard'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Dashboard')
+
+    def test_nav_renders_events_link_for_supplier_admin(self):
+        self.client.force_login(self.user)
+        resp = self.client.get(reverse('dashboard'))
+        self.assertContains(resp, reverse('event_list'))
+
+    def test_nav_renders_admin_tools_toggle(self):
+        self.client.force_login(self.user)
+        resp = self.client.get(reverse('dashboard'))
+        self.assertContains(resp, 'admin_tools')
+        self.assertContains(resp, 'Admin Tools')
+
+    def test_nav_does_not_render_admin_tools_for_ambassador(self):
+        amb_user = make_user(self.company, 'ambassador', 'render_amb')
+        self.client.force_login(amb_user)
+        # Ambassadors redirect from dashboard → events; follow to get the rendered page.
+        resp = self.client.get(reverse('event_list'), follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'Admin Tools')

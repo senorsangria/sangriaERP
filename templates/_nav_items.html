@@ -1,0 +1,60 @@
+{% comment %}
+Shared navigation partial — included by both the desktop sidebar and mobile nav.
+Call with: {% include '_nav_items.html' with nav_context='desktop' %}
+            {% include '_nav_items.html' with nav_context='mobile' %}
+nav_context disambiguates Bootstrap collapse target IDs so both navs can
+coexist on the page without conflicting.
+{% endcomment %}
+{% for section in nav_sections %}
+  {% if section.has_label %}
+    {% if section.collapsible %}
+      {# Collapsible section header (Admin Tools) #}
+      <li class="nav-section-collapsible">
+        <button type="button"
+                class="nav-section-toggle btn btn-link text-start w-100 d-flex align-items-center justify-content-between"
+                data-bs-toggle="collapse"
+                data-bs-target="#nav-{{ section.key }}-{{ nav_context }}"
+                aria-expanded="{% if not admin_tools_collapsed %}true{% else %}false{% endif %}"
+                aria-controls="nav-{{ section.key }}-{{ nav_context }}"
+                data-section-key="{{ section.key }}">
+          <span>{{ section.label }}</span>
+          <i class="bi bi-chevron-down nav-section-chevron"></i>
+        </button>
+      </li>
+      <div class="collapse{% if not admin_tools_collapsed %} show{% endif %}"
+           id="nav-{{ section.key }}-{{ nav_context }}">
+        <ul class="nav flex-column nav-subsection">
+          {% for item in section.items %}
+          <li class="nav-item">
+            <a class="nav-link nav-sublink{% if item.is_active %} active{% endif %}"
+               href="{% url item.url_name %}">
+              <i class="bi {{ item.icon }} me-2"></i>{{ item.label }}
+            </a>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% else %}
+      {# Non-collapsible labelled section (Reports) #}
+      <li class="nav-section">{{ section.label }}</li>
+      {% for item in section.items %}
+      <li class="nav-item">
+        <a class="nav-link{% if item.is_active %} active{% endif %}"
+           href="{% url item.url_name %}">
+          <i class="bi {{ item.icon }} me-2"></i>{{ item.label }}
+        </a>
+      </li>
+      {% endfor %}
+    {% endif %}
+  {% else %}
+    {# Unlabeled section (main) #}
+    {% for item in section.items %}
+    <li class="nav-item">
+      <a class="nav-link{% if item.is_active %} active{% endif %}"
+         href="{% url item.url_name %}">
+        <i class="bi {{ item.icon }} me-2"></i>{{ item.label }}
+      </a>
+    </li>
+    {% endfor %}
+  {% endif %}
+{% endfor %}

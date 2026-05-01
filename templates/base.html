@@ -78,6 +78,42 @@
         letter-spacing: .08em;
         color: rgba(200,216,232,.45);
         padding: .75rem 1.25rem .25rem;
+        list-style: none;
+      }
+      .erp-sidebar .nav-section-collapsible { list-style: none; }
+      .erp-sidebar .nav-section-toggle {
+        font-size: .7rem;
+        text-transform: uppercase;
+        letter-spacing: .08em;
+        color: rgba(200,216,232,.45);
+        padding: .75rem 1.25rem .25rem;
+        text-decoration: none;
+        border: none;
+        background: transparent;
+        line-height: 1;
+        width: 100%;
+      }
+      .erp-sidebar .nav-section-toggle:hover { color: rgba(200,216,232,.75); }
+      .erp-sidebar .nav-section-chevron {
+        transition: transform 0.2s ease;
+        font-size: .7rem;
+      }
+      .erp-sidebar .nav-section-toggle[aria-expanded="true"] .nav-section-chevron {
+        transform: rotate(180deg);
+      }
+      .erp-sidebar .nav-subsection { list-style: none; padding-left: 0; margin: 0; }
+      .erp-sidebar .nav-sublink {
+        color: var(--erp-sidebar-txt);
+        padding: .45rem 1.25rem .45rem 1.75rem;
+        font-size: .9rem;
+        display: flex;
+        align-items: center;
+      }
+      .erp-sidebar .nav-sublink:hover,
+      .erp-sidebar .nav-sublink.active {
+        background: rgba(255,255,255,.08);
+        color: var(--erp-accent);
+        border-radius: 4px;
       }
       .erp-main { flex: 1; padding: 1.5rem; overflow-x: hidden; }
     }
@@ -144,58 +180,7 @@
             <a class="nav-link" href="{% url 'dashboard' %}"><i class="bi bi-speedometer2 me-1"></i>Dashboard</a>
           </li>
 
-          {% if user.is_saas_admin or user.is_supplier_admin %}
-          <li class="nav-item">
-            <a class="nav-link" href="{% url 'user_list' %}"><i class="bi bi-people me-1"></i>Users</a>
-          </li>
-          {% endif %}
-
-          {% if user.is_supplier_admin %}
-          <li class="nav-item"><a class="nav-link" href="{% url 'brand_list' %}"><i class="bi bi-bookmark me-1"></i>Brands</a></li>
-          <li class="nav-item"><a class="nav-link" href="{% url 'distributor_list' %}"><i class="bi bi-truck me-1"></i>Distributors</a></li>
-          <li class="nav-item"><a class="nav-link" href="{% url 'account_list' %}"><i class="bi bi-shop me-1"></i>Accounts</a></li>
-          <li class="nav-item"><a class="nav-link" href="{% url 'event_list' %}"><i class="bi bi-calendar-event me-1"></i>Events</a></li>
-          <li class="nav-item"><a class="nav-link" href="{% url 'import_upload' %}"><i class="bi bi-cloud-upload me-1"></i>Sales Import</a></li>
-          {% if user|has_perm:'can_import_sales_data' %}
-          <li class="nav-item"><a class="nav-link" href="{% url 'account_import_upload' %}"><i class="bi bi-building-up me-1"></i>Account Import</a></li>
-          {% endif %}
-          <li class="nav-item"><a class="nav-link" href="{% url 'mapping_list' %}"><i class="bi bi-arrow-left-right me-1"></i>Item Mapping</a></li>
-          <li class="nav-item"><a class="nav-link" href="{% url 'batch_list' %}"><i class="bi bi-clock-history me-1"></i>Import History</a></li>
-          <li class="nav-item"><a class="nav-link" href="{% url 'event_import_upload' %}"><i class="bi bi-calendar2-plus me-1"></i>Historical Event Import</a></li>
-          {% endif %}
-
-          {% if user.is_saas_admin %}
-          <li class="nav-item"><a class="nav-link text-white-50" href="#"><i class="bi bi-building me-1"></i>Companies <small>(soon)</small></a></li>
-          {% endif %}
-
-          {% if user.is_sales_manager or user.is_territory_manager %}
-          <li class="nav-item"><a class="nav-link" href="{% url 'account_list' %}"><i class="bi bi-shop me-1"></i>Accounts</a></li>
-          {% endif %}
-
-          {% if user.is_ambassador_manager %}
-          <li class="nav-item"><a class="nav-link" href="{% url 'account_list' %}"><i class="bi bi-shop me-1"></i>Accounts</a></li>
-          <li class="nav-item"><a class="nav-link" href="{% url 'event_list' %}"><i class="bi bi-calendar-event me-1"></i>Events</a></li>
-          {% endif %}
-
-          {% if user.is_sales_manager or user.is_territory_manager %}
-          <li class="nav-item"><a class="nav-link" href="{% url 'event_list' %}"><i class="bi bi-calendar-event me-1"></i>Events</a></li>
-          {% endif %}
-
-          {% if user.is_ambassador %}
-          <li class="nav-item"><a class="nav-link" href="{% url 'event_list' %}"><i class="bi bi-calendar-check me-1"></i>My Events</a></li>
-          {% endif %}
-
-          {% if user|has_perm:'can_view_report_account_sales' %}
-          <li class="nav-item"><a class="nav-link" href="{% url 'report_account_sales_by_year' %}"><i class="bi bi-bar-chart-line me-1"></i>Account Sales by Year</a></li>
-          {% endif %}
-
-          {% if user.is_distributor_contact %}
-          <li class="nav-item"><a class="nav-link text-white-50" href="#"><i class="bi bi-graph-up me-1"></i>Reports <small>(soon)</small></a></li>
-          {% endif %}
-
-          {% if user.is_payroll_reviewer %}
-          <li class="nav-item"><a class="nav-link" href="{% url 'event_list' %}"><i class="bi bi-calendar-event me-1"></i>Events</a></li>
-          {% endif %}
+          {% include '_nav_items.html' with nav_context='mobile' %}
 
           <li class="nav-item">
             <a class="nav-link" href="{% url 'profile' %}"><i class="bi bi-person me-1"></i>My Profile</a>
@@ -282,222 +267,14 @@
     <nav class="erp-sidebar d-none d-lg-flex flex-column">
       <ul class="nav flex-column flex-grow-1">
 
-        {% if user.is_saas_admin %}
-        <!-- ---- SaaS Admin ---- -->
-        <li class="nav-section">Platform</li>
-        <li class="nav-item">
-          <a class="nav-link {% if request.resolver_match.url_name == 'user_list' %}active{% endif %}" href="{% url 'user_list' %}">
-            <i class="bi bi-people me-2"></i>Users
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link placeholder-link" href="#" tabindex="-1" aria-disabled="true">
-            <i class="bi bi-building me-2"></i>Companies
-            <span class="soon-badge">Soon</span>
-          </a>
-        </li>
-
-        {% elif user.is_supplier_admin %}
-        <!-- ---- Supplier Admin ---- -->
         <li class="nav-item">
           <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">
             <i class="bi bi-speedometer2 me-2"></i>Dashboard
           </a>
         </li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'user' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'user_list' %}">
-            <i class="bi bi-people me-2"></i>Users
-          </a>
-        </li>
-        <li class="nav-section">Catalog</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'brand' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'brand_list' %}">
-            <i class="bi bi-bookmark me-2"></i>Brands
-          </a>
-        </li>
-        <li class="nav-section">Field</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'account' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'account_list' %}">
-            <i class="bi bi-shop me-2"></i>Accounts
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
-            <i class="bi bi-calendar-event me-2"></i>Events
-          </a>
-        </li>
-        <li class="nav-section">Operations</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'distributor' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'distributor_list' %}">
-            <i class="bi bi-truck me-2"></i>Distributors
-          </a>
-        </li>
-        <li class="nav-section">Imports</li>
-        <li class="nav-item">
-          <a class="nav-link {% if request.resolver_match.url_name == 'import_upload' or request.resolver_match.url_name == 'import_preview' %}active{% endif %}" href="{% url 'import_upload' %}">
-            <i class="bi bi-cloud-upload me-2"></i>Sales Import
-          </a>
-        </li>
-        {% if user|has_perm:'can_import_sales_data' %}
-        <li class="nav-item">
-          <a class="nav-link {% if 'account_import' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'account_import_upload' %}">
-            <i class="bi bi-building-up me-2"></i>Account Import
-          </a>
-        </li>
-        {% endif %}
-        <li class="nav-item">
-          <a class="nav-link {% if 'mapping' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'mapping_list' %}">
-            <i class="bi bi-arrow-left-right me-2"></i>Item Mapping
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'batch' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'batch_list' %}">
-            <i class="bi bi-clock-history me-2"></i>Import History
-          </a>
-        </li>
-        {% if user|has_perm:'can_view_report_account_sales' %}
-        <li class="nav-section">Reports</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
-            <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
-          </a>
-        </li>
-        {% endif %}
-        <li class="nav-section">Tools</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'event_import' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_import_upload' %}">
-            <i class="bi bi-calendar2-plus me-2"></i>Historical Event Import
-          </a>
-        </li>
 
-        {% elif user.is_sales_manager %}
-        <!-- ---- Sales Manager ---- -->
-        <li class="nav-item">
-          <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">
-            <i class="bi bi-speedometer2 me-2"></i>Dashboard
-          </a>
-        </li>
-        <li class="nav-section">Field</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'account' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'account_list' %}">
-            <i class="bi bi-shop me-2"></i>Accounts
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
-            <i class="bi bi-calendar-event me-2"></i>Events
-          </a>
-        </li>
-        {% if user|has_perm:'can_view_report_account_sales' %}
-        <li class="nav-section">Reports</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
-            <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
-          </a>
-        </li>
-        {% endif %}
+        {% include '_nav_items.html' with nav_context='desktop' %}
 
-        {% elif user.is_territory_manager %}
-        <!-- ---- Territory Manager ---- -->
-        <li class="nav-item">
-          <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">
-            <i class="bi bi-speedometer2 me-2"></i>Dashboard
-          </a>
-        </li>
-        <li class="nav-section">Field</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'account' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'account_list' %}">
-            <i class="bi bi-shop me-2"></i>Accounts
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
-            <i class="bi bi-calendar-event me-2"></i>Events
-          </a>
-        </li>
-        {% if user|has_perm:'can_view_report_account_sales' %}
-        <li class="nav-section">Reports</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
-            <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
-          </a>
-        </li>
-        {% endif %}
-
-        {% elif user.is_ambassador_manager %}
-        <!-- ---- Ambassador Manager ---- -->
-        <li class="nav-item">
-          <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">
-            <i class="bi bi-speedometer2 me-2"></i>Dashboard
-          </a>
-        </li>
-        <li class="nav-section">Field</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'account' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'account_list' %}">
-            <i class="bi bi-shop me-2"></i>Accounts
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
-            <i class="bi bi-calendar-event me-2"></i>Events
-          </a>
-        </li>
-        {% if user|has_perm:'can_view_report_account_sales' %}
-        <li class="nav-section">Reports</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'report_account_sales' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'report_account_sales_by_year' %}">
-            <i class="bi bi-bar-chart-line me-2"></i>Account Sales by Year
-          </a>
-        </li>
-        {% endif %}
-
-        {% elif user.is_ambassador %}
-        <!-- ---- Ambassador ---- -->
-        <li class="nav-item">
-          <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">
-            <i class="bi bi-speedometer2 me-2"></i>Dashboard
-          </a>
-        </li>
-        <li class="nav-section">Field</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
-            <i class="bi bi-calendar-check me-2"></i>My Events
-          </a>
-        </li>
-
-        {% elif user.is_payroll_reviewer %}
-        <!-- ---- Payroll Reviewer ---- -->
-        <li class="nav-item">
-          <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">
-            <i class="bi bi-speedometer2 me-2"></i>Dashboard
-          </a>
-        </li>
-        <li class="nav-section">Field</li>
-        <li class="nav-item">
-          <a class="nav-link {% if 'event' in request.resolver_match.url_name %}active{% endif %}" href="{% url 'event_list' %}">
-            <i class="bi bi-calendar-event me-2"></i>Events
-          </a>
-        </li>
-
-        {% elif user.is_distributor_contact %}
-        <!-- ---- Distributor Contact ---- -->
-        <li class="nav-item">
-          <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">
-            <i class="bi bi-speedometer2 me-2"></i>Dashboard
-          </a>
-        </li>
-        {% if user|has_perm:'can_view_report_account_sales' %}
-        <li class="nav-section">Reports</li>
-        <li class="nav-item">
-          <a class="nav-link placeholder-link" href="#" tabindex="-1">
-            <i class="bi bi-graph-up me-2"></i>Reports
-            <span class="soon-badge">Soon</span>
-          </a>
-        </li>
-        {% endif %}
-        {% endif %}
-
-        <!-- Django Admin link (staff only) -->
         {% if user.is_staff %}
         <li class="nav-section">Admin</li>
         <li class="nav-item">
@@ -547,6 +324,59 @@
 
   <!-- Bootstrap 5 JS (served locally via whitenoise) -->
   <script src="{% static 'js/bootstrap.bundle.min.js' %}"></script>
+
+  {% if user.is_authenticated %}
+  <script>
+  (function () {
+    var desktopToggle = document.querySelector('[data-section-key="admin_tools"][data-bs-target="#nav-admin_tools-desktop"]');
+    var mobileToggle  = document.querySelector('[data-section-key="admin_tools"][data-bs-target="#nav-admin_tools-mobile"]');
+    var toggles = [desktopToggle, mobileToggle].filter(Boolean);
+    if (!toggles.length) return;
+
+    function getCsrfToken() {
+      var cookie = document.cookie.split('; ').find(function (r) { return r.startsWith('csrftoken='); });
+      return cookie ? cookie.split('=')[1] : '';
+    }
+
+    function syncState(collapsed) {
+      [desktopToggle, mobileToggle].filter(Boolean).forEach(function (btn) {
+        var target = document.querySelector(btn.getAttribute('data-bs-target'));
+        if (!target) return;
+        if (collapsed) {
+          target.classList.remove('show');
+          btn.setAttribute('aria-expanded', 'false');
+        } else {
+          target.classList.add('show');
+          btn.setAttribute('aria-expanded', 'true');
+        }
+      });
+    }
+
+    function saveState(collapsed) {
+      fetch('{% url "save_admin_tools_state" %}', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-CSRFToken': getCsrfToken(),
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: 'collapsed=' + (collapsed ? 'true' : 'false'),
+      }).catch(function (err) { console.warn('Failed to save admin tools state:', err); });
+    }
+
+    toggles.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        // After Bootstrap updates aria-expanded, sync the other toggle and persist.
+        setTimeout(function () {
+          var isNowCollapsed = btn.getAttribute('aria-expanded') === 'false';
+          syncState(isNowCollapsed);
+          saveState(isNowCollapsed);
+        }, 0);
+      });
+    });
+  })();
+  </script>
+  {% endif %}
 
   {% block extra_js %}{% endblock %}
 </body>

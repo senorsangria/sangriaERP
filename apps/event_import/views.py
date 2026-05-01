@@ -37,9 +37,9 @@ logger = logging.getLogger(__name__)
 # Access guard
 # ---------------------------------------------------------------------------
 
-def _require_supplier_admin(request):
-    if not request.user.is_authenticated or not request.user.is_supplier_admin:
-        messages.error(request, 'Access denied. Supplier Admin only.')
+def _require_permission(request, codename):
+    if not request.user.is_authenticated or not request.user.has_permission(codename):
+        messages.error(request, 'Access denied.')
         return redirect('dashboard')
     return None
 
@@ -177,7 +177,7 @@ def _parse_price(value):
 # ---------------------------------------------------------------------------
 
 def event_import_upload(request):
-    guard = _require_supplier_admin(request)
+    guard = _require_permission(request, 'can_run_historical_event_import')
     if guard:
         return guard
 
@@ -281,7 +281,7 @@ def event_import_upload(request):
 # ---------------------------------------------------------------------------
 
 def event_import_review(request):
-    guard = _require_supplier_admin(request)
+    guard = _require_permission(request, 'can_run_historical_event_import')
     if guard:
         return guard
 
@@ -324,7 +324,7 @@ def event_import_review(request):
 # ---------------------------------------------------------------------------
 
 def event_import_confirm(request):
-    guard = _require_supplier_admin(request)
+    guard = _require_permission(request, 'can_run_historical_event_import')
     if guard:
         return guard
 
@@ -403,7 +403,7 @@ def event_import_execute(request):
     Stage 3: Create Event and EventItemRecap records for all confirmed matches.
     POST only.
     """
-    guard = _require_supplier_admin(request)
+    guard = _require_permission(request, 'can_run_historical_event_import')
     if guard:
         return guard
 
@@ -577,7 +577,7 @@ def event_import_execute(request):
 # ---------------------------------------------------------------------------
 
 def event_import_export_csv(request):
-    guard = _require_supplier_admin(request)
+    guard = _require_permission(request, 'can_run_historical_event_import')
     if guard:
         return guard
 
@@ -641,7 +641,7 @@ def event_import_export_csv(request):
 # ---------------------------------------------------------------------------
 
 def event_import_validate_csv(request):
-    guard = _require_supplier_admin(request)
+    guard = _require_permission(request, 'can_run_historical_event_import')
     if guard:
         return guard
 
@@ -789,7 +789,7 @@ def event_import_validate_csv(request):
 # ---------------------------------------------------------------------------
 
 def event_import_delete_all(request):
-    guard = _require_supplier_admin(request)
+    guard = _require_permission(request, 'can_run_historical_event_import')
     if guard:
         return guard
 
@@ -817,7 +817,7 @@ def event_import_delete_all(request):
 
 def event_import_delete_batch(request, batch_id):
     """Delete one historical import batch and all its events. POST only."""
-    guard = _require_supplier_admin(request)
+    guard = _require_permission(request, 'can_run_historical_event_import')
     if guard:
         return guard
 

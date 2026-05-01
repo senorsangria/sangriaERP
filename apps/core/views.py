@@ -8,6 +8,8 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib import messages
 from django.db.models import Q
+from django.http import JsonResponse
+from django.views.decorators.http import require_POST
 
 from .models import User
 from .forms import (
@@ -400,3 +402,18 @@ def password_change(request):
 
 def access_denied(request):
     return render(request, '403.html', status=403)
+
+
+# ---------------------------------------------------------------------------
+# UI state persistence
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_POST
+def save_admin_tools_state(request):
+    """AJAX POST: persist Admin Tools collapse state across page loads."""
+    collapsed_str = request.POST.get('collapsed', '').strip().lower()
+    if collapsed_str not in ('true', 'false'):
+        return JsonResponse({'success': False, 'error': 'invalid value'}, status=400)
+    request.session['admin_tools_collapsed'] = (collapsed_str == 'true')
+    return JsonResponse({'success': True})
