@@ -50,6 +50,14 @@ NAV_ITEMS = [
         'section': 'reports',
         'active_match': 'report_account_sales',
     },
+    {
+        'label': 'Item Sales by Year',
+        'url_name': 'report_item_sales_by_year',
+        'icon': 'bi-bar-chart-steps',
+        'permission': 'can_view_report_item_sales',
+        'section': 'reports',
+        'active_match': 'report_item_sales',
+    },
 
     # ---- Admin Tools section (collapsible) ----
     {

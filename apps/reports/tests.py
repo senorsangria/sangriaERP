@@ -12,6 +12,7 @@ from apps.core.models import Company, User
 from apps.core.rbac import Role
 from apps.distribution.models import Distributor
 from apps.imports.models import ImportBatch
+from apps.routes.models import Route, RouteAccount
 from apps.sales.models import SalesRecord
 
 
@@ -1520,3 +1521,349 @@ class SaveSortEndpointTest(TestCase):
             response.context['saved_sort'],
             {'key': 'city', 'direction': 'asc'},
         )
+
+
+# ---------------------------------------------------------------------------
+# Item Sales by Year — helpers
+# ---------------------------------------------------------------------------
+
+def make_item_for_brand(brand, name, item_code, sort_order=0):
+    item, _ = Item.objects.get_or_create(
+        brand=brand, item_code=item_code,
+        defaults={'name': name, 'sort_order': sort_order},
+    )
+    return item
+
+
+# ---------------------------------------------------------------------------
+# Item Sales by Year — permission tests
+# ---------------------------------------------------------------------------
+
+class ItemSalesPermissionTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Item Perm Co')
+        self.client = Client()
+
+    def test_item_sales_view_requires_permission(self):
+        """Ambassador lacks can_view_report_item_sales and is redirected to dashboard."""
+        user = make_user(self.company, 'ambassador', username='itm_amb')
+        self.client.force_login(user)
+        response = self.client.get(reverse('report_item_sales_by_year'))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('dashboard'))
+
+    def test_item_sales_view_renders_for_supplier_admin(self):
+        """Supplier Admin can access the Item Sales report (200 or distributor redirect)."""
+        distributor = make_distributor(self.company, name='SA Item Dist')
+        brand = make_brand(self.company, name='SA Brand')
+        item = make_item_for_brand(brand, 'SA Item', 'SAITEM01')
+        batch = make_batch(self.company, distributor)
+        account = make_account(self.company, distributor, name='SA Item Bar')
+        make_sale(self.company, batch, account, item, date(2024, 6, 1), 12)
+
+        user = make_user(self.company, 'supplier_admin', username='sa_itm')
+        self.client.force_login(user)
+        response = self.client.get(reverse('report_item_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        self.assertTrue(len(rows) >= 1, 'Expected at least one item row')
+
+
+# ---------------------------------------------------------------------------
+# Item Sales by Year — aggregation tests
+# ---------------------------------------------------------------------------
+
+class ItemSalesAggregationTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Item Agg Co')
+        self.distributor = make_distributor(self.company, name='Agg Dist')
+        self.brand = make_brand(self.company, name='Agg Brand')
+        self.item_a = make_item_for_brand(self.brand, 'Item Alpha', 'AGG_A', sort_order=1)
+        self.item_b = make_item_for_brand(self.brand, 'Item Beta', 'AGG_B', sort_order=2)
+        self.account = make_account(self.company, self.distributor, name='Agg Bar')
+        self.batch = make_batch(self.company, self.distributor)
+        self.user = make_user(self.company, 'supplier_admin', username='sa_agg')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_item_sales_view_aggregates_by_item(self):
+        """Each item gets its own row with correct year_units and last_12_units."""
+        make_sale(self.company, self.batch, self.account, self.item_a, date(2024, 3, 1), 10)
+        make_sale(self.company, self.batch, self.account, self.item_a, date(2024, 6, 1), 5)
+        make_sale(self.company, self.batch, self.account, self.item_b, date(2024, 4, 1), 20)
+
+        response = self.client.get(reverse('report_item_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        self.assertEqual(len(rows), 2)
+
+        row_a = next(r for r in rows if r['item_name'] == 'Item Alpha')
+        row_b = next(r for r in rows if r['item_name'] == 'Item Beta')
+
+        # 2024 is a complete past year relative to test date 2026-05-02
+        self.assertEqual(row_a['year_units'].get(2024, 0), 15)
+        self.assertEqual(row_b['year_units'].get(2024, 0), 20)
+
+    def test_item_sales_inactive_items_appear_with_sales(self):
+        """Items with is_active=False that have sales records still appear in the report."""
+        self.item_a.is_active = False
+        self.item_a.save()
+        make_sale(self.company, self.batch, self.account, self.item_a, date(2024, 6, 1), 7)
+
+        response = self.client.get(reverse('report_item_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        item_names = [r['item_name'] for r in rows]
+        self.assertIn('Item Alpha', item_names,
+                      'Inactive item with sales must still appear in the report')
+
+    def test_item_sales_default_sort_is_brand_then_sort_order(self):
+        """Default row order is brand__name, sort_order, item name."""
+        brand_z = make_brand(self.company, name='Zebra Brand')
+        item_z1 = make_item_for_brand(brand_z, 'ZZ First', 'ZZ1', sort_order=1)
+        item_z2 = make_item_for_brand(brand_z, 'ZZ Second', 'ZZ2', sort_order=2)
+
+        for item in (self.item_a, self.item_b, item_z1, item_z2):
+            make_sale(self.company, self.batch, self.account, item, date(2024, 6, 1), 5)
+
+        response = self.client.get(reverse('report_item_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        names = [r['item_name'] for r in rows]
+
+        # Agg Brand items (alphabetically first) come before Zebra Brand items
+        idx_a = names.index('Item Alpha')
+        idx_b = names.index('Item Beta')
+        idx_z1 = names.index('ZZ First')
+        idx_z2 = names.index('ZZ Second')
+
+        self.assertLess(idx_a, idx_z1, 'Agg Brand items must precede Zebra Brand items')
+        self.assertLess(idx_b, idx_z1, 'Agg Brand items must precede Zebra Brand items')
+        # Within same brand, sort_order ascending: item_a (sort_order=1) before item_b (sort_order=2)
+        self.assertLess(idx_a, idx_b, 'sort_order=1 must precede sort_order=2 within brand')
+        self.assertLess(idx_z1, idx_z2, 'sort_order=1 must precede sort_order=2 within Zebra Brand')
+
+
+# ---------------------------------------------------------------------------
+# Item Sales by Year — filter tests
+# ---------------------------------------------------------------------------
+
+class ItemSalesFilterTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Item Filter Co')
+        self.distributor = make_distributor(self.company, name='Filter Dist')
+        self.brand_a = make_brand(self.company, name='Alpha Wines')
+        self.brand_b = make_brand(self.company, name='Beta Spirits')
+        self.item_a = make_item_for_brand(self.brand_a, 'Red Wine', 'RW001')
+        self.item_b = make_item_for_brand(self.brand_b, 'Whiskey', 'WH001')
+        self.batch = make_batch(self.company, self.distributor)
+        self.acc_on = make_account(
+            self.company, self.distributor, name='On Bar',
+            on_off='ON', city='Newark', county='Essex',
+        )
+        self.acc_off = make_account(
+            self.company, self.distributor, name='Off Store',
+            on_off='OFF', city='Trenton', county='Mercer',
+        )
+        make_sale(self.company, self.batch, self.acc_on, self.item_a, date(2024, 6, 1), 10)
+        make_sale(self.company, self.batch, self.acc_off, self.item_b, date(2024, 6, 1), 20)
+
+        self.user = make_user(self.company, 'supplier_admin', username='sa_filt')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_item_sales_brand_filter_narrows_rows(self):
+        """Applying a brand filter returns only items belonging to that brand."""
+        response = self.client.get(
+            reverse('report_item_sales_by_year'),
+            {'brand': str(self.brand_a.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['item_name'], 'Red Wine')
+        self.assertEqual(rows[0]['brand_name'], 'Alpha Wines')
+
+    def test_item_sales_account_level_filter_affects_totals(self):
+        """on_off=ON filter restricts SalesRecords to on-premise accounts only."""
+        response = self.client.get(
+            reverse('report_item_sales_by_year'),
+            {'on_off': 'ON'},
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        # Only item_a is sold at acc_on (ON premise)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['item_name'], 'Red Wine')
+        total_last_12 = response.context['total_last_12']
+        self.assertEqual(total_last_12, sum(r['last_12_units'] for r in rows))
+
+    def test_item_sales_route_filter_narrows_results(self):
+        """route_id filter restricts items to sales at accounts in that route."""
+        route = Route.objects.create(
+            company=self.company,
+            distributor=self.distributor,
+            created_by=self.user,
+            name='Test Route',
+        )
+        RouteAccount.objects.create(route=route, account=self.acc_on)
+
+        response = self.client.get(
+            reverse('report_item_sales_by_year'),
+            {'route_id': str(route.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        # Only item_a is sold at acc_on (in the route); item_b is at acc_off (not in route)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['item_name'], 'Red Wine')
+
+    def test_item_sales_clear_filters_works(self):
+        """GET ?clear_filters=1 clears the item sales filter session key."""
+        self.client.get(
+            reverse('report_item_sales_by_year'),
+            {'brand': str(self.brand_a.pk)},
+        )
+        session = self.client.session
+        self.assertIn('report_item_sales_filters', session)
+
+        response = self.client.get(
+            reverse('report_item_sales_by_year'),
+            {'clear_filters': '1', 'distributor': str(self.distributor.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        session = self.client.session
+        self.assertNotIn('report_item_sales_filters', session)
+        # Both items should appear after clearing
+        rows = response.context['rows']
+        self.assertEqual(len(rows), 2)
+
+
+# ---------------------------------------------------------------------------
+# Item Sales by Year — CSV export tests
+# ---------------------------------------------------------------------------
+
+class ItemSalesCsvTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Item CSV Co')
+        self.distributor = make_distributor(self.company, name='CSV Dist')
+        self.brand = make_brand(self.company, name='CSV Brand')
+        self.item_a = make_item_for_brand(self.brand, 'CSV Item A', 'CSVA')
+        self.item_b = make_item_for_brand(self.brand, 'CSV Item B', 'CSVB')
+        self.batch = make_batch(self.company, self.distributor)
+        self.account = make_account(self.company, self.distributor, name='CSV Bar')
+
+        make_sale(self.company, self.batch, self.account, self.item_a, date(2023, 6, 1), 5)
+        make_sale(self.company, self.batch, self.account, self.item_a, date(2024, 6, 1), 10)
+        make_sale(self.company, self.batch, self.account, self.item_b, date(2024, 6, 1), 15)
+
+        self.user = make_user(self.company, 'supplier_admin', username='sa_csv')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_item_sales_csv_export_columns(self):
+        """CSV export has correct headers: Item Name, Brand, year cols, LFY Diff, Last 12m, Diff."""
+        response = self.client.get(reverse('report_item_sales_by_year_csv'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/csv')
+        self.assertIn('item_sales_by_year.csv', response['Content-Disposition'])
+
+        content = response.content.decode('utf-8')
+        lines = content.strip().splitlines()
+        self.assertTrue(len(lines) >= 2, 'Expected at least header + data rows')
+
+        header = lines[0]
+        self.assertIn('Item Name', header)
+        self.assertIn('Brand', header)
+        self.assertIn('Last 12m', header)
+        self.assertIn('Diff', header)
+        # Year columns present
+        self.assertIn('2024', header)
+
+        # TOTAL row present
+        self.assertIn('TOTAL', content)
+
+        # With 2 years (2023, 2024) prior_year exists so LFY Diff column appears
+        self.assertIn('Diff', header)
+
+
+# ---------------------------------------------------------------------------
+# Item Sales by Year — sort persistence tests
+# ---------------------------------------------------------------------------
+
+class ItemSalesSaveSortTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Item Sort Co')
+        self.user = make_user(self.company, 'supplier_admin', username='sa_isort')
+        self.client = Client()
+        self.client.force_login(self.user)
+        self.url = reverse('report_item_sales_save_sort')
+
+    def test_item_sales_save_sort_endpoint(self):
+        """POST with valid key and direction stores sort state in the item sales session key."""
+        response = self.client.post(self.url, {'key': 'item', 'direction': 'asc'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'success': True})
+        saved = self.client.session.get('report_item_sales_sort')
+        self.assertEqual(saved, {'key': 'item', 'direction': 'asc'})
+
+    def test_item_sales_save_sort_requires_permission(self):
+        """User without can_view_report_item_sales gets 403."""
+        user = make_user(self.company, 'ambassador', username='amb_isort')
+        self.client.force_login(user)
+        response = self.client.post(self.url, {'key': 'item', 'direction': 'asc'})
+        self.assertEqual(response.status_code, 403)
+
+
+# ---------------------------------------------------------------------------
+# Item Sales by Year — coverage scoping tests
+# ---------------------------------------------------------------------------
+
+class ItemSalesCoverageScopingTest(TestCase):
+    """Territory Manager sees only items sold at accounts in their coverage area."""
+
+    def setUp(self):
+        self.company = make_company('Item Scope Co')
+        self.distributor = make_distributor(self.company, name='Scope Dist')
+        self.brand = make_brand(self.company, name='Scope Brand')
+        self.item = make_item_for_brand(self.brand, 'Scope Item', 'SCPITM')
+        self.batch = make_batch(self.company, self.distributor)
+
+        self.account_in = make_account(
+            self.company, self.distributor, name='In Scope Bar', city='Newark'
+        )
+        self.account_out = make_account(
+            self.company, self.distributor, name='Out Scope Store', city='Trenton'
+        )
+
+        # item sold at both accounts in 2024
+        make_sale(self.company, self.batch, self.account_in, self.item, date(2024, 6, 1), 30)
+        make_sale(self.company, self.batch, self.account_out, self.item, date(2024, 6, 1), 70)
+
+        self.tm = make_user(self.company, 'territory_manager', username='tm_scope')
+        make_coverage(
+            self.company, self.tm, self.distributor,
+            coverage_type=UserCoverageArea.CoverageType.ACCOUNT,
+            account=self.account_in,
+        )
+
+        self.client = Client()
+        self.client.force_login(self.tm)
+
+    def test_item_sales_coverage_scoping(self):
+        """Territory Manager's item totals reflect only their covered accounts."""
+        response = self.client.get(reverse('report_item_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row['item_name'], 'Scope Item')
+        # Only the in-scope account's 30 units should appear, not the full 100
+        year_units_2024 = row['year_units'].get(2024, 0)
+        self.assertEqual(year_units_2024, 30,
+                         'Item totals must reflect only the covered account, not all accounts')

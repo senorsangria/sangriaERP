@@ -2368,6 +2368,74 @@ specific selections. The filter panel is collapsed by default on all screen size
 
 ---
 
+### Item Sales by Year
+
+**Purpose:** Shows units sold per item across up to four complete calendar years plus a
+rolling last-12-months window, so sales managers and supplier admins can quickly see
+year-over-year trends for each item across all accounts in a distributor's territory.
+
+**Permission:** `can_view_report_item_sales`
+Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager.
+
+**URL:** `/reports/items/` → `report_item_sales_by_year`
+
+**Row structure:** One row per item that had any sales in the displayed window, regardless
+of `is_active` status. Items are identified by `item_id` stored in the row dict; the
+`item_name` is the display label (not truncated — item names are typically short).
+`brand_name` is shown as a sub-line in the Item column for context.
+
+**Default order:** `brand__name`, `sort_order`, `name` (same ordering as `Item.Meta.ordering`).
+No client-side re-sort is applied on the server; the DB queryset ordering is used directly.
+
+**Year columns + LFY Diff + L12M + show/hide older years:** Identical to Account Sales by Year.
+LFM and year column structure are derived from the distributor-wide unfiltered `distributor_qs`
+so the report structure stays stable regardless of active filters.
+
+**Filters (9 total):**
+
+| Parameter | Type | Effect |
+|---|---|---|
+| `account_name` | string | Word search on `account.name` (AND logic, case-insensitive) |
+| `brand` | list of Brand IDs | Filters `item.brand_id` in the SalesRecord queryset |
+| `on_off` | `'ON'` or `'OFF'` | `account.on_off_premise` |
+| `city` | list of city names | `account.city` |
+| `county` | list of county names | `account.county` (OR logic) |
+| `class_of_trade` | list of values | `account.account_type` |
+| `account_type` | list of values | `account.account_type` (OR logic) |
+| `distributor_route` | list of route strings | `account.distributor_route` |
+| `route_id` | Route PK string | Filters accounts to those in the named Route |
+
+The 8 account-level filters (all except `brand`) filter through `accounts_qs` membership —
+they narrow which SalesRecords contribute to item totals, but rows remain grouped by item.
+The `brand` filter is applied directly to `base_qs` (`.filter(item__brand_id__in=brand_filter)`).
+
+Filter options for the modal are built from `base_accounts_qs` (user-scoped, pre-filter).
+Brand options come from `Brand.objects.filter(company=..., items__sales_records__account__in=base_accounts_qs)`
+so only brands with actual sales visible to the user are offered.
+
+**Coverage area scoping:** Mirrors the account report exactly. Supplier Admin sees all
+active accounts for the selected distributor; all other roles use `get_accounts_for_user(user)`.
+Item totals reflect only sales at accounts within the user's visible scope.
+
+**CSV export:** `/reports/items/export.csv` → `report_item_sales_by_year_csv`
+- Columns: Item Name, Brand, year columns, LFY Diff (if prior_year), Last 12m, Diff
+- Sort: alphabetical by brand name then item name (not sort_order — export is deterministic)
+- TOTAL row at the bottom
+
+**Sort persistence:** Separate session key `report_item_sales_sort`. Endpoint:
+`/reports/items/save-sort/` → `report_item_sales_save_sort`. Separate from the account report's
+sort key (`report_account_sales_sort`). Filter session key is `report_item_sales_filters`.
+
+**Drill-down:** Not implemented yet; item rows are non-links.
+
+**Template:** `templates/reports/item_sales_by_year.html`
+- Sticky column: one (`col-sticky-1` = Item/Brand stacked). No second sticky column.
+- No checkbox column, no On/Off column, no Save to Route action bar or modal.
+- JS sort reads `data-item` attribute from the Item cell for text sort;
+  numeric columns use `data-value` as in the account report.
+
+---
+
 ### Account Detail Sales View
 
 **Purpose:** Mobile-first visit prep tool for field reps. Shows a portfolio status summary
@@ -3310,3 +3378,16 @@ prevent silent data loss.
 - **Route.distributor: PROTECT** (was CASCADE) — routes belong to a specific
   distributor and are not meaningful without one. Deleting a Distributor with
   existing routes raises `ProtectedError`, requiring manual route cleanup first.
+
+---
+
+## Future Cleanup
+
+### Reports Aggregation Refactor
+
+Account Sales by Year and Item Sales by Year both have HTML + CSV view pairs with
+significant code duplication (~250 lines per pair). When time permits, extract shared
+aggregation utilities (`compute_year_columns`, `compute_lfm`, `aggregate_sales_by_dimension`)
+into `apps/reports/aggregation.py` and refactor all four views to use them. This will
+make it straightforward to add further dimension-based reports (e.g., City Sales by Year,
+Distributor Route Sales by Year) with minimal new code.

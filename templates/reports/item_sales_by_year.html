@@ -1,0 +1,629 @@
+{% extends "base.html" %}
+{% load rbac reports_tags humanize %}
+
+{% block title %}Item Sales by Year{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* ---- Report-specific styles ---------------------------------------- */
+
+  /* Sticky table header */
+  .report-table thead th {
+    position: sticky;
+    top: 0;
+    background: #1a2d42;
+    color: #c8d8e8;
+    white-space: nowrap;
+    z-index: 2;
+    border-bottom: 2px solid #0d1a26;
+  }
+
+  /* Sticky first column on tablet/mobile (< 992px) */
+  @media (max-width: 991.98px) {
+    .report-table td.col-sticky-1,
+    .report-table th.col-sticky-1 {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+      background: inherit;
+    }
+    /* Re-apply dark header bg for sticky header cell */
+    .report-table thead th.col-sticky-1 {
+      background: #1a2d42;
+    }
+    /* Alternating rows: ensure sticky cell picks up the row bg */
+    .report-table tbody tr:nth-child(odd) td.col-sticky-1 {
+      background: #fff;
+    }
+    .report-table tbody tr:nth-child(even) td.col-sticky-1 {
+      background: #f8f9fa;
+    }
+    /* Smaller font on mobile for density */
+    .report-table {
+      font-size: .82rem;
+    }
+  }
+
+  /* Sortable column affordance */
+  .report-table thead th.sortable {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  /* Vertical separator left of L12M column */
+  .report-table th.l12m-divider,
+  .report-table td.l12m-divider {
+    border-left: 1.5px solid #ccc;
+  }
+
+  /* Diff column coloring */
+  .diff-positive { color: #198754; }
+  .diff-negative { color: #dc3545; }
+  .diff-zero     { color: #6c757d; }
+
+  /* Filter modal */
+  .filter-section-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6c757d;
+    margin-bottom: 0.4rem;
+  }
+  .filter-checkbox-scroll {
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.5rem;
+    background: #fff;
+  }
+  .filter-checkbox-scroll .form-check {
+    margin-bottom: 0.25rem;
+  }
+  .filter-checkbox-scroll .form-check:last-child {
+    margin-bottom: 0;
+  }
+
+  /* Totals row */
+  #totalsBody tr {
+    background: #e8edf2 !important;
+    font-weight: bold;
+    border-top: 2px solid #1a2d42;
+    border-bottom: 2px solid #1a2d42;
+  }
+  #totalsBody td.col-sticky-1 {
+    background: #e8edf2 !important;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ================================================================
+     Page header
+     ================================================================ -->
+<div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="fw-bold mb-0">Item Sales by Year</h4>
+    <div class="d-flex align-items-center justify-content-between gap-2">
+      {% if selected_distributor %}
+      <p class="text-muted mb-0 small">
+        {{ selected_distributor.name }}
+        {% if last_full_month_display %}
+        &middot; Data through: <strong>{{ last_full_month_display }}</strong>
+        {% endif %}
+      </p>
+      {% elif last_full_month_display %}
+      <p class="text-muted mb-0 small">Data through: <strong>{{ last_full_month_display }}</strong></p>
+      {% endif %}
+      {% if years|length > 2 %}
+      <button type="button" id="report-older-years-toggle"
+              class="btn btn-outline-secondary btn-sm"
+              style="font-size:11px;">
+        Show older years
+      </button>
+      {% endif %}
+    </div>
+  </div>
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <button type="button"
+            class="btn btn-outline-secondary btn-sm"
+            data-bs-toggle="modal"
+            data-bs-target="#filterModal">
+      <i class="bi bi-funnel me-1"></i>Filters
+      <span class="badge bg-warning text-dark ms-1
+            {% if not active_filter_count %}d-none{% endif %}"
+            id="filter-count-badge">
+        {{ active_filter_count }}
+      </span>
+    </button>
+    <button type="submit"
+            form="report-filter-form"
+            formaction="{% url 'report_item_sales_by_year_csv' %}"
+            class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-download me-1"></i>Export CSV
+    </button>
+    {% if multiple_distributors and selected_distributor %}
+    <a href="{% url 'report_account_sales_distributor_select' %}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left-right me-1"></i>Change Distributor
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ================================================================
+     No-data state
+     ================================================================ -->
+{% if no_data %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-bar-chart-steps text-muted" style="font-size:3rem;"></i>
+    <p class="mt-3 mb-1 fw-semibold text-muted">No data available</p>
+    <p class="text-muted small">{{ no_data_reason }}</p>
+    {% if filter_options and current_filters %}
+    <a href="{% url 'report_item_sales_by_year' %}?clear_filters=1{% if selected_distributor %}&distributor={{ selected_distributor.pk }}{% endif %}" class="btn btn-sm btn-outline-secondary mt-2">
+      Clear Filters
+    </a>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+
+<!-- ================================================================
+     Report table
+     ================================================================ -->
+<div class="card border-0 shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-striped table-hover table-sm mb-0 report-table" id="reportTable">
+        <thead>
+          <tr>
+            <th class="col-sticky-1 sortable" data-col="0" data-sort-key="item">Item</th>
+            {% for year in years %}
+            <th class="sortable text-end{% if years|length > 2 and forloop.counter <= 2 %} old-year-col{% endif %}"
+                data-col="{{ forloop.counter }}"
+                data-sort-key="year_{{ year }}"
+                {% if years|length > 2 and forloop.counter <= 2 %}style="display:none;"{% endif %}>
+              '{{ year|stringformat:"s"|slice:"-2:" }}
+            </th>
+            {% endfor %}
+            {% if prior_year %}
+            <th class="sortable text-end"
+                data-col="{{ years|length|add:1 }}"
+                data-sort-key="lfy_diff">
+              +/&minus;
+            </th>
+            {% endif %}
+            <th class="sortable text-end l12m-divider" data-col="{% if prior_year %}{{ years|length|add:2 }}{% else %}{{ years|length|add:1 }}{% endif %}" data-sort-key="l12m">L12M</th>
+            <th class="sortable text-end" data-col="{% if prior_year %}{{ years|length|add:3 }}{% else %}{{ years|length|add:2 }}{% endif %}" data-sort-key="l12m_diff">+/&minus;</th>
+          </tr>
+        </thead>
+
+        <!-- Totals row (pinned, not sortable) -->
+        <tbody id="totalsBody">
+          <tr>
+            <td class="col-sticky-1">
+              <i class="bi bi-sigma text-muted"
+                 data-bs-toggle="tooltip" title="Totals"></i>
+              <span class="visually-hidden">TOTAL</span>
+            </td>
+            {% for year in years %}
+            {% with val=total_by_year|get_item:year %}
+            <td class="text-end{% if years|length > 2 and forloop.counter <= 2 %} old-year-col{% endif %}"
+                data-value="{{ val }}"
+                {% if years|length > 2 and forloop.counter <= 2 %}style="display:none;"{% endif %}>
+              {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
+            </td>
+            {% endwith %}
+            {% endfor %}
+            {% if prior_year %}
+            <td class="text-end diff-col fw-bold" data-value="{{ total_lfy_diff|default:0 }}">
+              {% if total_lfy_diff is not None %}
+                {% if total_lfy_diff > 0 %}+{% endif %}{{ total_lfy_diff|intcomma }}
+              {% endif %}
+            </td>
+            {% endif %}
+            <td class="text-end l12m-divider" data-value="{{ total_last_12 }}">
+              {% if total_last_12 %}{{ total_last_12|intcomma }}{% else %}&mdash;{% endif %}
+            </td>
+            <td class="text-end diff-col" data-value="{{ total_diff }}">
+              {% if total_diff > 0 %}+{% endif %}{{ total_diff|intcomma }}
+            </td>
+          </tr>
+        </tbody>
+
+        <!-- Data rows (sortable) -->
+        <tbody id="dataBody">
+          {% for row in rows %}
+          <tr>
+            <!-- Item / Brand stacked -->
+            <td class="col-sticky-1" data-item="{{ row.item_name|lower }}">
+              <span class="fw-semibold">{{ row.item_name }}</span><br>
+              <span class="small">{{ row.brand_name }}</span>
+            </td>
+            <!-- Year columns -->
+            {% for year in years %}
+            {% with units=row.year_units|get_item:year %}
+            <td class="text-end{% if years|length > 2 and forloop.counter <= 2 %} old-year-col{% endif %}"
+                data-value="{{ units|default:0 }}"
+                {% if years|length > 2 and forloop.counter <= 2 %}style="display:none;"{% endif %}>
+              {% if units %}{{ units|intcomma }}{% else %}&mdash;{% endif %}
+            </td>
+            {% endwith %}
+            {% endfor %}
+            <!-- LFY +/− -->
+            {% if prior_year %}
+            <td class="text-end diff-col" data-value="{{ row.lfy_diff|default:0 }}">
+              {% if row.lfy_diff is not None %}
+                {% if row.lfy_diff > 0 %}+{% endif %}{{ row.lfy_diff|intcomma }}
+              {% endif %}
+            </td>
+            {% endif %}
+            <!-- L12M -->
+            <td class="text-end l12m-divider" data-value="{{ row.last_12_units }}">
+              {% if row.last_12_units %}{{ row.last_12_units|intcomma }}{% else %}&mdash;{% endif %}
+            </td>
+            <!-- L12M +/− -->
+            <td class="text-end diff-col" data-value="{{ row.diff }}">
+              {% if row.diff > 0 %}+{% endif %}{{ row.diff|intcomma }}
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="{% if prior_year %}{{ years|length|add:4 }}{% else %}{{ years|length|add:3 }}{% endif %}" class="text-center text-muted py-4">
+              No data matches the current filters.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-footer text-muted small py-2 px-3">
+    {{ rows|length }} row{{ rows|length|pluralize }}
+  </div>
+</div>
+
+{% endif %}{# /no_data #}
+
+{% if filter_options %}
+<!-- ================================================================
+     Filter modal (rendered outside no_data conditional so the Filters
+     button works in all states, including filter-active zero results)
+     ================================================================ -->
+<div class="modal fade" id="filterModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title fw-semibold">
+          <i class="bi bi-funnel me-1"></i>Filter Report
+        </h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form method="get"
+              action="{% url 'report_item_sales_by_year' %}"
+              id="report-filter-form"
+              autocomplete="off">
+
+          {# Preserve distributor selection #}
+          <input type="hidden" name="distributor" value="{{ selected_distributor.pk }}">
+
+          {# MY ROUTES — single select dropdown #}
+          {% if user_routes %}
+          <div class="mb-3">
+            <div class="filter-section-label">My Routes</div>
+            <select name="route_id" class="form-select form-select-sm" autocomplete="off">
+              <option value="">All</option>
+              {% for route in user_routes %}
+              <option value="{{ route.pk }}"
+                {% if current_filters.route_id == route.pk|stringformat:"s" %}selected{% endif %}>
+                {{ route.name }} ({{ route.route_accounts.count }})
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+
+          {# ACCOUNT NAME #}
+          <div class="mb-3">
+            <div class="filter-section-label">Account Name</div>
+            <input type="text"
+                   name="account_name"
+                   class="form-control form-control-sm"
+                   placeholder="Search by name..."
+                   value="{{ current_filters.account_name }}"
+                   autocomplete="off">
+          </div>
+
+          {# BRAND #}
+          {% if filter_options.brands %}
+          <div class="mb-3">
+            <div class="filter-section-label">Brand</div>
+            <div class="filter-checkbox-scroll">
+              {% for brand in filter_options.brands %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="brand"
+                       id="brand_{{ forloop.counter }}"
+                       value="{{ brand.id }}"
+                       {% if brand.id|stringformat:"s" in current_filters.brand %}checked{% endif %}>
+                <label class="form-check-label small" for="brand_{{ forloop.counter }}">
+                  {{ brand.name }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# ON/OFF PREMISE #}
+          <div class="mb-3">
+            <div class="filter-section-label">On/Off Premise</div>
+            <select name="on_off" class="form-select form-select-sm" autocomplete="off">
+              <option value="">All</option>
+              <option value="ON" {% if current_filters.on_off == 'ON' %}selected{% endif %}>ON</option>
+              <option value="OFF" {% if current_filters.on_off == 'OFF' %}selected{% endif %}>OFF</option>
+            </select>
+          </div>
+
+          {# COUNTY #}
+          {% if available_counties %}
+          <div class="mb-3">
+            <div class="filter-section-label">County</div>
+            <div class="filter-checkbox-scroll">
+              {% for county in available_counties %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="county"
+                       id="rpt_county_{{ forloop.counter }}"
+                       value="{{ county }}"
+                       {% if county in current_filters.county %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_county_{{ forloop.counter }}">
+                  {{ county }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# CITY #}
+          {% if filter_options.cities %}
+          <div class="mb-3">
+            <div class="filter-section-label">City</div>
+            <div class="filter-checkbox-scroll">
+              {% for city in filter_options.cities %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="city"
+                       id="rpt_city_{{ forloop.counter }}"
+                       value="{{ city }}"
+                       {% if city in current_filters.city %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_city_{{ forloop.counter }}">
+                  {{ city }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# CLASS OF TRADE #}
+          {% if filter_options.classes_of_trade %}
+          <div class="mb-3">
+            <div class="filter-section-label">Class of Trade</div>
+            <div class="filter-checkbox-scroll">
+              {% for cot in filter_options.classes_of_trade %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="class_of_trade"
+                       id="rpt_cot_{{ forloop.counter }}"
+                       value="{{ cot }}"
+                       {% if cot in current_filters.class_of_trade %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_cot_{{ forloop.counter }}">
+                  {{ cot }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {# DISTRIBUTOR ROUTE #}
+          {% if filter_options.distributor_routes %}
+          <div class="mb-3">
+            <div class="filter-section-label">Distributor Route</div>
+            <div class="filter-checkbox-scroll">
+              {% for route in filter_options.distributor_routes %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="distributor_route"
+                       id="rpt_dr_{{ forloop.counter }}"
+                       value="{{ route }}"
+                       {% if route in current_filters.distributor_route %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_dr_{{ forloop.counter }}">
+                  {{ route }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+        </form>
+      </div>
+      <div class="modal-footer py-2">
+        <a href="{% url 'report_item_sales_by_year' %}?clear_filters=1{% if selected_distributor %}&distributor={{ selected_distributor.pk }}{% endif %}"
+           class="btn btn-outline-secondary btn-sm me-auto"
+           id="clear-filters-link">
+          <i class="bi bi-x-circle me-1"></i>Clear All
+        </a>
+        <button type="submit"
+                form="report-filter-form"
+                class="btn btn-primary btn-sm">
+          <i class="bi bi-check-lg me-1"></i>Apply Filters
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}{# /filter_options #}
+
+{% endblock %}
+
+{% block extra_js %}
+{{ saved_sort|json_script:"saved-sort-data" }}
+<script>
+  // ---- Negative value red coloring (applied via JS from data-value) ---
+  function applyNegativeColors() {
+    document.querySelectorAll('td[data-value]').forEach(td => {
+      const val = parseInt(td.getAttribute('data-value'), 10);
+      if (isNaN(val)) return;
+      if (val < 0) {
+        td.classList.add('text-danger');
+      }
+    });
+    // Diff column also gets positive green and zero muted
+    document.querySelectorAll('.diff-col').forEach(td => {
+      const val = parseInt(td.getAttribute('data-value'), 10);
+      if (isNaN(val)) return;
+      td.classList.remove('diff-positive', 'diff-negative', 'diff-zero');
+      if (val > 0) td.classList.add('diff-positive');
+      else if (val < 0) td.classList.add('diff-negative');
+      else td.classList.add('diff-zero');
+    });
+  }
+  document.addEventListener('DOMContentLoaded', applyNegativeColors);
+
+  // ---- Bootstrap tooltips ------------------------------------------
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+    new bootstrap.Tooltip(el, { trigger: 'hover' });
+  });
+
+  // ---- Client-side column sort (data rows only) -------------------
+  (function () {
+    const table = document.getElementById('reportTable');
+    if (!table) return;
+
+    const tbody = document.getElementById('dataBody');
+    const headers = table.querySelectorAll('thead th.sortable');
+    let currentCol     = -1;
+    let currentSortKey = null;
+    let ascending      = true;
+
+    const savedSortEl = document.getElementById('saved-sort-data');
+    const SAVED_SORT = savedSortEl ? JSON.parse(savedSortEl.textContent) : null;
+
+    function getCellValue(row, colIdx, sortKey) {
+      const cell = row.querySelectorAll('td')[colIdx];
+      if (!cell) return '';
+      if (sortKey && cell.dataset[sortKey] !== undefined) {
+        return cell.dataset[sortKey].toLowerCase();
+      }
+      if (cell.dataset.value !== undefined) {
+        const n = parseFloat(cell.dataset.value);
+        return isNaN(n) ? cell.dataset.value.toLowerCase() : n;
+      }
+      const hidden = cell.querySelector('.visually-hidden');
+      if (hidden) return hidden.textContent.trim().toLowerCase();
+      return cell.textContent.trim().toLowerCase();
+    }
+
+    function clearSortIndicators() {
+      headers.forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+    }
+
+    function performSort(colIdx, sortKey, indicatorEl, forcedAscending) {
+      if (forcedAscending !== undefined) {
+        ascending      = forcedAscending;
+        currentCol     = colIdx;
+        currentSortKey = sortKey;
+      } else if (currentCol === colIdx && currentSortKey === sortKey) {
+        ascending = !ascending;
+      } else {
+        currentCol     = colIdx;
+        currentSortKey = sortKey;
+        ascending      = true;
+      }
+      clearSortIndicators();
+      indicatorEl.classList.add(ascending ? 'sort-asc' : 'sort-desc');
+
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.sort((a, b) => {
+        const aVal = getCellValue(a, colIdx, sortKey);
+        const bVal = getCellValue(b, colIdx, sortKey);
+        if (aVal < bVal) return ascending ? -1 : 1;
+        if (aVal > bVal) return ascending ? 1 : -1;
+        return 0;
+      });
+      rows.forEach(r => tbody.appendChild(r));
+    }
+
+    function saveSortToServer(key, direction) {
+      fetch('{% url "report_item_sales_save_sort" %}', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-CSRFToken': getCsrf(),
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: 'key=' + encodeURIComponent(key) + '&direction=' + encodeURIComponent(direction),
+      }).catch(function(err) {
+        console.warn('Failed to save sort state:', err);
+      });
+    }
+
+    headers.forEach(th => {
+      th.addEventListener('click', function () {
+        const colIdx = parseInt(this.dataset.col, 10);
+        const sortKey = this.dataset.sortKey === 'item' ? 'item' : null;
+        performSort(colIdx, sortKey, this);
+        saveSortToServer(this.dataset.sortKey || '', ascending ? 'asc' : 'desc');
+      });
+    });
+
+    function applySavedSort() {
+      if (!SAVED_SORT || !SAVED_SORT.key) return;
+      const forcedAscending = (SAVED_SORT.direction === 'asc');
+
+      const thEl = table.querySelector('thead th.sortable[data-sort-key="' + SAVED_SORT.key + '"]');
+      if (!thEl) return;
+      const colIdx = parseInt(thEl.dataset.col, 10);
+      const sortKey = SAVED_SORT.key === 'item' ? 'item' : null;
+      performSort(colIdx, sortKey, thEl, forcedAscending);
+    }
+
+    document.addEventListener('DOMContentLoaded', applySavedSort);
+  })();
+
+  function getCsrf() {
+    const el = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (el) return el.value;
+    const m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+  }
+
+  // ---- Show / Hide older year columns ---------------------------------
+  (function () {
+    var btn = document.getElementById('report-older-years-toggle');
+    if (!btn) return;
+    var visible = false;
+    function update() {
+      var els = document.querySelectorAll('.report-table .old-year-col');
+      els.forEach(function (el) { el.style.display = visible ? '' : 'none'; });
+      btn.textContent = visible ? 'Hide older years' : 'Show older years';
+    }
+    btn.addEventListener('click', function () {
+      visible = !visible;
+      update();
+    });
+  })();
+</script>
+{% endblock %}
