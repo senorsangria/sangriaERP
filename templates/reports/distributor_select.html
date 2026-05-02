@@ -12,6 +12,7 @@
 
         <form method="post">
           {% csrf_token %}
+          <input type="hidden" name="next" value="{{ next_url_name }}">
           <div class="mb-3">
             <label for="dist-select" class="form-label fw-semibold">Distributor</label>
             <select id="dist-select" name="distributor_pk" class="form-select" required>

@@ -67,12 +67,19 @@ _REPORT_ITEM_FILTER_DEFAULTS = {
 # Distributor selector
 # ---------------------------------------------------------------------------
 
+_DIST_SELECT_NEXT_WHITELIST = (
+    'report_account_sales_by_year',
+    'report_item_sales_by_year',
+)
+
+
 @login_required
 def distributor_select_view(request):
     """Allow users with multiple distributors to pick one for the report."""
     user = request.user
 
-    if not user.has_permission('can_view_report_account_sales'):
+    if not (user.has_permission('can_view_report_account_sales') or
+            user.has_permission('can_view_report_item_sales')):
         messages.error(request, 'You do not have permission to view this report.')
         return redirect('dashboard')
 
@@ -82,16 +89,22 @@ def distributor_select_view(request):
         messages.error(request, 'No distributors are available for your account.')
         return redirect('dashboard')
 
+    # Validate and resolve the ?next= parameter (whitelist prevents open redirect).
+    next_url_name = (request.GET.get('next', '') or
+                     request.POST.get('next', ''))
+    if next_url_name not in _DIST_SELECT_NEXT_WHITELIST:
+        next_url_name = 'report_account_sales_by_year'
+
     if distributors.count() == 1:
         request.session['report_distributor_pk'] = distributors.first().pk
-        return redirect('report_account_sales_by_year')
+        return redirect(next_url_name)
 
     if request.method == 'POST':
         dist_pk = request.POST.get('distributor_pk')
         try:
             selected = distributors.get(pk=int(dist_pk))
             request.session['report_distributor_pk'] = selected.pk
-            return redirect('report_account_sales_by_year')
+            return redirect(next_url_name)
         except Exception:
             messages.error(request, 'Please select a valid distributor.')
 
@@ -99,6 +112,7 @@ def distributor_select_view(request):
     return render(request, 'reports/distributor_select.html', {
         'distributors': distributors,
         'current_pk': current_pk,
+        'next_url_name': next_url_name,
     })
 
 

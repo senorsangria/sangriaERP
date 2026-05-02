@@ -145,7 +145,7 @@
       <i class="bi bi-download me-1"></i>Export CSV
     </button>
     {% if multiple_distributors and selected_distributor %}
-    <a href="{% url 'report_account_sales_distributor_select' %}" class="btn btn-sm btn-outline-secondary">
+    <a href="{% url 'report_account_sales_distributor_select' %}?next=report_item_sales_by_year" class="btn btn-sm btn-outline-secondary">
       <i class="bi bi-arrow-left-right me-1"></i>Change Distributor
     </a>
     {% endif %}
@@ -279,9 +279,6 @@
         </tbody>
       </table>
     </div>
-  </div>
-  <div class="card-footer text-muted small py-2 px-3">
-    {{ rows|length }} row{{ rows|length|pluralize }}
   </div>
 </div>
 
@@ -518,6 +515,13 @@
     let currentSortKey = null;
     let ascending      = true;
 
+    // Capture server-rendered row order before any sorting occurs.
+    // Clicking the Item header restores rows to this original order.
+    let originalRows = null;
+    document.addEventListener('DOMContentLoaded', function () {
+      originalRows = Array.from(tbody.querySelectorAll('tr'));
+    });
+
     const savedSortEl = document.getElementById('saved-sort-data');
     const SAVED_SORT = savedSortEl ? JSON.parse(savedSortEl.textContent) : null;
 
@@ -538,6 +542,16 @@
 
     function clearSortIndicators() {
       headers.forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+    }
+
+    function restoreDefaultOrder() {
+      clearSortIndicators();
+      currentCol     = -1;
+      currentSortKey = null;
+      // Re-append rows in server-rendered order (brand → sort_order → name).
+      const rows = originalRows || Array.from(tbody.querySelectorAll('tr'));
+      rows.forEach(r => tbody.appendChild(r));
+      saveSortToServer('', 'asc');  // empty key clears session sort
     }
 
     function performSort(colIdx, sortKey, indicatorEl, forcedAscending) {
@@ -582,22 +596,26 @@
 
     headers.forEach(th => {
       th.addEventListener('click', function () {
+        if (this.dataset.sortKey === 'item') {
+          // Item header: restore default server order and clear persisted sort.
+          restoreDefaultOrder();
+          return;
+        }
         const colIdx = parseInt(this.dataset.col, 10);
-        const sortKey = this.dataset.sortKey === 'item' ? 'item' : null;
-        performSort(colIdx, sortKey, this);
+        performSort(colIdx, null, this);
         saveSortToServer(this.dataset.sortKey || '', ascending ? 'asc' : 'desc');
       });
     });
 
     function applySavedSort() {
-      if (!SAVED_SORT || !SAVED_SORT.key) return;
+      // Skip 'item' key — default order is already the server-rendered order.
+      if (!SAVED_SORT || !SAVED_SORT.key || SAVED_SORT.key === 'item') return;
       const forcedAscending = (SAVED_SORT.direction === 'asc');
 
       const thEl = table.querySelector('thead th.sortable[data-sort-key="' + SAVED_SORT.key + '"]');
       if (!thEl) return;
       const colIdx = parseInt(thEl.dataset.col, 10);
-      const sortKey = SAVED_SORT.key === 'item' ? 'item' : null;
-      performSort(colIdx, sortKey, thEl, forcedAscending);
+      performSort(colIdx, null, thEl, forcedAscending);
     }
 
     document.addEventListener('DOMContentLoaded', applySavedSort);

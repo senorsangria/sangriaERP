@@ -2428,11 +2428,27 @@ sort key (`report_account_sales_sort`). Filter session key is `report_item_sales
 
 **Drill-down:** Not implemented yet; item rows are non-links.
 
+**Item column sort behavior:** Clicking the Item column header returns rows to the default
+server-rendered order (brand → sort_order → name) and clears the persisted sort state in
+session. Single-state: no asc/desc toggle, since sort_order has no meaningful direction.
+The original row order is captured on page load; re-clicking Item just re-appends rows in
+that captured order. Other column sorts (year columns, LFY +/−, L12M, L12M +/−) retain
+standard asc/desc toggle behavior.
+
+**Row count display:** Omitted from the item report. The Account Sales by Year report retains
+its row count footer — do not add one to the item report.
+
+**Distributor selection redirect:** The Change Distributor link in the item report passes
+`?next=report_item_sales_by_year` to the distributor selector. The
+`distributor_select_view` reads this param and redirects to the named URL after selection.
+Valid values are whitelisted to `report_account_sales_by_year` and
+`report_item_sales_by_year`; any other value falls back to the account report. The account
+report's Change Distributor link likewise passes `?next=report_account_sales_by_year`.
+
 **Template:** `templates/reports/item_sales_by_year.html`
 - Sticky column: one (`col-sticky-1` = Item/Brand stacked). No second sticky column.
 - No checkbox column, no On/Off column, no Save to Route action bar or modal.
-- JS sort reads `data-item` attribute from the Item cell for text sort;
-  numeric columns use `data-value` as in the account report.
+- JS sort: year/diff/L12M columns use `data-value`; Item header restores default order.
 
 ---
 

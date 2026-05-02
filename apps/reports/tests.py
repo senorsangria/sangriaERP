@@ -1867,3 +1867,98 @@ class ItemSalesCoverageScopingTest(TestCase):
         year_units_2024 = row['year_units'].get(2024, 0)
         self.assertEqual(year_units_2024, 30,
                          'Item totals must reflect only the covered account, not all accounts')
+
+
+# ---------------------------------------------------------------------------
+# Change Distributor redirect tests
+# ---------------------------------------------------------------------------
+
+class ChangeDistributorRedirectTest(TestCase):
+    """
+    The distributor_select_view honours a whitelisted ?next= URL param and
+    redirects to the correct report after distributor selection.
+    """
+
+    def setUp(self):
+        self.company = make_company('Dist Redirect Co')
+        # supplier_admin sees all active company distributors
+        self.dist_a = make_distributor(self.company, name='Alpha Dist')
+        self.dist_b = make_distributor(self.company, name='Beta Dist')
+        self.user = make_user(self.company, 'supplier_admin', username='sa_redirect')
+        self.client = Client()
+        self.client.force_login(self.user)
+        self.select_url = reverse('report_account_sales_distributor_select')
+
+    def test_change_distributor_redirects_to_item_report_when_from_item_report(self):
+        """POST to distributor-select with next=report_item_sales_by_year redirects to item report."""
+        response = self.client.post(
+            self.select_url + '?next=report_item_sales_by_year',
+            {'distributor_pk': str(self.dist_a.pk), 'next': 'report_item_sales_by_year'},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('report_item_sales_by_year'))
+
+    def test_change_distributor_redirects_to_account_report_when_from_account_report(self):
+        """POST with next=report_account_sales_by_year redirects to account report."""
+        response = self.client.post(
+            self.select_url + '?next=report_account_sales_by_year',
+            {'distributor_pk': str(self.dist_a.pk), 'next': 'report_account_sales_by_year'},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('report_account_sales_by_year'))
+
+    def test_change_distributor_falls_back_to_account_report_for_invalid_next(self):
+        """POST with an invalid next value falls back to the account report."""
+        response = self.client.post(
+            self.select_url + '?next=some_random_url_name',
+            {'distributor_pk': str(self.dist_a.pk), 'next': 'some_random_url_name'},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('report_account_sales_by_year'))
+
+
+# ---------------------------------------------------------------------------
+# Item Sales by Year — sort-clear and template tests
+# ---------------------------------------------------------------------------
+
+class ItemSalesTemplateMiscTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Item Misc Co')
+        self.distributor = make_distributor(self.company, name='Misc Dist')
+        self.brand = make_brand(self.company, name='Misc Brand')
+        self.item = make_item_for_brand(self.brand, 'Misc Item', 'MISC01')
+        self.batch = make_batch(self.company, self.distributor)
+        self.account = make_account(self.company, self.distributor, name='Misc Bar')
+        make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 5)
+        self.user = make_user(self.company, 'supplier_admin', username='sa_misc')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_item_sales_save_sort_clears_when_empty_key_posted(self):
+        """POST to save-sort with an empty key removes the session sort key."""
+        save_url = reverse('report_item_sales_save_sort')
+        # Prime the session with a sort
+        session = self.client.session
+        session['report_item_sales_sort'] = {'key': 'l12m', 'direction': 'desc'}
+        session.save()
+
+        response = self.client.post(save_url, {'key': '', 'direction': 'asc'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'success': True})
+        self.assertNotIn('report_item_sales_sort', self.client.session)
+
+    def test_item_sales_template_has_no_row_count(self):
+        """The item report must not contain the row-count footer markup."""
+        response = self.client.get(reverse('report_item_sales_by_year'))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # The account report footer pattern — should NOT appear in the item report
+        self.assertNotIn('row{{ rows|length|pluralize }}', content,
+                         'Compiled template should not contain the row-count tag source')
+        # The rendered form: e.g. "1 row" or "3 rows"
+        import re
+        self.assertIsNone(
+            re.search(r'\d+ rows?</div>', content),
+            'Item report must not render a row count in the card footer',
+        )
