@@ -11,18 +11,24 @@ class Route(TimeStampedModel):
     )
     distributor = models.ForeignKey(
         'distribution.Distributor',
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='routes',
     )
     created_by = models.ForeignKey(
         'core.User',
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name='routes',
     )
     name = models.CharField(max_length=100)
 
     class Meta:
         ordering = ['name']
+        # created_by is nullable — PostgreSQL treats NULLs as distinct in unique
+        # constraints, so multiple orphaned routes (created_by=NULL) with the
+        # same distributor+name are allowed. This is acceptable; orphaned routes
+        # from deleted users are cleaned up manually.
         unique_together = [['created_by', 'distributor', 'name']]
 
     def __str__(self):

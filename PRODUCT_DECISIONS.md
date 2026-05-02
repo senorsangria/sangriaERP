@@ -2854,11 +2854,13 @@ Routes allow users to group accounts into named lists for planning and filtering
 **Route**
 - `company` (FK → core.Company)
 - `distributor` (FK → distribution.Distributor)
-- `created_by` (FK → core.User)
+- `created_by` (FK → core.User, **nullable** — SET_NULL; set to NULL when the creating user is deleted so the route is preserved)
 - `name` (CharField, max 100)
 - Inherits `created_at` / `updated_at` from TimeStampedModel
 - **Unique constraint:** `(created_by, distributor, name)` — a user cannot
-  have two routes with the same name for the same distributor
+  have two routes with the same name for the same distributor. Because
+  `created_by` is nullable, PostgreSQL treats two NULL rows as distinct, so
+  multiple orphaned routes with the same distributor+name are permitted.
 
 **RouteAccount**
 - `route` (FK → Route)
@@ -3277,3 +3279,34 @@ Bootstrap collapse target IDs when both navs are in the DOM simultaneously.
 | SaaS Admin | main (Events, Accounts, Distributors) · Admin Tools (Users, Brands, Sales Import, Account Import) |
 
 *Last updated: May 2026*
+
+---
+
+## Database Integrity — FK on_delete Decisions
+
+Pass 1 of database cleanup (May 2026). Four FK on_delete behaviors changed to
+prevent silent data loss.
+
+- **EventItemRecap.item: PROTECT** — recap data is historical and must not be
+  silently destroyed when an item is deleted from the catalog. Deleting an Item
+  that has recap rows raises `ProtectedError`, forcing explicit cleanup (delete
+  the recaps first, then the item, or archive the item with `is_active=False`
+  instead of deleting).
+
+- **ItemMapping.distributor: PROTECT** (was SET_NULL) — mappings are uniquely
+  keyed on `(company, distributor, raw_item_name)`. A NULL distributor makes a
+  mapping unresolvable. Field is now non-nullable; deleting a Distributor with
+  existing mappings raises `ProtectedError`. No code path ever created a mapping
+  with `distributor=None`.
+
+- **Route.created_by: SET_NULL with null=True** (was CASCADE) — routes are
+  curated planning data. When the creating user is deleted (e.g., employee
+  leaves), routes are preserved with `created_by=NULL` so they can be reassigned
+  or cleaned up manually. The `unique_together` constraint on
+  `(created_by, distributor, name)` still applies; PostgreSQL treats multiple
+  NULL `created_by` rows as distinct, so name collisions among orphaned routes
+  are allowed.
+
+- **Route.distributor: PROTECT** (was CASCADE) — routes belong to a specific
+  distributor and are not meaningful without one. Deleting a Distributor with
+  existing routes raises `ProtectedError`, requiring manual route cleanup first.

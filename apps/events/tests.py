@@ -18,7 +18,7 @@ from apps.accounts.models import Account
 from apps.catalog.models import Brand, Item
 from apps.core.models import Company, User
 from apps.distribution.models import Distributor
-from apps.events.models import Event, Expense, EventPhoto
+from apps.events.models import Event, Expense, EventItemRecap, EventPhoto
 
 
 # ---------------------------------------------------------------------------
@@ -2741,3 +2741,40 @@ class EventManagerEditPageTest(TestCase):
         self.assertRedirects(response, reverse('event_detail', args=[self.event.pk]))
         self.event.refresh_from_db()
         self.assertEqual(self.event.event_manager, self.mgr_a)
+
+
+# ---------------------------------------------------------------------------
+# DB integrity — FK on_delete: EventItemRecap.item PROTECT
+# ---------------------------------------------------------------------------
+
+class EventItemRecapProtectTest(TestCase):
+    """Deleting a catalog Item that has EventItemRecap rows must raise ProtectedError."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.manager = make_user(self.company, 'supplier_admin', username='mgr_protect')
+        self.item = make_item(self.company, item_code='ProtectSKU')
+        self.event = make_event(
+            self.company,
+            self.manager,
+            Event.EventType.TASTING,
+            status=Event.Status.RECAP_IN_PROGRESS,
+        )
+        self.recap = EventItemRecap.objects.create(
+            event=self.event,
+            item=self.item,
+            bottles_sold=5,
+        )
+
+    def test_deleting_item_with_recap_raises_protected_error(self):
+        from django.db.models import ProtectedError
+        with self.assertRaises(ProtectedError):
+            self.item.delete()
+
+    def test_recap_still_exists_after_failed_item_delete(self):
+        from django.db.models import ProtectedError
+        try:
+            self.item.delete()
+        except ProtectedError:
+            pass
+        self.assertTrue(EventItemRecap.objects.filter(pk=self.recap.pk).exists())

@@ -115,9 +115,7 @@ class ItemMapping(TimeStampedModel):
     )
     distributor = models.ForeignKey(
         'distribution.Distributor',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
+        on_delete=models.PROTECT,
         related_name='item_mappings',
         help_text='The distributor this mapping applies to.',
     )

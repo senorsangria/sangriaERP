@@ -225,7 +225,7 @@ class EventItemRecap(models.Model):
     )
     item = models.ForeignKey(
         'catalog.Item',
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='event_item_recaps',
     )
     shelf_price = models.DecimalField(

@@ -639,3 +639,24 @@ class ImportBatchFilenameDisplayTest(ImportTestBase):
         """A plain string (legacy) is returned as-is."""
         batch = self._make_batch('old_import.csv')
         self.assertEqual(batch.filename_display, 'old_import.csv')
+
+
+# ---------------------------------------------------------------------------
+# DB integrity — FK on_delete: ItemMapping.distributor PROTECT
+# ---------------------------------------------------------------------------
+
+class ItemMappingProtectTest(ImportTestBase):
+    """Deleting a Distributor that has ItemMapping rows must raise ProtectedError."""
+
+    def test_deleting_distributor_with_mapping_raises_protected_error(self):
+        from django.db.models import ProtectedError
+        with self.assertRaises(ProtectedError):
+            self.distributor.delete()
+
+    def test_mapping_still_exists_after_failed_distributor_delete(self):
+        from django.db.models import ProtectedError
+        try:
+            self.distributor.delete()
+        except ProtectedError:
+            pass
+        self.assertTrue(ItemMapping.objects.filter(pk=self.mapping.pk).exists())

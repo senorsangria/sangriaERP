@@ -274,3 +274,55 @@ class RouteViewTests(TestCase):
         account_ids_in_rows = [r['account_id'] for r in rows]
         self.assertIn(account_in.pk, account_ids_in_rows)
         self.assertNotIn(account_out.pk, account_ids_in_rows)
+
+
+# ---------------------------------------------------------------------------
+# DB integrity — FK on_delete: Route.created_by SET_NULL
+# ---------------------------------------------------------------------------
+
+class RouteCreatedBySetNullTest(TestCase):
+    """Deleting a User nulls Route.created_by rather than deleting the route."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.distributor = make_distributor(self.company)
+        self.user = make_user(self.company, 'territory_manager', username='nulltest')
+        self.route = make_route(self.company, self.distributor, self.user, name='Null Test Route')
+
+    def test_deleting_user_nulls_route_created_by(self):
+        route_pk = self.route.pk
+        self.user.delete()
+        self.route.refresh_from_db()
+        self.assertIsNone(self.route.created_by)
+
+    def test_route_still_exists_after_user_delete(self):
+        route_pk = self.route.pk
+        self.user.delete()
+        self.assertTrue(Route.objects.filter(pk=route_pk).exists())
+
+
+# ---------------------------------------------------------------------------
+# DB integrity — FK on_delete: Route.distributor PROTECT
+# ---------------------------------------------------------------------------
+
+class RouteDistributorProtectTest(TestCase):
+    """Deleting a Distributor that has Route rows must raise ProtectedError."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.distributor = make_distributor(self.company)
+        self.user = make_user(self.company, 'territory_manager', username='protecttest')
+        self.route = make_route(self.company, self.distributor, self.user, name='Protect Test Route')
+
+    def test_deleting_distributor_with_route_raises_protected_error(self):
+        from django.db.models import ProtectedError
+        with self.assertRaises(ProtectedError):
+            self.distributor.delete()
+
+    def test_route_still_exists_after_failed_distributor_delete(self):
+        from django.db.models import ProtectedError
+        try:
+            self.distributor.delete()
+        except ProtectedError:
+            pass
+        self.assertTrue(Route.objects.filter(pk=self.route.pk).exists())
