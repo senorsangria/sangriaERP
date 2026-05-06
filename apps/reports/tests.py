@@ -1962,3 +1962,468 @@ class ItemSalesTemplateMiscTest(TestCase):
             re.search(r'\d+ rows?</div>', content),
             'Item report must not render a row count in the card footer',
         )
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — helpers
+# ---------------------------------------------------------------------------
+
+def make_item_for_brand_dist(brand, name, item_code):
+    item, _ = Item.objects.get_or_create(brand=brand, item_code=item_code, defaults={'name': name})
+    return item
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — permission / basic render tests
+# ---------------------------------------------------------------------------
+
+class AccountDistributionPermissionTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Dist Perm Co')
+        self.distributor = make_distributor(self.company, name='Perm Dist')
+
+    def test_account_distribution_view_requires_permission(self):
+        """A user without can_view_report_account_distribution gets redirected."""
+        user = make_user(self.company, 'ambassador', username='amb_dist_perm')
+        client = Client()
+        client.force_login(user)
+        response = client.get(reverse('report_account_distribution'))
+        self.assertIn(response.status_code, (302, 403))
+
+    def test_account_distribution_view_renders_for_supplier_admin(self):
+        """Supplier admin with data gets a 200 with expected content."""
+        brand = make_brand(self.company, name='Dist Brand')
+        item = make_item_for_brand_dist(brand, 'Dist Item', 'DI001')
+        account = make_account(self.company, self.distributor, name='Dist Bar')
+        batch = make_batch(self.company, self.distributor)
+        make_sale(self.company, batch, account, item, date(2024, 6, 1), 50)
+
+        user = make_user(self.company, 'supplier_admin', username='sa_dist_perm')
+        client = Client()
+        client.force_login(user)
+        response = client.get(reverse('report_account_distribution'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Account Distribution by Volume')
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — bucket math
+# ---------------------------------------------------------------------------
+
+class AccountDistributionBucketTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Bucket Co')
+        self.distributor = make_distributor(self.company, name='Bucket Dist')
+        self.brand = make_brand(self.company, name='Bucket Brand')
+        self.item = make_item_for_brand_dist(self.brand, 'Bucket Item', 'BKT001')
+        self.batch = make_batch(self.company, self.distributor)
+
+        self.acct_a = make_account(self.company, self.distributor, name='Acct A')
+        self.acct_b = make_account(self.company, self.distributor, name='Acct B')
+        self.acct_c = make_account(self.company, self.distributor, name='Acct C')
+
+        # A buys 30, B buys 60, C buys 120 in 2024
+        make_sale(self.company, self.batch, self.acct_a, self.item, date(2024, 6, 1), 30)
+        make_sale(self.company, self.batch, self.acct_b, self.item, date(2024, 6, 1), 60)
+        make_sale(self.company, self.batch, self.acct_c, self.item, date(2024, 6, 1), 120)
+
+        self.user = make_user(self.company, 'supplier_admin', username='sa_bucket')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_buckets_correctly_classified(self):
+        """Thresholds [25,50,100]: 1-24=0, 25-49=1, 50-99=1, 100+=1."""
+        from apps.reports.views import build_buckets, compute_bucket_counts
+        from apps.accounts.models import Account
+
+        accounts_qs = Account.active_accounts.filter(
+            company=self.company, distributor=self.distributor
+        )
+        buckets = build_buckets([25, 50, 100])
+        self.assertEqual(len(buckets), 4)  # 1-24, 25-49, 50-99, 100+
+
+        from apps.sales.models import SalesRecord
+        year_qs = SalesRecord.objects.filter(
+            account__company=self.company, sale_date__year=2024
+        )
+        counts = compute_bucket_counts(year_qs, accounts_qs, buckets, [self.item.pk])
+
+        self.assertEqual(counts.get('1 to 24', 0), 0)
+        self.assertEqual(counts.get('25 to 49', 0), 1)
+        self.assertEqual(counts.get('50 to 99', 0), 1)
+        self.assertEqual(counts.get('100+', 0), 1)
+
+    def test_account_distribution_view_bucket_counts(self):
+        """The view returns rows with correct year counts via GET ?thresholds=."""
+        response = self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': '25,50,100', 'items': str(self.item.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        counts_2024 = {r['bucket_label']: r['year_counts'].get(2024, 0) for r in rows}
+        self.assertEqual(counts_2024.get('25 to 49', 0), 1)
+        self.assertEqual(counts_2024.get('50 to 99', 0), 1)
+        self.assertEqual(counts_2024.get('100+', 0), 1)
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — threshold validation
+# ---------------------------------------------------------------------------
+
+class AccountDistributionThresholdValidationTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Thresh Co')
+        self.distributor = make_distributor(self.company, name='Thresh Dist')
+        self.brand = make_brand(self.company, name='Thresh Brand')
+        self.item = make_item_for_brand_dist(self.brand, 'Thresh Item', 'THR001')
+        self.account = make_account(self.company, self.distributor, name='Thresh Bar')
+        self.batch = make_batch(self.company, self.distributor)
+        make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 50)
+        self.user = make_user(self.company, 'supplier_admin', username='sa_thresh')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_invalid_thresholds_fall_back_to_defaults(self):
+        """Descending or negative thresholds fall back to [25, 50, 100]."""
+        response = self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': '100,50,25'},  # descending — invalid
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['thresholds'], [25, 50, 100])
+
+    def test_non_numeric_thresholds_fall_back_to_defaults(self):
+        response = self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': 'abc'},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['thresholds'], [25, 50, 100])
+
+    def test_default_thresholds_on_first_visit(self):
+        """First visit with no session defaults to [25, 50, 100]."""
+        response = self.client.get(reverse('report_account_distribution'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['thresholds'], [25, 50, 100])
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — item filter changes totals
+# ---------------------------------------------------------------------------
+
+class AccountDistributionItemFilterTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Item Filter Co')
+        self.distributor = make_distributor(self.company, name='IF Dist')
+        self.brand = make_brand(self.company, name='IF Brand')
+        self.item1 = make_item_for_brand_dist(self.brand, 'IF Item 1', 'IFI001')
+        self.item2 = make_item_for_brand_dist(self.brand, 'IF Item 2', 'IFI002')
+        self.account = make_account(self.company, self.distributor, name='IF Bar')
+        self.batch = make_batch(self.company, self.distributor)
+        # item1=30, item2=30 → total=60 with both; item1 alone=30
+        make_sale(self.company, self.batch, self.account, self.item1, date(2024, 6, 1), 30)
+        make_sale(self.company, self.batch, self.account, self.item2, date(2024, 6, 1), 30)
+        self.user = make_user(self.company, 'supplier_admin', username='sa_if')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_item_filter_changes_bucket_placement(self):
+        """With both items account falls in 50-99; with only item1 it falls in 25-49."""
+        # Both items: total=60 → 50-99 bucket
+        response = self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': '25,50,100',
+             'items': f'{self.item1.pk},{self.item2.pk}'},
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        counts = {r['bucket_label']: r['year_counts'].get(2024, 0) for r in rows}
+        self.assertEqual(counts.get('50 to 99', 0), 1)
+
+        # item1 only: total=30 → 25-49 bucket
+        response2 = self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': '25,50,100',
+             'items': str(self.item1.pk)},
+        )
+        self.assertEqual(response2.status_code, 200)
+        rows2 = response2.context['rows']
+        counts2 = {r['bucket_label']: r['year_counts'].get(2024, 0) for r in rows2}
+        self.assertEqual(counts2.get('25 to 49', 0), 1)
+        self.assertEqual(counts2.get('50 to 99', 0), 0)
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — zero/negative quantity excluded
+# ---------------------------------------------------------------------------
+
+class AccountDistributionZeroQuantityTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Zero Co')
+        self.distributor = make_distributor(self.company, name='Zero Dist')
+        self.brand = make_brand(self.company, name='Zero Brand')
+        self.item = make_item_for_brand_dist(self.brand, 'Zero Item', 'ZRO001')
+        self.batch = make_batch(self.company, self.distributor)
+
+        self.acct_pos = make_account(self.company, self.distributor, name='Pos Bar')
+        self.acct_zero = make_account(self.company, self.distributor, name='Zero Bar')
+        self.acct_neg = make_account(self.company, self.distributor, name='Neg Bar')
+
+        make_sale(self.company, self.batch, self.acct_pos, self.item, date(2024, 6, 1), 50)
+        # net zero: +30 then -30
+        make_sale(self.company, self.batch, self.acct_zero, self.item, date(2024, 6, 1), 30)
+        make_sale(self.company, self.batch, self.acct_zero, self.item, date(2024, 6, 2), -30)
+        # negative only
+        make_sale(self.company, self.batch, self.acct_neg, self.item, date(2024, 6, 1), -10)
+
+        self.user = make_user(self.company, 'supplier_admin', username='sa_zero')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_zero_and_negative_accounts_excluded_from_buckets(self):
+        """Only accounts with net positive total appear in any bucket."""
+        response = self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': '25,50,100', 'items': str(self.item.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        total = sum(sum(r['year_counts'].values()) for r in rows)
+        self.assertEqual(total, 1, 'Only the positive-quantity account should appear in any bucket')
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — account filter narrows results
+# ---------------------------------------------------------------------------
+
+class AccountDistributionAccountFilterTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Filter Narrow Co')
+        self.distributor = make_distributor(self.company, name='FN Dist')
+        self.brand = make_brand(self.company, name='FN Brand')
+        self.item = make_item_for_brand_dist(self.brand, 'FN Item', 'FNI001')
+        self.batch = make_batch(self.company, self.distributor)
+
+        self.on_acct = make_account(self.company, self.distributor, name='On Bar', on_off='ON')
+        self.off_acct = make_account(self.company, self.distributor, name='Off Store', on_off='OFF')
+
+        make_sale(self.company, self.batch, self.on_acct, self.item, date(2024, 6, 1), 50)
+        make_sale(self.company, self.batch, self.off_acct, self.item, date(2024, 6, 1), 50)
+
+        self.user = make_user(self.company, 'supplier_admin', username='sa_fn')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_on_off_filter_narrows_bucket_counts(self):
+        """on_off=ON filter leaves only the on-premise account."""
+        response = self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': '25,50,100', 'items': str(self.item.pk), 'on_off': 'ON'},
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        total = sum(sum(r['year_counts'].values()) for r in rows)
+        self.assertEqual(total, 1)
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — CSV export
+# ---------------------------------------------------------------------------
+
+class AccountDistributionCsvTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('CSV Co')
+        self.distributor = make_distributor(self.company, name='CSV Dist')
+        self.brand = make_brand(self.company, name='CSV Brand')
+        self.item = make_item_for_brand_dist(self.brand, 'CSV Item', 'CSV001')
+        self.account = make_account(self.company, self.distributor, name='CSV Bar')
+        self.batch = make_batch(self.company, self.distributor)
+        make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 50)
+        self.user = make_user(self.company, 'supplier_admin', username='sa_csv_dist')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_account_distribution_csv_export(self):
+        """CSV has metadata rows, header, bucket rows, and TOTAL row."""
+        session = self.client.session
+        session['report_account_distribution_thresholds'] = [25, 50, 100]
+        session['report_account_distribution_items'] = [self.item.pk]
+        session.save()
+
+        response = self.client.get(reverse('report_account_distribution_csv'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/csv')
+        self.assertIn('account_distribution.csv', response['Content-Disposition'])
+
+        content = response.content.decode('utf-8')
+        self.assertIn('# Thresholds:', content)
+        self.assertIn('# Selected items:', content)
+        self.assertIn('# Last reported:', content)
+        self.assertIn('Bucket', content)
+        self.assertIn('Last 12m', content)
+        self.assertIn('TOTAL', content)
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — change distributor redirect
+# ---------------------------------------------------------------------------
+
+class AccountDistributionChangeDistributorTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('CD Dist Co')
+        self.dist_a = make_distributor(self.company, name='CD Dist A')
+        self.dist_b = make_distributor(self.company, name='CD Dist B')
+        self.user = make_user(self.company, 'supplier_admin', username='sa_cd_dist')
+        self.client = Client()
+        self.client.force_login(self.user)
+        self.select_url = reverse('report_account_sales_distributor_select')
+
+    def test_change_distributor_redirects_to_distribution_report(self):
+        """POST with next=report_account_distribution redirects to distribution report."""
+        response = self.client.post(
+            self.select_url + '?next=report_account_distribution',
+            {'distributor_pk': str(self.dist_a.pk), 'next': 'report_account_distribution'},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('report_account_distribution'))
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — no sort JS in template
+# ---------------------------------------------------------------------------
+
+class AccountDistributionNoSortTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('No Sort Co')
+        self.distributor = make_distributor(self.company, name='NS Dist')
+        self.brand = make_brand(self.company, name='NS Brand')
+        self.item = make_item_for_brand_dist(self.brand, 'NS Item', 'NS001')
+        self.account = make_account(self.company, self.distributor, name='NS Bar')
+        self.batch = make_batch(self.company, self.distributor)
+        make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 50)
+        self.user = make_user(self.company, 'supplier_admin', username='sa_ns')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_no_sort_js_in_template(self):
+        """The distribution report template must not contain sort JS."""
+        response = self.client.get(reverse('report_account_distribution'))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertNotIn('save_sort', content)
+        self.assertNotIn('saved-sort-data', content)
+        self.assertNotIn('performSort', content)
+
+    def test_no_save_sort_endpoint_for_distribution(self):
+        """There is no save-sort URL for the distribution report."""
+        from django.urls import NoReverseMatch
+        with self.assertRaises(NoReverseMatch):
+            reverse('report_account_distribution_save_sort')
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — session persistence
+# ---------------------------------------------------------------------------
+
+class AccountDistributionSessionPersistenceTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Session Co')
+        self.distributor = make_distributor(self.company, name='Sess Dist')
+        self.brand = make_brand(self.company, name='Sess Brand')
+        self.item = make_item_for_brand_dist(self.brand, 'Sess Item', 'SES001')
+        self.account = make_account(self.company, self.distributor, name='Sess Bar')
+        self.batch = make_batch(self.company, self.distributor)
+        make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 50)
+        self.user = make_user(self.company, 'supplier_admin', username='sa_sess')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_thresholds_persisted_to_session(self):
+        """GET with thresholds param stores them in session."""
+        self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': '10,20,30'},
+        )
+        session = self.client.session
+        self.assertEqual(session.get('report_account_distribution_thresholds'), [10, 20, 30])
+
+    def test_thresholds_restored_from_session(self):
+        """Subsequent visit with no thresholds param restores from session."""
+        session = self.client.session
+        session['report_account_distribution_thresholds'] = [10, 20, 30]
+        session.save()
+
+        response = self.client.get(reverse('report_account_distribution'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['thresholds'], [10, 20, 30])
+
+    def test_items_persisted_to_session(self):
+        """GET with items param stores them in session."""
+        self.client.get(
+            reverse('report_account_distribution'),
+            {'items': str(self.item.pk)},
+        )
+        session = self.client.session
+        self.assertIn(self.item.pk, session.get('report_account_distribution_items', []))
+
+    def test_items_restored_from_session(self):
+        """Subsequent visit with no items param restores from session."""
+        session = self.client.session
+        session['report_account_distribution_items'] = [self.item.pk]
+        session.save()
+
+        response = self.client.get(reverse('report_account_distribution'))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(self.item.pk, response.context['selected_item_ids'])
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — coverage scoping
+# ---------------------------------------------------------------------------
+
+class AccountDistributionCoverageScopingTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Cov Scope Co')
+        self.distributor = make_distributor(self.company, name='CovS Dist')
+        self.brand = make_brand(self.company, name='CovS Brand')
+        self.item = make_item_for_brand_dist(self.brand, 'CovS Item', 'COVS001')
+        self.batch = make_batch(self.company, self.distributor)
+
+        self.acct_in = make_account(self.company, self.distributor, name='In Bar')
+        self.acct_out = make_account(self.company, self.distributor, name='Out Bar')
+
+        make_sale(self.company, self.batch, self.acct_in, self.item, date(2024, 6, 1), 50)
+        make_sale(self.company, self.batch, self.acct_out, self.item, date(2024, 6, 1), 50)
+
+        self.tm = make_user(self.company, 'territory_manager', username='tm_covs')
+        make_coverage(
+            self.company, self.tm, self.distributor,
+            coverage_type=UserCoverageArea.CoverageType.ACCOUNT,
+            account=self.acct_in,
+        )
+
+        self.client = Client()
+        self.client.force_login(self.tm)
+
+    def test_territory_manager_coverage_scoping(self):
+        """TM sees only their covered account in bucket counts."""
+        response = self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': '25,50,100', 'items': str(self.item.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        total = sum(sum(r['year_counts'].values()) for r in rows)
+        self.assertEqual(total, 1, 'TM should see only their covered account')

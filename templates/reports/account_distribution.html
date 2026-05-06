@@ -1,0 +1,632 @@
+{% extends "base.html" %}
+{% load rbac reports_tags humanize %}
+
+{% block title %}Account Distribution by Volume{% endblock %}
+
+{% block extra_css %}
+<style>
+  .report-table thead th {
+    position: sticky;
+    top: 0;
+    background: #1a2d42;
+    color: #c8d8e8;
+    white-space: nowrap;
+    z-index: 2;
+    border-bottom: 2px solid #0d1a26;
+  }
+
+  @media (max-width: 991.98px) {
+    .report-table td.col-sticky-1,
+    .report-table th.col-sticky-1 {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+      background: inherit;
+    }
+    .report-table thead th.col-sticky-1 {
+      background: #1a2d42;
+    }
+    .report-table tbody tr:nth-child(odd) td.col-sticky-1 {
+      background: #fff;
+    }
+    .report-table tbody tr:nth-child(even) td.col-sticky-1 {
+      background: #f8f9fa;
+    }
+    .report-table {
+      font-size: .82rem;
+    }
+  }
+
+  .report-table th.l12m-divider,
+  .report-table td.l12m-divider {
+    border-left: 1.5px solid #ccc;
+  }
+
+  .diff-positive { color: #198754; }
+  .diff-negative { color: #dc3545; }
+  .diff-zero     { color: #6c757d; }
+
+  .filter-section-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6c757d;
+    margin-bottom: 0.4rem;
+  }
+  .filter-checkbox-scroll {
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.5rem;
+    background: #fff;
+  }
+  .filter-checkbox-scroll .form-check {
+    margin-bottom: 0.25rem;
+  }
+  .filter-checkbox-scroll .form-check:last-child {
+    margin-bottom: 0;
+  }
+
+  #totalsBody tr {
+    background: #e8edf2 !important;
+    font-weight: bold;
+    border-top: 2px solid #1a2d42;
+    border-bottom: 2px solid #1a2d42;
+  }
+  #totalsBody td.col-sticky-1 {
+    background: #e8edf2 !important;
+  }
+
+  /* Threshold + items controls */
+  .report-params-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .report-params-row .param-group {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .report-params-row label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #495057;
+    white-space: nowrap;
+    margin-bottom: 0;
+  }
+  .report-params-row input[type="text"] {
+    width: 140px;
+    font-size: 0.82rem;
+  }
+
+  /* Items dropdown panel */
+  .items-dropdown-menu {
+    min-width: 260px;
+    padding: 0.5rem;
+  }
+  .items-dropdown-scroll {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.4rem;
+    background: #fff;
+    margin-bottom: 0.5rem;
+  }
+  .items-dropdown-scroll .form-check {
+    margin-bottom: 0.2rem;
+  }
+  .items-brand-header {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6c757d;
+    padding: 0.3rem 0 0.1rem;
+  }
+
+  @media (max-width: 575.98px) {
+    .report-params-row {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .report-params-row input[type="text"] {
+      width: 100%;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ================================================================
+     Page header
+     ================================================================ -->
+<div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-1">
+  <div>
+    <h4 class="fw-bold mb-0">Account Distribution by Volume</h4>
+    <div class="d-flex align-items-center justify-content-between gap-2">
+      {% if selected_distributor %}
+      <p class="text-muted mb-0 small">
+        {{ selected_distributor.name }}
+        {% if last_full_month_display %}
+        &middot; Data through: <strong>{{ last_full_month_display }}</strong>
+        {% endif %}
+      </p>
+      {% elif last_full_month_display %}
+      <p class="text-muted mb-0 small">Data through: <strong>{{ last_full_month_display }}</strong></p>
+      {% endif %}
+      {% if years|length > 2 %}
+      <button type="button" id="report-older-years-toggle"
+              class="btn btn-outline-secondary btn-sm"
+              style="font-size:11px;">
+        Show older years
+      </button>
+      {% endif %}
+    </div>
+  </div>
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <button type="button"
+            class="btn btn-outline-secondary btn-sm"
+            data-bs-toggle="modal"
+            data-bs-target="#filterModal">
+      <i class="bi bi-funnel me-1"></i>Filters
+      <span class="badge bg-warning text-dark ms-1
+            {% if not active_filter_count %}d-none{% endif %}"
+            id="filter-count-badge">
+        {{ active_filter_count }}
+      </span>
+    </button>
+    <button type="submit"
+            form="report-params-form"
+            formaction="{% url 'report_account_distribution_csv' %}"
+            class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-download me-1"></i>Export CSV
+    </button>
+    {% if multiple_distributors and selected_distributor %}
+    <a href="{% url 'report_account_sales_distributor_select' %}?next=report_account_distribution" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-arrow-left-right me-1"></i>Change Distributor
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ================================================================
+     Thresholds + Items controls (primary report parameters)
+     ================================================================ -->
+<form method="get" action="{% url 'report_account_distribution' %}" id="report-params-form" autocomplete="off">
+  <input type="hidden" name="distributor" value="{{ selected_distributor.pk }}">
+  <div class="report-params-row mb-2">
+    <div class="param-group">
+      <label for="thresholds-input">Thresholds:</label>
+      <input type="text"
+             id="thresholds-input"
+             name="thresholds"
+             class="form-control form-control-sm"
+             value="{{ thresholds_str }}"
+             placeholder="e.g. 25, 50, 100">
+    </div>
+
+    <div class="param-group dropdown" id="items-dropdown-wrapper">
+      <label>Selected items:</label>
+      <button class="btn btn-outline-secondary btn-sm dropdown-toggle"
+              type="button"
+              id="itemsDropdownBtn"
+              data-bs-toggle="dropdown"
+              data-bs-auto-close="outside"
+              aria-expanded="false">
+        {{ selected_items_count }} item{{ selected_items_count|pluralize }} selected
+      </button>
+      <div class="dropdown-menu items-dropdown-menu" aria-labelledby="itemsDropdownBtn">
+        <div class="items-dropdown-scroll" id="items-checkbox-list">
+          {% with current_brand="" %}
+          {% for item in available_items %}
+          {% if item.brand_name != current_brand %}
+          <div class="items-brand-header">{{ item.brand_name }}</div>
+          {% with current_brand=item.brand_name %}{% endwith %}
+          {% endif %}
+          <div class="form-check">
+            <input class="form-check-input item-checkbox"
+                   type="checkbox"
+                   name="item_check"
+                   id="item_{{ item.id }}"
+                   value="{{ item.id }}"
+                   data-item-id="{{ item.id }}"
+                   {% if item.id in selected_item_ids %}checked{% endif %}>
+            <label class="form-check-label small" for="item_{{ item.id }}">
+              {{ item.name }}
+            </label>
+          </div>
+          {% endfor %}
+          {% endwith %}
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+          <button type="button" class="btn btn-outline-secondary btn-sm btn-xs" id="items-select-all">All</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm btn-xs" id="items-select-none">None</button>
+          <button type="button" class="btn btn-primary btn-sm ms-auto" id="items-apply-btn">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <button type="submit" form="report-params-form" class="btn btn-primary btn-sm">Apply</button>
+    <input type="hidden" name="items" id="items-hidden-input" value="{{ selected_item_ids|join:',' }}">
+  </div>
+</form>
+
+<!-- ================================================================
+     No-data state
+     ================================================================ -->
+{% if no_data %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-bar-chart-fill text-muted" style="font-size:3rem;"></i>
+    <p class="mt-3 mb-1 fw-semibold text-muted">No data available</p>
+    <p class="text-muted small">{{ no_data_reason }}</p>
+    {% if filter_options and current_filters %}
+    <a href="{% url 'report_account_distribution' %}?clear_filters=1{% if selected_distributor %}&distributor={{ selected_distributor.pk }}{% endif %}" class="btn btn-sm btn-outline-secondary mt-2">
+      Clear Filters
+    </a>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+
+<!-- ================================================================
+     Report table
+     ================================================================ -->
+<div class="card border-0 shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-striped table-hover table-sm mb-0 report-table" id="reportTable">
+        <thead>
+          <tr>
+            <th class="col-sticky-1">Bucket</th>
+            {% for year in years %}
+            <th class="text-end{% if years|length > 2 and forloop.counter <= 2 %} old-year-col{% endif %}"
+                {% if years|length > 2 and forloop.counter <= 2 %}style="display:none;"{% endif %}>
+              '{{ year|stringformat:"s"|slice:"-2:" }}
+            </th>
+            {% endfor %}
+            {% if prior_year %}
+            <th class="text-end">+/&minus;</th>
+            {% endif %}
+            <th class="text-end l12m-divider">L12M</th>
+            <th class="text-end">+/&minus;</th>
+          </tr>
+        </thead>
+
+        <!-- Totals row (pinned) -->
+        <tbody id="totalsBody">
+          <tr>
+            <td class="col-sticky-1">
+              <i class="bi bi-sigma text-muted"
+                 data-bs-toggle="tooltip" title="Totals (qualifying accounts)"></i>
+              <span class="visually-hidden">TOTAL</span>
+            </td>
+            {% for year in years %}
+            {% with val=total_by_year|get_item:year %}
+            <td class="text-end{% if years|length > 2 and forloop.counter <= 2 %} old-year-col{% endif %}"
+                data-value="{{ val }}"
+                {% if years|length > 2 and forloop.counter <= 2 %}style="display:none;"{% endif %}>
+              {% if val %}{{ val|intcomma }}{% else %}&mdash;{% endif %}
+            </td>
+            {% endwith %}
+            {% endfor %}
+            {% if prior_year %}
+            <td class="text-end diff-col fw-bold" data-value="{{ total_lfy_diff|default:0 }}">
+              {% if total_lfy_diff is not None %}
+                {% if total_lfy_diff > 0 %}+{% endif %}{{ total_lfy_diff|intcomma }}
+              {% endif %}
+            </td>
+            {% endif %}
+            <td class="text-end l12m-divider" data-value="{{ total_last_12 }}">
+              {% if total_last_12 %}{{ total_last_12|intcomma }}{% else %}&mdash;{% endif %}
+            </td>
+            <td class="text-end diff-col" data-value="{{ total_diff }}">
+              {% if total_diff > 0 %}+{% endif %}{{ total_diff|intcomma }}
+            </td>
+          </tr>
+        </tbody>
+
+        <!-- Data rows (one per bucket) -->
+        <tbody id="dataBody">
+          {% for row in rows %}
+          <tr>
+            <td class="col-sticky-1 fw-semibold">{{ row.bucket_label }}</td>
+            {% for year in years %}
+            {% with cnt=row.year_counts|get_item:year %}
+            <td class="text-end{% if years|length > 2 and forloop.counter <= 2 %} old-year-col{% endif %}"
+                data-value="{{ cnt|default:0 }}"
+                {% if years|length > 2 and forloop.counter <= 2 %}style="display:none;"{% endif %}>
+              {% if cnt %}{{ cnt|intcomma }}{% else %}&mdash;{% endif %}
+            </td>
+            {% endwith %}
+            {% endfor %}
+            {% if prior_year %}
+            <td class="text-end diff-col" data-value="{{ row.lfy_diff|default:0 }}">
+              {% if row.lfy_diff is not None %}
+                {% if row.lfy_diff > 0 %}+{% endif %}{{ row.lfy_diff|intcomma }}
+              {% endif %}
+            </td>
+            {% endif %}
+            <td class="text-end l12m-divider" data-value="{{ row.last_12_count }}">
+              {% if row.last_12_count %}{{ row.last_12_count|intcomma }}{% else %}&mdash;{% endif %}
+            </td>
+            <td class="text-end diff-col" data-value="{{ row.diff }}">
+              {% if row.diff > 0 %}+{% endif %}{{ row.diff|intcomma }}
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="{% if prior_year %}{{ years|length|add:4 }}{% else %}{{ years|length|add:3 }}{% endif %}" class="text-center text-muted py-4">
+              No buckets defined.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endif %}{# /no_data #}
+
+{% if filter_options %}
+<!-- ================================================================
+     Filter modal
+     ================================================================ -->
+<div class="modal fade" id="filterModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title fw-semibold">
+          <i class="bi bi-funnel me-1"></i>Filter Report
+        </h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form method="get"
+              action="{% url 'report_account_distribution' %}"
+              id="report-filter-form"
+              autocomplete="off">
+
+          <input type="hidden" name="distributor" value="{{ selected_distributor.pk }}">
+          {# Preserve thresholds and items when filter form is submitted #}
+          <input type="hidden" name="thresholds" value="{{ thresholds_str }}">
+          <input type="hidden" name="items" value="{{ selected_item_ids|join:',' }}">
+
+          {% if user_routes %}
+          <div class="mb-3">
+            <div class="filter-section-label">My Routes</div>
+            <select name="route_id" class="form-select form-select-sm" autocomplete="off">
+              <option value="">All</option>
+              {% for route in user_routes %}
+              <option value="{{ route.pk }}"
+                {% if current_filters.route_id == route.pk|stringformat:"s" %}selected{% endif %}>
+                {{ route.name }} ({{ route.route_accounts.count }})
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+
+          <div class="mb-3">
+            <div class="filter-section-label">Account Name</div>
+            <input type="text"
+                   name="account_name"
+                   class="form-control form-control-sm"
+                   placeholder="Search by name..."
+                   value="{{ current_filters.account_name }}"
+                   autocomplete="off">
+          </div>
+
+          <div class="mb-3">
+            <div class="filter-section-label">On/Off Premise</div>
+            <select name="on_off" class="form-select form-select-sm" autocomplete="off">
+              <option value="">All</option>
+              <option value="ON" {% if current_filters.on_off == 'ON' %}selected{% endif %}>ON</option>
+              <option value="OFF" {% if current_filters.on_off == 'OFF' %}selected{% endif %}>OFF</option>
+            </select>
+          </div>
+
+          {% if available_counties %}
+          <div class="mb-3">
+            <div class="filter-section-label">County</div>
+            <div class="filter-checkbox-scroll">
+              {% for county in available_counties %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="county"
+                       id="rpt_county_{{ forloop.counter }}"
+                       value="{{ county }}"
+                       {% if county in current_filters.county %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_county_{{ forloop.counter }}">
+                  {{ county }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {% if filter_options.cities %}
+          <div class="mb-3">
+            <div class="filter-section-label">City</div>
+            <div class="filter-checkbox-scroll">
+              {% for city in filter_options.cities %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="city"
+                       id="rpt_city_{{ forloop.counter }}"
+                       value="{{ city }}"
+                       {% if city in current_filters.city %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_city_{{ forloop.counter }}">
+                  {{ city }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {% if filter_options.classes_of_trade %}
+          <div class="mb-3">
+            <div class="filter-section-label">Class of Trade</div>
+            <div class="filter-checkbox-scroll">
+              {% for cot in filter_options.classes_of_trade %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="class_of_trade"
+                       id="rpt_cot_{{ forloop.counter }}"
+                       value="{{ cot }}"
+                       {% if cot in current_filters.class_of_trade %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_cot_{{ forloop.counter }}">
+                  {{ cot }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {% if filter_options.distributor_routes %}
+          <div class="mb-3">
+            <div class="filter-section-label">Distributor Route</div>
+            <div class="filter-checkbox-scroll">
+              {% for route in filter_options.distributor_routes %}
+              <div class="form-check">
+                <input class="form-check-input"
+                       type="checkbox"
+                       name="distributor_route"
+                       id="rpt_dr_{{ forloop.counter }}"
+                       value="{{ route }}"
+                       {% if route in current_filters.distributor_route %}checked{% endif %}>
+                <label class="form-check-label small" for="rpt_dr_{{ forloop.counter }}">
+                  {{ route }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+        </form>
+      </div>
+      <div class="modal-footer py-2">
+        <a href="{% url 'report_account_distribution' %}?clear_filters=1{% if selected_distributor %}&distributor={{ selected_distributor.pk }}{% endif %}"
+           class="btn btn-outline-secondary btn-sm me-auto"
+           id="clear-filters-link">
+          <i class="bi bi-x-circle me-1"></i>Clear All
+        </a>
+        <button type="submit"
+                form="report-filter-form"
+                class="btn btn-primary btn-sm">
+          <i class="bi bi-check-lg me-1"></i>Apply Filters
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}{# /filter_options #}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  // ---- Diff coloring --------------------------------------------------
+  function applyDiffColors() {
+    document.querySelectorAll('td[data-value]').forEach(td => {
+      const val = parseInt(td.getAttribute('data-value'), 10);
+      if (isNaN(val)) return;
+      if (val < 0) td.classList.add('text-danger');
+    });
+    document.querySelectorAll('.diff-col').forEach(td => {
+      const val = parseInt(td.getAttribute('data-value'), 10);
+      if (isNaN(val)) return;
+      td.classList.remove('diff-positive', 'diff-negative', 'diff-zero');
+      if (val > 0) td.classList.add('diff-positive');
+      else if (val < 0) td.classList.add('diff-negative');
+      else td.classList.add('diff-zero');
+    });
+  }
+  document.addEventListener('DOMContentLoaded', applyDiffColors);
+
+  // ---- Bootstrap tooltips ------------------------------------------
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+    new bootstrap.Tooltip(el, { trigger: 'hover' });
+  });
+
+  // ---- Show / Hide older year columns ---------------------------------
+  (function () {
+    var btn = document.getElementById('report-older-years-toggle');
+    if (!btn) return;
+    var visible = false;
+    function update() {
+      var els = document.querySelectorAll('.report-table .old-year-col');
+      els.forEach(function (el) { el.style.display = visible ? '' : 'none'; });
+      btn.textContent = visible ? 'Hide older years' : 'Show older years';
+    }
+    btn.addEventListener('click', function () {
+      visible = !visible;
+      update();
+    });
+  })();
+
+  // ---- Items dropdown: checkbox sync → hidden input + count display ---
+  (function () {
+    var hiddenInput = document.getElementById('items-hidden-input');
+    var dropdownBtn = document.getElementById('itemsDropdownBtn');
+    var selectAll = document.getElementById('items-select-all');
+    var selectNone = document.getElementById('items-select-none');
+    var applyBtn = document.getElementById('items-apply-btn');
+    var form = document.getElementById('report-params-form');
+
+    function getChecked() {
+      return Array.from(document.querySelectorAll('.item-checkbox:checked'))
+        .map(cb => cb.value);
+    }
+
+    function updateHiddenAndLabel() {
+      var ids = getChecked();
+      hiddenInput.value = ids.join(',');
+      var n = ids.length;
+      dropdownBtn.textContent = n + ' item' + (n === 1 ? '' : 's') + ' selected ';
+      // Re-append caret
+      var caret = document.createElement('span');
+      caret.className = 'dropdown-toggle';
+      dropdownBtn.appendChild(caret);
+    }
+
+    document.querySelectorAll('.item-checkbox').forEach(function(cb) {
+      cb.addEventListener('change', updateHiddenAndLabel);
+    });
+
+    if (selectAll) {
+      selectAll.addEventListener('click', function() {
+        document.querySelectorAll('.item-checkbox').forEach(cb => { cb.checked = true; });
+        updateHiddenAndLabel();
+      });
+    }
+    if (selectNone) {
+      selectNone.addEventListener('click', function() {
+        document.querySelectorAll('.item-checkbox').forEach(cb => { cb.checked = false; });
+        updateHiddenAndLabel();
+      });
+    }
+    if (applyBtn) {
+      applyBtn.addEventListener('click', function() {
+        updateHiddenAndLabel();
+        form.submit();
+      });
+    }
+  })();
+</script>
+{% endblock %}

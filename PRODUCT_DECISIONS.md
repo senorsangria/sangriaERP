@@ -2452,6 +2452,82 @@ report's Change Distributor link likewise passes `?next=report_account_sales_by_
 
 ---
 
+### Account Distribution by Volume
+
+**Purpose:** Histogram of accounts by volume tier across time periods. Shows how many
+accounts fall into each "bucket" (volume range) per period — useful for understanding
+how the account base is concentrated by purchase level and how that distribution shifts
+year over year.
+
+**Permission:** `can_view_report_account_distribution`
+Granted to: Supplier Admin, Sales Manager, Territory Manager, Ambassador Manager.
+
+**URL:** `/reports/account-distribution/` → `report_account_distribution`
+
+**Row structure:** One row per volume bucket, ordered low to high. Bucket labels are
+derived from user-defined thresholds.
+
+**Threshold input:** Comma-separated positive integers in strictly ascending order.
+Default: `[25, 50, 100]`. Validation: must be positive, strictly ascending, no
+duplicates. Falls back to the session value (or default) with a warning message on
+invalid input.
+
+**Items input:** Multi-select from all items in the company catalog. Default: all items
+with at least one sale record in the distributor's data window. Persisted to session.
+
+**Bucket math:**
+- If thresholds = [25, 50, 100]:
+  - Bucket 1: 1 to 24 (from 1 to first_threshold − 1)
+  - Bucket 2: 25 to 49
+  - Bucket 3: 50 to 99
+  - Bucket 4: 100+ (open-ended)
+- If thresholds[0] == 1, no "1 to 0" bucket is created (first threshold = 1 means the
+  first bucket starts at the threshold itself).
+
+**Aggregation:** For each period (calendar year or L12M):
+1. Sum net quantity per account across the selected items in that period.
+2. Exclude accounts with net total ≤ 0 (returns/zero net purchases don't count).
+3. Count how many accounts fall into each bucket range.
+
+**Coverage area scoping:** Mirrors other reports. Supplier Admin sees all active accounts
+for the selected distributor; all other roles use `get_accounts_for_user(user)`. Bucket
+counts reflect only sales at accounts within the user's visible scope.
+
+**Filter modal:** 8 filters (no brand filter — item selection replaces it):
+account_name, on_off, city, county, class_of_trade, account_type, distributor_route,
+route_id. Same filter logic and session key as other reports.
+
+**Distributor selection:** Same distributor selection logic as other reports. The Change
+Distributor link passes `?next=report_account_distribution`. The whitelist in
+`_DIST_SELECT_NEXT_WHITELIST` includes `report_account_distribution`.
+
+**Year/L12M structure:** Identical to Account Sales by Year and Item Sales by Year —
+up to four complete calendar years (distributor-wide, unfiltered), plus L12M window.
+LFY +/− column when ≥ 2 years. Show/hide older years toggle.
+
+**No sort UI:** Buckets have inherent order (low to high). No sort JS, no saved-sort
+data, no save_sort endpoint.
+
+**Totals row:** Sum of bucket counts per column = total qualifying accounts per period.
+Pinned at top of table.
+
+**Session keys:**
+- `report_account_distribution_filters` — the 8 account-level filters
+- `report_account_distribution_thresholds` — current threshold list
+- `report_account_distribution_items` — list of selected Item PKs
+
+**CSV export:** `/reports/account-distribution/export.csv` → `report_account_distribution_csv`
+- Metadata header rows (commented with `#`): thresholds used, selected item names, last reported month
+- Columns: Bucket, year columns, LFY Diff (if prior_year), Last 12m, Diff
+- TOTAL row at bottom
+
+**Template:** `templates/reports/account_distribution.html`
+- Thresholds + item selector controls appear in the page header, NOT in the filter modal.
+- Single sticky column (col-sticky-1 = Bucket label).
+- No sort indicators or sort-related JS.
+
+---
+
 ### Account Detail Sales View
 
 **Purpose:** Mobile-first visit prep tool for field reps. Shows a portfolio status summary
@@ -3399,11 +3475,9 @@ prevent silent data loss.
 
 ## Future Cleanup
 
-### Reports Aggregation Refactor
+### Reports Aggregation Refactor (urgent)
 
-Account Sales by Year and Item Sales by Year both have HTML + CSV view pairs with
-significant code duplication (~250 lines per pair). When time permits, extract shared
-aggregation utilities (`compute_year_columns`, `compute_lfm`, `aggregate_sales_by_dimension`)
-into `apps/reports/aggregation.py` and refactor all four views to use them. This will
-make it straightforward to add further dimension-based reports (e.g., City Sales by Year,
-Distributor Route Sales by Year) with minimal new code.
+Account Sales by Year, Item Sales by Year, and Account Distribution by Volume now have
+HTML + CSV view pairs with significant code duplication totalling ~750 lines. Extract
+shared aggregation utilities into `apps/reports/aggregation.py` and refactor all six
+views to use them. This should be the next reports task before adding more reports.

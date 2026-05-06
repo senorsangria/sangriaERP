@@ -67,9 +67,27 @@ _REPORT_ITEM_FILTER_DEFAULTS = {
 # Distributor selector
 # ---------------------------------------------------------------------------
 
+_REPORT_DISTRIBUTION_FILTER_SESSION_KEY = 'report_account_distribution_filters'
+_REPORT_DISTRIBUTION_THRESHOLDS_SESSION_KEY = 'report_account_distribution_thresholds'
+_REPORT_DISTRIBUTION_ITEMS_SESSION_KEY = 'report_account_distribution_items'
+
+_DISTRIBUTION_FILTER_DEFAULTS = {
+    'account_name': '',
+    'on_off': '',
+    'city': [],
+    'county': [],
+    'class_of_trade': [],
+    'account_type': [],
+    'distributor_route': [],
+    'route_id': '',
+}
+
+_DEFAULT_THRESHOLDS = [25, 50, 100]
+
 _DIST_SELECT_NEXT_WHITELIST = (
     'report_account_sales_by_year',
     'report_item_sales_by_year',
+    'report_account_distribution',
 )
 
 
@@ -1337,6 +1355,625 @@ def report_item_sales_by_year_csv(request):
         writer.writerow(data_row)
 
     totals_row = ['TOTAL', '']
+    totals_row += [total_by_year.get(y, 0) for y in years]
+    if prior_year and most_recent_year:
+        totals_row.append(total_lfy_diff if total_lfy_diff is not None else '')
+    totals_row += [total_last_12, total_diff]
+    writer.writerow(totals_row)
+
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — helpers
+# ---------------------------------------------------------------------------
+
+def build_buckets(thresholds):
+    """Returns list of (min_inclusive, max_inclusive_or_none, label) tuples."""
+    buckets = []
+    if not thresholds:
+        return [(1, None, '1+')]
+    if thresholds[0] > 1:
+        buckets.append((1, thresholds[0] - 1, f'1 to {thresholds[0] - 1}'))
+    for i, low in enumerate(thresholds):
+        if i + 1 < len(thresholds):
+            high = thresholds[i + 1] - 1
+            buckets.append((low, high, f'{low} to {high}'))
+        else:
+            buckets.append((low, None, f'{low}+'))
+    return buckets
+
+
+def compute_bucket_counts(period_qs, accounts_qs, buckets, selected_item_ids):
+    """
+    period_qs: SalesRecord queryset already filtered to the relevant date range
+    accounts_qs: accounts queryset (user-scoped, with filters applied)
+    buckets: list of (min, max, label) tuples
+    selected_item_ids: list of Item IDs to include
+    Returns: dict mapping bucket label to account count
+    """
+    account_totals = (
+        period_qs
+        .filter(account__in=accounts_qs)
+        .filter(item_id__in=selected_item_ids)
+        .values('account_id')
+        .annotate(total=Sum('quantity'))
+        .filter(total__gt=0)
+    )
+    totals = [row['total'] for row in account_totals]
+
+    bucket_counts = {}
+    for low, high, label in buckets:
+        if high is None:
+            count = sum(1 for t in totals if t >= low)
+        else:
+            count = sum(1 for t in totals if low <= t <= high)
+        bucket_counts[label] = count
+    return bucket_counts
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — HTML view
+# ---------------------------------------------------------------------------
+
+@login_required
+def report_account_distribution(request):
+    """Account Distribution by Volume report."""
+    user = request.user
+
+    if not user.has_permission('can_view_report_account_distribution'):
+        messages.error(request, 'You do not have permission to view this report.')
+        return redirect('dashboard')
+
+    distributors = get_distributors_for_user(user)
+    multiple_distributors = distributors.count() > 1
+
+    if not distributors.exists():
+        return render(request, 'reports/account_distribution.html', {
+            'no_data': True,
+            'no_data_reason': 'No distributors are available for your account.',
+        })
+
+    # ---- Resolve selected distributor -----------------------------------
+    selected_distributor = None
+
+    if multiple_distributors:
+        dist_pk = request.GET.get('distributor') or request.session.get('report_distributor_pk')
+        if dist_pk:
+            try:
+                selected_distributor = distributors.get(pk=int(dist_pk))
+                request.session['report_distributor_pk'] = selected_distributor.pk
+            except Exception:
+                pass
+        if not selected_distributor:
+            return redirect('report_account_sales_distributor_select')
+    else:
+        selected_distributor = distributors.first()
+
+    # ---- Account scoping ------------------------------------------------
+    if user.has_role('supplier_admin'):
+        accounts_qs = Account.active_accounts.filter(
+            company=user.company,
+            distributor=selected_distributor,
+        )
+    else:
+        accounts_qs = get_accounts_for_user(user).filter(
+            distributor=selected_distributor,
+        )
+
+    base_accounts_qs = accounts_qs
+
+    # ---- Build filter options from unfiltered base ----------------------
+    available_counties = list(
+        base_accounts_qs
+        .exclude(county='')
+        .exclude(county='Unknown')
+        .values_list('county', flat=True)
+        .distinct()
+        .order_by('county')
+    )
+    available_account_types = list(
+        base_accounts_qs
+        .exclude(account_type='')
+        .values_list('account_type', flat=True)
+        .distinct()
+        .order_by('account_type')
+    )
+    filter_options = {
+        'cities': list(
+            base_accounts_qs.exclude(city='')
+            .values_list('city', flat=True).distinct().order_by('city')
+        ),
+        'counties': available_counties,
+        'classes_of_trade': list(
+            base_accounts_qs.exclude(account_type='')
+            .values_list('account_type', flat=True).distinct().order_by('account_type')
+        ),
+        'distributor_routes': list(
+            base_accounts_qs.exclude(distributor_route='')
+            .values_list('distributor_route', flat=True).distinct().order_by('distributor_route')
+        ),
+    }
+
+    # ---- Parse filters --------------------------------------------------
+    _filter_keys = list(_DISTRIBUTION_FILTER_DEFAULTS.keys())
+    is_filter_submit = any(k in request.GET for k in _filter_keys)
+
+    if 'clear_filters' in request.GET:
+        request.session.pop(_REPORT_DISTRIBUTION_FILTER_SESSION_KEY, None)
+        filters = dict(_DISTRIBUTION_FILTER_DEFAULTS)
+    elif is_filter_submit:
+        filters = {
+            'account_name': request.GET.get('account_name', ''),
+            'on_off': request.GET.get('on_off', ''),
+            'city': request.GET.getlist('city'),
+            'county': request.GET.getlist('county'),
+            'class_of_trade': request.GET.getlist('class_of_trade'),
+            'account_type': request.GET.getlist('account_type'),
+            'distributor_route': request.GET.getlist('distributor_route'),
+            'route_id': request.GET.get('route_id', ''),
+        }
+        request.session[_REPORT_DISTRIBUTION_FILTER_SESSION_KEY] = filters
+    else:
+        stored = request.session.get(_REPORT_DISTRIBUTION_FILTER_SESSION_KEY, {})
+        filters = {**_DISTRIBUTION_FILTER_DEFAULTS, **stored}
+
+    current_filters = filters
+
+    active_filter_count = sum([
+        1 if current_filters.get('account_name') else 0,
+        1 if current_filters.get('on_off') else 0,
+        1 if current_filters.get('city') else 0,
+        1 if current_filters.get('county') else 0,
+        1 if current_filters.get('class_of_trade') else 0,
+        1 if current_filters.get('account_type') else 0,
+        1 if current_filters.get('distributor_route') else 0,
+        1 if current_filters.get('route_id') else 0,
+    ])
+
+    # ---- Apply account-level filters ------------------------------------
+    on_off_filter = filters.get('on_off', '')
+    city_filter = filters.get('city', [])
+    county_filter = filters.get('county', [])
+    class_of_trade_filter = filters.get('class_of_trade', [])
+    distributor_route_filter = filters.get('distributor_route', [])
+    route_id = filters.get('route_id', '')
+    account_name_query = filters.get('account_name', '').strip()
+    account_type_filter = filters.get('account_type', [])
+
+    if on_off_filter in ('ON', 'OFF'):
+        accounts_qs = accounts_qs.filter(on_off_premise=on_off_filter)
+    if city_filter:
+        accounts_qs = accounts_qs.filter(city__in=city_filter)
+    if county_filter:
+        accounts_qs = accounts_qs.filter(county__in=county_filter)
+    if class_of_trade_filter:
+        accounts_qs = accounts_qs.filter(account_type__in=class_of_trade_filter)
+    if distributor_route_filter:
+        accounts_qs = accounts_qs.filter(distributor_route__in=distributor_route_filter)
+    if route_id:
+        try:
+            route = Route.objects.get(
+                pk=route_id,
+                created_by=request.user,
+                distributor=selected_distributor,
+            )
+            route_account_ids = route.route_accounts.values_list('account_id', flat=True)
+            accounts_qs = accounts_qs.filter(pk__in=route_account_ids)
+        except Route.DoesNotExist:
+            pass
+    if account_name_query:
+        words = account_name_query.split()
+        for word in words:
+            accounts_qs = accounts_qs.filter(name__icontains=word)
+    if account_type_filter:
+        accounts_qs = accounts_qs.filter(account_type__in=account_type_filter)
+
+    # ---- Routes for this user + distributor ----------------------------
+    user_routes = Route.objects.filter(
+        created_by=request.user,
+        distributor=selected_distributor,
+    ).order_by('name')
+
+    # ---- Determine last full month (distributor-wide, unfiltered) ------
+    today = date.today()
+    current_month_start = today.replace(day=1)
+
+    distributor_qs = SalesRecord.objects.filter(
+        account__distributor=selected_distributor,
+        account__company=user.company,
+    )
+
+    max_past_sale = distributor_qs.filter(
+        sale_date__lt=current_month_start,
+    ).aggregate(Max('sale_date'))['sale_date__max']
+
+    if max_past_sale is None:
+        return render(request, 'reports/account_distribution.html', {
+            'no_data': True,
+            'no_data_reason': 'No sales data is available for the selected distributor.',
+            'selected_distributor': selected_distributor,
+            'multiple_distributors': multiple_distributors,
+            'filter_options': filter_options,
+            'current_filters': current_filters,
+            'available_counties': available_counties,
+            'available_account_types': available_account_types,
+            'user_routes': user_routes,
+            'active_filter_count': active_filter_count,
+        })
+
+    lfm_year = max_past_sale.year
+    lfm_month = max_past_sale.month
+    lfm_start = date(lfm_year, lfm_month, 1)
+    lfm_end = date(lfm_year, lfm_month, _last_day(lfm_year, lfm_month))
+    last_full_month_display = lfm_start.strftime('%B %Y')
+
+    w_year, w_month = _month_add(lfm_year, lfm_month, -11)
+    window_start = date(w_year, w_month, 1)
+    window_end = lfm_end
+    last_12_label = f"{window_start.strftime('%b %Y')} – {window_end.strftime('%b %Y')}"
+
+    current_year = today.year
+    years = sorted(
+        distributor_qs
+        .filter(sale_date__year__lt=current_year)
+        .values_list('sale_date__year', flat=True)
+        .distinct()
+        .order_by('-sale_date__year')
+        [:4]
+    )
+    most_recent_year = years[-1] if years else None
+    prior_year = years[-2] if len(years) >= 2 else None
+
+    # ---- Parse thresholds -----------------------------------------------
+    raw_thresholds = request.GET.get('thresholds', '')
+    if raw_thresholds:
+        try:
+            parsed = [int(x.strip()) for x in raw_thresholds.split(',') if x.strip()]
+            if (parsed and all(x > 0 for x in parsed) and
+                    parsed == sorted(parsed) and len(parsed) == len(set(parsed))):
+                thresholds = parsed
+            else:
+                raise ValueError('invalid thresholds')
+        except (ValueError, TypeError):
+            thresholds = None
+        if thresholds is None:
+            messages.warning(request, 'Invalid thresholds; using defaults.')
+            thresholds = list(request.session.get(_REPORT_DISTRIBUTION_THRESHOLDS_SESSION_KEY,
+                                                   _DEFAULT_THRESHOLDS))
+        else:
+            request.session[_REPORT_DISTRIBUTION_THRESHOLDS_SESSION_KEY] = thresholds
+    else:
+        thresholds = list(request.session.get(_REPORT_DISTRIBUTION_THRESHOLDS_SESSION_KEY,
+                                               _DEFAULT_THRESHOLDS))
+
+    # ---- Parse selected items -------------------------------------------
+    raw_items = request.GET.get('items', '')
+    if raw_items:
+        try:
+            selected_item_ids = [int(x.strip()) for x in raw_items.split(',') if x.strip()]
+        except (ValueError, TypeError):
+            selected_item_ids = []
+        if selected_item_ids:
+            request.session[_REPORT_DISTRIBUTION_ITEMS_SESSION_KEY] = selected_item_ids
+        else:
+            selected_item_ids = list(request.session.get(
+                _REPORT_DISTRIBUTION_ITEMS_SESSION_KEY, []))
+    else:
+        selected_item_ids = list(request.session.get(_REPORT_DISTRIBUTION_ITEMS_SESSION_KEY, []))
+
+    # ---- Available items for selector -----------------------------------
+    company_items = (
+        Item.objects
+        .filter(brand__company=user.company)
+        .select_related('brand')
+        .order_by('brand__name', 'sort_order', 'name')
+    )
+    # Default: items with at least one sale in this distributor's data
+    items_with_sales = set(
+        distributor_qs.values_list('item_id', flat=True).distinct()
+    )
+    if not selected_item_ids:
+        selected_item_ids = [i.pk for i in company_items if i.pk in items_with_sales]
+        if selected_item_ids:
+            request.session[_REPORT_DISTRIBUTION_ITEMS_SESSION_KEY] = selected_item_ids
+
+    available_items = [
+        {'id': item.pk, 'name': item.name, 'brand_name': item.brand.name}
+        for item in company_items
+    ]
+
+    # ---- Build buckets --------------------------------------------------
+    buckets = build_buckets(thresholds)
+
+    # ---- Aggregation per period -----------------------------------------
+    base_qs = SalesRecord.objects.filter(account__company=user.company)
+
+    yearly_bucket_counts = {}
+    for year in years:
+        year_qs = base_qs.filter(sale_date__year=year)
+        yearly_bucket_counts[year] = compute_bucket_counts(
+            year_qs, accounts_qs, buckets, selected_item_ids
+        )
+
+    l12m_qs = base_qs.filter(sale_date__gte=window_start, sale_date__lte=window_end)
+    l12m_bucket_counts = compute_bucket_counts(
+        l12m_qs, accounts_qs, buckets, selected_item_ids
+    )
+
+    # ---- Build rows -----------------------------------------------------
+    rows = []
+    for low, high, label in buckets:
+        row = {
+            'bucket_label': label,
+            'year_counts': {y: yearly_bucket_counts[y].get(label, 0) for y in years},
+            'last_12_count': l12m_bucket_counts.get(label, 0),
+            'diff': (l12m_bucket_counts.get(label, 0) -
+                     yearly_bucket_counts[most_recent_year].get(label, 0))
+                    if most_recent_year else 0,
+            'lfy_diff': (
+                yearly_bucket_counts[most_recent_year].get(label, 0) -
+                yearly_bucket_counts[prior_year].get(label, 0)
+            ) if (most_recent_year and prior_year) else None,
+        }
+        rows.append(row)
+
+    # ---- Totals row: count of qualifying accounts per period -----------
+    total_by_year = {y: sum(yearly_bucket_counts[y].get(label, 0) for _, _, label in buckets)
+                     for y in years}
+    total_last_12 = sum(l12m_bucket_counts.get(label, 0) for _, _, label in buckets)
+    most_recent_year_total = total_by_year.get(most_recent_year, 0) if most_recent_year else 0
+    total_diff = total_last_12 - most_recent_year_total
+    total_lfy_diff = (
+        total_by_year.get(most_recent_year, 0) - total_by_year.get(prior_year, 0)
+        if prior_year and most_recent_year else None
+    )
+
+    # ---- Items summary for button label ---------------------------------
+    selected_items_count = len(selected_item_ids)
+
+    return render(request, 'reports/account_distribution.html', {
+        'rows': rows,
+        'years': years,
+        'last_12_label': last_12_label,
+        'last_full_month_display': last_full_month_display,
+        'filter_options': filter_options,
+        'current_filters': current_filters,
+        'available_counties': available_counties,
+        'available_account_types': available_account_types,
+        'selected_distributor': selected_distributor,
+        'multiple_distributors': multiple_distributors,
+        'total_by_year': total_by_year,
+        'total_last_12': total_last_12,
+        'total_diff': total_diff,
+        'total_lfy_diff': total_lfy_diff,
+        'user_routes': user_routes,
+        'active_filter_count': active_filter_count,
+        'most_recent_year': most_recent_year,
+        'prior_year': prior_year,
+        'thresholds': thresholds,
+        'thresholds_str': ', '.join(str(t) for t in thresholds),
+        'available_items': available_items,
+        'selected_item_ids': selected_item_ids,
+        'selected_items_count': selected_items_count,
+        'buckets': buckets,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — CSV export
+# ---------------------------------------------------------------------------
+
+@login_required
+def report_account_distribution_csv(request):
+    """CSV export of Account Distribution by Volume report."""
+    user = request.user
+
+    if not user.has_permission('can_view_report_account_distribution'):
+        messages.error(request, 'You do not have permission to view this report.')
+        return redirect('dashboard')
+
+    distributors = get_distributors_for_user(user)
+    multiple_distributors = distributors.count() > 1
+
+    if not distributors.exists():
+        return redirect('dashboard')
+
+    selected_distributor = None
+
+    if multiple_distributors:
+        dist_pk = request.GET.get('distributor') or request.session.get('report_distributor_pk')
+        if dist_pk:
+            try:
+                selected_distributor = distributors.get(pk=int(dist_pk))
+            except Exception:
+                pass
+        if not selected_distributor:
+            return redirect('report_account_sales_distributor_select')
+    else:
+        selected_distributor = distributors.first()
+
+    if user.has_role('supplier_admin'):
+        accounts_qs = Account.active_accounts.filter(
+            company=user.company,
+            distributor=selected_distributor,
+        )
+    else:
+        accounts_qs = get_accounts_for_user(user).filter(
+            distributor=selected_distributor,
+        )
+
+    # ---- Parse filters from GET or session ------------------------------
+    _filter_keys = list(_DISTRIBUTION_FILTER_DEFAULTS.keys())
+    is_filter_submit = any(k in request.GET for k in _filter_keys)
+
+    if is_filter_submit:
+        filters = {
+            'account_name': request.GET.get('account_name', ''),
+            'on_off': request.GET.get('on_off', ''),
+            'city': request.GET.getlist('city'),
+            'county': request.GET.getlist('county'),
+            'class_of_trade': request.GET.getlist('class_of_trade'),
+            'account_type': request.GET.getlist('account_type'),
+            'distributor_route': request.GET.getlist('distributor_route'),
+            'route_id': request.GET.get('route_id', ''),
+        }
+    else:
+        stored = request.session.get(_REPORT_DISTRIBUTION_FILTER_SESSION_KEY, {})
+        filters = {**_DISTRIBUTION_FILTER_DEFAULTS, **stored}
+
+    on_off_filter = filters.get('on_off', '')
+    city_filter = filters.get('city', [])
+    county_filter = filters.get('county', [])
+    class_of_trade_filter = filters.get('class_of_trade', [])
+    distributor_route_filter = filters.get('distributor_route', [])
+    route_id = filters.get('route_id', '')
+    account_name_query = filters.get('account_name', '').strip()
+    account_type_filter = filters.get('account_type', [])
+
+    if on_off_filter in ('ON', 'OFF'):
+        accounts_qs = accounts_qs.filter(on_off_premise=on_off_filter)
+    if city_filter:
+        accounts_qs = accounts_qs.filter(city__in=city_filter)
+    if county_filter:
+        accounts_qs = accounts_qs.filter(county__in=county_filter)
+    if class_of_trade_filter:
+        accounts_qs = accounts_qs.filter(account_type__in=class_of_trade_filter)
+    if distributor_route_filter:
+        accounts_qs = accounts_qs.filter(distributor_route__in=distributor_route_filter)
+    if route_id:
+        try:
+            route = Route.objects.get(
+                pk=route_id,
+                created_by=request.user,
+                distributor=selected_distributor,
+            )
+            route_account_ids = route.route_accounts.values_list('account_id', flat=True)
+            accounts_qs = accounts_qs.filter(pk__in=route_account_ids)
+        except Route.DoesNotExist:
+            pass
+    if account_name_query:
+        words = account_name_query.split()
+        for word in words:
+            accounts_qs = accounts_qs.filter(name__icontains=word)
+    if account_type_filter:
+        accounts_qs = accounts_qs.filter(account_type__in=account_type_filter)
+
+    today = date.today()
+    current_month_start = today.replace(day=1)
+
+    distributor_qs = SalesRecord.objects.filter(
+        account__distributor=selected_distributor,
+        account__company=user.company,
+    )
+
+    max_past_sale = distributor_qs.filter(
+        sale_date__lt=current_month_start,
+    ).aggregate(Max('sale_date'))['sale_date__max']
+
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = 'attachment; filename="account_distribution.csv"'
+
+    if max_past_sale is None:
+        return response
+
+    lfm_year = max_past_sale.year
+    lfm_month = max_past_sale.month
+    lfm_end = date(lfm_year, lfm_month, _last_day(lfm_year, lfm_month))
+
+    w_year, w_month = _month_add(lfm_year, lfm_month, -11)
+    window_start = date(w_year, w_month, 1)
+    window_end = lfm_end
+
+    current_year = today.year
+    years = sorted(
+        distributor_qs
+        .filter(sale_date__year__lt=current_year)
+        .values_list('sale_date__year', flat=True)
+        .distinct()
+        .order_by('-sale_date__year')
+        [:4]
+    )
+    most_recent_year = years[-1] if years else None
+    prior_year = years[-2] if len(years) >= 2 else None
+
+    # Parse thresholds from session
+    thresholds = list(request.session.get(_REPORT_DISTRIBUTION_THRESHOLDS_SESSION_KEY,
+                                           _DEFAULT_THRESHOLDS))
+    buckets = build_buckets(thresholds)
+
+    # Parse selected items from session
+    selected_item_ids = list(request.session.get(_REPORT_DISTRIBUTION_ITEMS_SESSION_KEY, []))
+    if not selected_item_ids:
+        company_items = Item.objects.filter(brand__company=user.company)
+        items_with_sales = set(distributor_qs.values_list('item_id', flat=True).distinct())
+        selected_item_ids = [i.pk for i in company_items if i.pk in items_with_sales]
+
+    base_qs = SalesRecord.objects.filter(account__company=user.company)
+
+    yearly_bucket_counts = {}
+    for year in years:
+        year_qs = base_qs.filter(sale_date__year=year)
+        yearly_bucket_counts[year] = compute_bucket_counts(
+            year_qs, accounts_qs, buckets, selected_item_ids
+        )
+
+    l12m_qs = base_qs.filter(sale_date__gte=window_start, sale_date__lte=window_end)
+    l12m_bucket_counts = compute_bucket_counts(l12m_qs, accounts_qs, buckets, selected_item_ids)
+
+    rows = []
+    for low, high, label in buckets:
+        row = {
+            'bucket_label': label,
+            'year_counts': {y: yearly_bucket_counts[y].get(label, 0) for y in years},
+            'last_12_count': l12m_bucket_counts.get(label, 0),
+            'diff': (l12m_bucket_counts.get(label, 0) -
+                     yearly_bucket_counts[most_recent_year].get(label, 0))
+                    if most_recent_year else 0,
+            'lfy_diff': (
+                yearly_bucket_counts[most_recent_year].get(label, 0) -
+                yearly_bucket_counts[prior_year].get(label, 0)
+            ) if (most_recent_year and prior_year) else None,
+        }
+        rows.append(row)
+
+    total_by_year = {y: sum(yearly_bucket_counts[y].get(label, 0) for _, _, label in buckets)
+                     for y in years}
+    total_last_12 = sum(l12m_bucket_counts.get(label, 0) for _, _, label in buckets)
+    most_recent_year_total = total_by_year.get(most_recent_year, 0) if most_recent_year else 0
+    total_diff = total_last_12 - most_recent_year_total
+    total_lfy_diff = (
+        total_by_year.get(most_recent_year, 0) - total_by_year.get(prior_year, 0)
+        if prior_year and most_recent_year else None
+    )
+
+    # ---- Item names for metadata ----------------------------------------
+    selected_items_qs = Item.objects.filter(pk__in=selected_item_ids).order_by('brand__name', 'name')
+    item_names = [i.name for i in selected_items_qs]
+
+    writer = csv.writer(response)
+    writer.writerow([f'# Thresholds: {", ".join(str(t) for t in thresholds)}'])
+    writer.writerow([f'# Selected items: {", ".join(item_names)}'])
+    lfm_display = date(lfm_year, lfm_month, 1).strftime('%B %Y')
+    writer.writerow([f'# Last reported: {lfm_display}'])
+    writer.writerow([])
+
+    if prior_year and most_recent_year:
+        header = (['Bucket'] + [str(y) for y in years]
+                  + [f'{most_recent_year} Diff', 'Last 12m', 'Diff'])
+    else:
+        header = ['Bucket'] + [str(y) for y in years] + ['Last 12m', 'Diff']
+    writer.writerow(header)
+
+    for row in rows:
+        data_row = [row['bucket_label']]
+        data_row += [row['year_counts'].get(y, 0) for y in years]
+        if prior_year and most_recent_year:
+            data_row.append(row['lfy_diff'] if row['lfy_diff'] is not None else '')
+        data_row += [row['last_12_count'], row['diff']]
+        writer.writerow(data_row)
+
+    totals_row = ['TOTAL']
     totals_row += [total_by_year.get(y, 0) for y in years]
     if prior_year and most_recent_year:
         totals_row.append(total_lfy_diff if total_lfy_diff is not None else '')

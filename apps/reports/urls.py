@@ -7,6 +7,8 @@ from .views import (
     account_sales_by_year,
     account_sales_by_year_csv,
     distributor_select_view,
+    report_account_distribution,
+    report_account_distribution_csv,
     report_account_sales_save_sort,
     report_item_sales_by_year,
     report_item_sales_by_year_csv,
@@ -23,4 +25,6 @@ urlpatterns = [
     path('items/', report_item_sales_by_year, name='report_item_sales_by_year'),
     path('items/export.csv', report_item_sales_by_year_csv, name='report_item_sales_by_year_csv'),
     path('items/save-sort/', report_item_sales_save_sort, name='report_item_sales_save_sort'),
+    path('account-distribution/', report_account_distribution, name='report_account_distribution'),
+    path('account-distribution/export.csv', report_account_distribution_csv, name='report_account_distribution_csv'),
 ]

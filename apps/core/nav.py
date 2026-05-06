@@ -58,6 +58,14 @@ NAV_ITEMS = [
         'section': 'reports',
         'active_match': 'report_item_sales',
     },
+    {
+        'label': 'Account Distribution by Volume',
+        'url_name': 'report_account_distribution',
+        'icon': 'bi-bar-chart-fill',
+        'permission': 'can_view_report_account_distribution',
+        'section': 'reports',
+        'active_match': 'report_account_distribution',
+    },
 
     # ---- Admin Tools section (collapsible) ----
     {
