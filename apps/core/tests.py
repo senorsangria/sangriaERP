@@ -574,3 +574,54 @@ class NavTemplateRenderTest(TestCase):
         resp = self.client.get(reverse('event_list'), follow=True)
         self.assertEqual(resp.status_code, 200)
         self.assertNotContains(resp, 'Admin Tools')
+
+
+# ---------------------------------------------------------------------------
+# Ambassador Manager — report permission revocation (migration 0012)
+# ---------------------------------------------------------------------------
+
+class AmbassadorManagerReportPermissionTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('AM Perm Co')
+
+    def test_ambassador_manager_has_no_report_permissions_after_migration(self):
+        """ambassador_manager has none of the three report-viewing permissions."""
+        report_perms = [
+            'can_view_report_account_sales',
+            'can_view_report_item_sales',
+            'can_view_report_account_distribution',
+        ]
+        am_role = Role.objects.get(codename='ambassador_manager')
+        am_perm_codenames = set(am_role.permissions.values_list('codename', flat=True))
+        for perm in report_perms:
+            self.assertNotIn(
+                perm, am_perm_codenames,
+                f'ambassador_manager should not have {perm}',
+            )
+
+    def test_ambassador_manager_menu_has_no_reports_section(self):
+        """Ambassador Manager nav renders no Reports section label."""
+        from django.test import Client
+        am_user = make_user(self.company, 'ambassador_manager', 'am_nav_test')
+        client = Client()
+        client.force_login(am_user)
+        resp = client.get(reverse('event_list'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'nav-section">Reports')
+
+    def test_other_roles_still_have_report_permissions(self):
+        """Regression: supplier_admin, sales_manager, territory_manager still hold all three."""
+        report_perms = [
+            'can_view_report_account_sales',
+            'can_view_report_item_sales',
+            'can_view_report_account_distribution',
+        ]
+        for role_codename in ('supplier_admin', 'sales_manager', 'territory_manager'):
+            role = Role.objects.get(codename=role_codename)
+            perm_codenames = set(role.permissions.values_list('codename', flat=True))
+            for perm in report_perms:
+                self.assertIn(
+                    perm, perm_codenames,
+                    f'{role_codename} should still have {perm}',
+                )

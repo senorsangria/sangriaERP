@@ -1798,7 +1798,10 @@ no mark ok to pay
 (full workflow including approve/delete); no user creation, no password reset,
 no mark ok to pay
 
-**Ambassador Manager** — same as Territory Manager
+**Ambassador Manager** — same as Territory Manager for events/accounts, but holds no report-viewing
+permissions. `can_view_report_account_sales` was removed in migration 0008;
+`can_view_report_item_sales` and `can_view_report_account_distribution` were removed in
+migration 0012. Ambassador Managers see no Reports section in their menu.
 
 **Ambassador** — redirect to events on login, view events, fill recap; no
 dashboard, no account access, no create/approve permissions
@@ -3447,13 +3450,14 @@ Bootstrap collapse target IDs when both navs are in the DOM simultaneously.
 | Supplier Admin | main (Events, Accounts, Distributors) · Reports · Admin Tools (all 7 items, Account Import only if can_import_sales_data) |
 | Sales Manager | main (Events, Accounts) · Reports |
 | Territory Manager | main (Events, Accounts) · Reports |
-| Ambassador Manager | main (Events, Accounts) · Reports |
+| Ambassador Manager | main (Events, Accounts) *(no Reports section — all report permissions revoked in migrations 0008 and 0012)* |
 | Ambassador | main (Events only) |
 | Payroll Reviewer | main (Events only) |
 | Distributor Contact | *(empty — no permissions)* |
 | SaaS Admin | main (Events, Accounts, Distributors) · Admin Tools (Users, Brands, Sales Import, Account Import) |
 
-*Last updated: May 2026*
+*Last updated: May 2026. Note: Ambassador Manager lost can_view_report_account_sales (0008),
+can_view_report_item_sales and can_view_report_account_distribution (0012).*
 
 ---
 
