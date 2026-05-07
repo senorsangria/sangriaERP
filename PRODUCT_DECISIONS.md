@@ -310,6 +310,94 @@ Searchable list for one-off or exception assignments
 | Phase 10.5 | RBAC Migration + Ok to Pay + Payroll Reviewer | ✅ Complete |
 | Phase 10.6 | Historical Event Import — Stages 1 & 2 (matching + review) | ✅ Complete |
 | Phase 10.7 | Historical Event Import — Stage 3 (event creation, batch tracking, batch delete) | ✅ Complete |
+| Distributor Inventory Phase 1 | Foundation data: cases_per_pallet, order quantity fields, DistributorItemProfile, 3-tab edit UI | ✅ Complete |
+
+---
+
+## Distributor Inventory & Order Forecasting
+
+### Phase 1 — Foundation Data
+
+#### Models
+
+**`Item.cases_per_pallet`** — `PositiveIntegerField(null=True, blank=True)`
+Number of cases that fit on one pallet for this item. Used by the distributor inventory
+and forecasting tools. Null means "not yet configured." Visible and editable on the
+item edit form (accessible to anyone with `can_manage_brands`, since item editing is
+tied to brand management). Displayed as "Not set" in the safety stock UI until configured.
+
+**`Distributor.order_quantity_value`** — `PositiveIntegerField(null=True, blank=True)`
+The typical order size for this distributor. Null until configured. Whole number.
+
+**`Distributor.order_quantity_unit`** — `CharField(choices=OrderQuantityUnit, null=True, blank=True)`
+Whether the order quantity is expressed in pallets or cases.
+`OrderQuantityUnit` is an inner `TextChoices` class on `Distributor`:
+- `PALLETS = 'pallets', 'Pallets'`
+- `CASES = 'cases', 'Cases'`
+
+Both fields must be set together (value + unit) or left blank together. The Order Profile
+save view enforces this: setting one without the other returns an error message.
+
+**`DistributorItemProfile`** — `apps/distribution/models.py`
+Per-(distributor, item) safety stock target in cases.
+- `distributor` — FK → `Distributor`, PROTECT
+- `item` — FK → `catalog.Item`, PROTECT
+- `safety_stock_cases` — `PositiveIntegerField(null=True, blank=True)`. Null means not configured.
+- `unique_together = [['distributor', 'item']]` — one profile per (distributor, item) pair
+- Inherits `created_at` / `updated_at` from `TimeStampedModel`
+- A missing record is semantically equivalent to a null `safety_stock_cases`.
+- Posting blank or "0" for an item deletes the profile (rather than storing 0).
+
+#### Edit UI — 3-Tab Interface
+
+The distributor edit page (`/distributors/<pk>/edit/`) is structured as a 3-tab Bootstrap
+nav-tabs interface. Uses the `distributor_edit.html` template (separate from
+`distributor_form.html` which is still used for create).
+
+**Tab 1 — Basic Info:** Name, address, city, state, notes, active flag. Always visible.
+Posts to `POST /distributors/<pk>/edit/` (existing DistributorForm).
+
+**Tab 2 — Order Profile:** Order quantity value + unit. Only visible to users with
+`can_manage_distributor_inventory`. Posts to `POST /distributors/<pk>/order-profile/`.
+Redirects back to `?tab=order-profile`.
+
+**Tab 3 — Safety Stock:** Editable table of all active company items grouped by brand
+(brand name as a section row header, using `{% ifchanged %}`). Each item row shows:
+item name, item code, cases per pallet (with a link to item edit if not set), and an
+editable safety stock input. One form, posts to `POST /distributors/<pk>/safety-stock/`.
+Redirects back to `?tab=safety-stock`.
+
+Active tab on page load is determined by the `?tab=` query parameter. Valid values:
+`basic` (default), `order-profile`, `safety-stock`.
+
+#### Permission
+
+**`can_manage_distributor_inventory`** — granted to `supplier_admin` only.
+
+- The Basic Info tab requires `can_manage_distributors` (existing permission, unchanged).
+- The Order Profile and Safety Stock tabs require `can_manage_distributor_inventory`.
+  If the user has `can_manage_distributors` but not `can_manage_distributor_inventory`,
+  only the Basic Info tab is visible. The Order Profile and Safety Stock save endpoints
+  return 403 without this permission.
+- Currently only `supplier_admin` has both permissions. The separation supports future
+  role differentiation (e.g., a future "Inventory Manager" role could get
+  `can_manage_distributor_inventory` without `can_manage_distributors`).
+
+#### Time Granularity Convention (future phases)
+
+When Phases 2–4 require month-level data (snapshot month, order month, forecast month),
+the convention will be **separate `year (IntegerField)` + `month (IntegerField)` fields**,
+consistent with how the reports utils already think about months as `(year, month)` integer
+pairs. No date convention is introduced in Phase 1.
+
+#### Future Phases
+
+- **Phase 2:** Inventory snapshot CSV import — import current on-hand cases per item per
+  distributor into a snapshot model (distributor, item, year, month, cases_on_hand).
+- **Phase 3:** PO entry — manual entry of purchase order lines (distributor, item, year,
+  month, cases_ordered).
+- **Phase 4:** Forecast tool — projection and order-generation algorithm using safety stock
+  targets, historical sales velocity, cases_per_pallet, and order_quantity settings.
 
 ---
 

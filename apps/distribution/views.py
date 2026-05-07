@@ -5,10 +5,11 @@ Supplier Admin only.
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from django.db.models import Q
+from django.urls import reverse
 
 from apps.core.models import User
-from .models import Distributor
+from apps.catalog.models import Item
+from .models import Distributor, DistributorItemProfile
 from .forms import DistributorForm
 
 
@@ -75,21 +76,152 @@ def distributor_edit(request, pk):
         return redirect('dashboard')
 
     distributor = get_object_or_404(Distributor, pk=pk, company=request.user.company)
+    can_manage_inventory = request.user.has_permission('can_manage_distributor_inventory')
 
     if request.method == 'POST':
         form = DistributorForm(request.POST, instance=distributor, company=request.user.company)
         if form.is_valid():
             form.save()
             messages.success(request, f'Distributor "{distributor.name}" has been updated.')
-            return redirect('distributor_detail', pk=distributor.pk)
+            return redirect(reverse('distributor_edit', kwargs={'pk': distributor.pk}) + '?tab=basic')
     else:
         form = DistributorForm(instance=distributor, company=request.user.company)
 
-    return render(request, 'distribution/distributor_form.html', {
+    items = []
+    safety_stock_map = {}
+    if can_manage_inventory:
+        items = list(
+            Item.objects.filter(brand__company=request.user.company, is_active=True)
+            .select_related('brand')
+            .order_by('brand__name', 'sort_order', 'name')
+        )
+        safety_stock_map = {
+            p.item_id: p.safety_stock_cases
+            for p in DistributorItemProfile.objects.filter(distributor=distributor)
+        }
+
+    active_tab = request.GET.get('tab', 'basic')
+    if active_tab not in ('basic', 'order-profile', 'safety-stock'):
+        active_tab = 'basic'
+
+    return render(request, 'distribution/distributor_edit.html', {
         'form': form,
         'distributor': distributor,
-        'form_title': f'Edit Distributor — {distributor.name}',
+        'can_manage_inventory': can_manage_inventory,
+        'items': items,
+        'safety_stock_map': safety_stock_map,
+        'active_tab': active_tab,
     })
+
+
+@login_required
+def distributor_order_profile_save(request, pk):
+    denied = _require_supplier_admin(request)
+    if denied:
+        return denied
+
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return render(request, '403.html', status=403)
+
+    distributor = get_object_or_404(Distributor, pk=pk, company=request.user.company)
+
+    if request.method != 'POST':
+        return redirect(reverse('distributor_edit', kwargs={'pk': pk}) + '?tab=order-profile')
+
+    raw_value = request.POST.get('order_quantity_value', '').strip()
+    raw_unit = request.POST.get('order_quantity_unit', '').strip()
+
+    value = None
+    unit = None
+    errors = []
+
+    if raw_value:
+        try:
+            value = int(raw_value)
+            if value <= 0:
+                errors.append('Order quantity must be a positive number.')
+                value = None
+        except ValueError:
+            errors.append('Order quantity must be a whole number.')
+
+    valid_units = [c[0] for c in Distributor.OrderQuantityUnit.choices]
+    if raw_unit and raw_unit not in valid_units:
+        errors.append('Please select a valid order quantity unit.')
+    elif raw_unit:
+        unit = raw_unit
+
+    if value is not None and unit is None:
+        errors.append('Please select a unit (Pallets or Cases) when setting an order quantity.')
+    if unit is not None and value is None and not errors:
+        errors.append('Please enter an order quantity value when selecting a unit.')
+
+    if errors:
+        for err in errors:
+            messages.error(request, err)
+    else:
+        distributor.order_quantity_value = value
+        distributor.order_quantity_unit = unit
+        distributor.save(update_fields=['order_quantity_value', 'order_quantity_unit'])
+        messages.success(request, f'Order profile for "{distributor.name}" has been saved.')
+
+    return redirect(reverse('distributor_edit', kwargs={'pk': pk}) + '?tab=order-profile')
+
+
+@login_required
+def distributor_safety_stock_save(request, pk):
+    denied = _require_supplier_admin(request)
+    if denied:
+        return denied
+
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return render(request, '403.html', status=403)
+
+    distributor = get_object_or_404(Distributor, pk=pk, company=request.user.company)
+
+    if request.method != 'POST':
+        return redirect(reverse('distributor_edit', kwargs={'pk': pk}) + '?tab=safety-stock')
+
+    items = Item.objects.filter(
+        brand__company=request.user.company, is_active=True
+    ).select_related('brand')
+
+    warning_items = []
+
+    for item in items:
+        raw = request.POST.get(f'safety_stock_{item.pk}', '').strip()
+
+        if not raw or raw == '0':
+            DistributorItemProfile.objects.filter(
+                distributor=distributor, item=item
+            ).delete()
+            continue
+
+        try:
+            value = int(raw)
+            if value <= 0:
+                raise ValueError
+        except ValueError:
+            warning_items.append(item.name)
+            continue
+
+        profile, created = DistributorItemProfile.objects.get_or_create(
+            distributor=distributor,
+            item=item,
+            defaults={'safety_stock_cases': value},
+        )
+        if not created:
+            profile.safety_stock_cases = value
+            profile.save(update_fields=['safety_stock_cases'])
+
+    if warning_items:
+        messages.warning(
+            request,
+            f'Invalid values skipped for: {", ".join(warning_items)}. '
+            'Enter a positive integer or leave blank.',
+        )
+
+    messages.success(request, f'Safety stock saved for "{distributor.name}".')
+    return redirect(reverse('distributor_edit', kwargs={'pk': pk}) + '?tab=safety-stock')
 
 
 @login_required

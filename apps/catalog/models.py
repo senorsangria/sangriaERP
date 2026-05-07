@@ -59,6 +59,11 @@ class Item(TimeStampedModel):
         default=0,
         help_text='Display order within this brand. Lower values appear first.',
     )
+    cases_per_pallet = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Number of cases that fit on one pallet for this item. Used by the distributor inventory and forecasting tools.',
+    )
 
     class Meta:
         verbose_name = 'Item'

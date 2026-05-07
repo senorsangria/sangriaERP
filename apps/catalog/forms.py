@@ -50,17 +50,19 @@ class BrandForm(forms.ModelForm):
 class ItemForm(forms.ModelForm):
     class Meta:
         model = Item
-        fields = ['name', 'item_code', 'sku_number', 'description', 'is_active']
+        fields = ['name', 'item_code', 'sku_number', 'cases_per_pallet', 'description', 'is_active']
         widgets = {
             'name': forms.TextInput(attrs={'class': 'form-control'}),
             'item_code': forms.TextInput(attrs={'class': 'form-control'}),
             'sku_number': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
+            'cases_per_pallet': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
             'description': forms.Textarea(attrs={'class': 'form-control', 'rows': 3}),
             'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
         labels = {
             'item_code': 'Item Code',
             'sku_number': 'SKU Number',
+            'cases_per_pallet': 'Cases per Pallet',
             'is_active': 'Active',
         }
 
@@ -70,6 +72,7 @@ class ItemForm(forms.ModelForm):
         self.fields['name'].required = True
         self.fields['item_code'].required = True
         self.fields['sku_number'].required = False
+        self.fields['cases_per_pallet'].required = False
         self.fields['description'].required = False
         self.fields['is_active'].initial = True
 

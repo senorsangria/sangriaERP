@@ -14,3 +14,9 @@ register = template.Library()
 def has_perm(user, codename):
     """Return True if the user has the named permission."""
     return user.has_permission(codename)
+
+
+@register.filter
+def get_item(dictionary, key):
+    """Look up a dictionary value by a variable key. Usage: {{ dict|get_item:key }}"""
+    return dictionary.get(key)

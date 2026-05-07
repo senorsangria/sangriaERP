@@ -57,6 +57,17 @@
           </div>
 
           <div class="mb-3">
+            <label for="{{ form.cases_per_pallet.id_for_label }}" class="form-label fw-medium">
+              Cases per Pallet
+            </label>
+            {{ form.cases_per_pallet }}
+            <div class="form-text">Number of cases that fit on one pallet. Used by the inventory and forecasting tools. Optional.</div>
+            {% if form.cases_per_pallet.errors %}
+            <div class="invalid-feedback d-block">{{ form.cases_per_pallet.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <div class="mb-3">
             <label for="{{ form.description.id_for_label }}" class="form-label fw-medium">
               Description
             </label>
