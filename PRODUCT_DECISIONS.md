@@ -2516,10 +2516,25 @@ Pinned at top of table.
 - `report_account_distribution_thresholds` — current threshold list
 - `report_account_distribution_items` — list of selected Item PKs
 
+**Item selector dropdown:** Groups items by brand. One brand header rendered per brand (not
+repeated above every item) with a "Select all" / "Deselect all" toggle that affects only that
+brand's items. Items shown by name (item.name), sorted within each brand by sort_order then
+name. Brands sorted alphabetically. Dropdown widened to ~360px minimum width with a scrollable
+inner area capped at ~280px.
+
+**Cell format — count + average:** Each cell shows the count of accounts in that bucket and the
+average case count for those accounts: "12 (32)" means 12 accounts averaging 32 cases each.
+Average is rounded to the nearest integer. Empty buckets show "0" with no parens (average is
+undefined when count is zero). Diff columns (LFY +/−, L12M +/−) show only count deltas — no
+average. The totals row also shows count and average across all qualifying accounts in the period.
+
 **CSV export:** `/reports/account-distribution/export.csv` → `report_account_distribution_csv`
 - Metadata header rows (commented with `#`): thresholds used, selected item names, last reported month
-- Columns: Bucket, year columns, LFY Diff (if prior_year), Last 12m, Diff
-- TOTAL row at bottom
+- Each year column and Last 12m column is split into separate Count and Avg columns.
+  e.g. "2024 Count", "2024 Avg", "Last 12m Count", "Last 12m Avg"
+- Empty buckets show 0 for Count and blank (not 0) for Avg.
+- Diff columns stay as single integer count-delta columns (no Count/Avg split).
+- TOTAL row at bottom uses the same Count + Avg pair per period column.
 
 **Template:** `templates/reports/account_distribution.html`
 - Thresholds + item selector controls appear in the page header, NOT in the filter modal.

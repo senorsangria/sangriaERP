@@ -1,6 +1,8 @@
 """
 Tests for apps.reports — Account Sales by Year report.
 """
+import csv
+import io
 from datetime import date
 
 from django.test import Client, TestCase
@@ -2050,10 +2052,10 @@ class AccountDistributionBucketTest(TestCase):
         )
         counts = compute_bucket_counts(year_qs, accounts_qs, buckets, [self.item.pk])
 
-        self.assertEqual(counts.get('1 to 24', 0), 0)
-        self.assertEqual(counts.get('25 to 49', 0), 1)
-        self.assertEqual(counts.get('50 to 99', 0), 1)
-        self.assertEqual(counts.get('100+', 0), 1)
+        self.assertEqual(counts.get('1 to 24', {'count': 0})['count'], 0)
+        self.assertEqual(counts.get('25 to 49', {'count': 0})['count'], 1)
+        self.assertEqual(counts.get('50 to 99', {'count': 0})['count'], 1)
+        self.assertEqual(counts.get('100+', {'count': 0})['count'], 1)
 
     def test_account_distribution_view_bucket_counts(self):
         """The view returns rows with correct year counts via GET ?thresholds=."""
@@ -2063,7 +2065,7 @@ class AccountDistributionBucketTest(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         rows = response.context['rows']
-        counts_2024 = {r['bucket_label']: r['year_counts'].get(2024, 0) for r in rows}
+        counts_2024 = {r['bucket_label']: r['year_data'].get(2024, {'count': 0})['count'] for r in rows}
         self.assertEqual(counts_2024.get('25 to 49', 0), 1)
         self.assertEqual(counts_2024.get('50 to 99', 0), 1)
         self.assertEqual(counts_2024.get('100+', 0), 1)
@@ -2142,7 +2144,7 @@ class AccountDistributionItemFilterTest(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         rows = response.context['rows']
-        counts = {r['bucket_label']: r['year_counts'].get(2024, 0) for r in rows}
+        counts = {r['bucket_label']: r['year_data'].get(2024, {'count': 0})['count'] for r in rows}
         self.assertEqual(counts.get('50 to 99', 0), 1)
 
         # item1 only: total=30 → 25-49 bucket
@@ -2153,7 +2155,7 @@ class AccountDistributionItemFilterTest(TestCase):
         )
         self.assertEqual(response2.status_code, 200)
         rows2 = response2.context['rows']
-        counts2 = {r['bucket_label']: r['year_counts'].get(2024, 0) for r in rows2}
+        counts2 = {r['bucket_label']: r['year_data'].get(2024, {'count': 0})['count'] for r in rows2}
         self.assertEqual(counts2.get('25 to 49', 0), 1)
         self.assertEqual(counts2.get('50 to 99', 0), 0)
 
@@ -2194,7 +2196,7 @@ class AccountDistributionZeroQuantityTest(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         rows = response.context['rows']
-        total = sum(sum(r['year_counts'].values()) for r in rows)
+        total = sum(sum(yd['count'] for yd in r['year_data'].values()) for r in rows)
         self.assertEqual(total, 1, 'Only the positive-quantity account should appear in any bucket')
 
 
@@ -2229,7 +2231,7 @@ class AccountDistributionAccountFilterTest(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         rows = response.context['rows']
-        total = sum(sum(r['year_counts'].values()) for r in rows)
+        total = sum(sum(yd['count'] for yd in r['year_data'].values()) for r in rows)
         self.assertEqual(total, 1)
 
 
@@ -2425,5 +2427,204 @@ class AccountDistributionCoverageScopingTest(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         rows = response.context['rows']
-        total = sum(sum(r['year_counts'].values()) for r in rows)
+        total = sum(sum(yd['count'] for yd in r['year_data'].values()) for r in rows)
         self.assertEqual(total, 1, 'TM should see only their covered account')
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — brand-grouped dropdown (Change 1)
+# ---------------------------------------------------------------------------
+
+class AccountDistributionDropdownGroupingTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Dropdown Group Co')
+        self.distributor = make_distributor(self.company, name='DG Dist')
+        self.brand_a = make_brand(self.company, name='Alpha Wines')
+        self.brand_b = make_brand(self.company, name='Beta Spirits')
+        # 4 items per brand
+        self.items_a = [
+            make_item_for_brand_dist(self.brand_a, f'Alpha Item {i}', f'ALP00{i}')
+            for i in range(1, 5)
+        ]
+        self.items_b = [
+            make_item_for_brand_dist(self.brand_b, f'Beta Item {i}', f'BET00{i}')
+            for i in range(1, 5)
+        ]
+        # One sale so the report has data and renders the table
+        self.batch = make_batch(self.company, self.distributor)
+        self.account = make_account(self.company, self.distributor, name='DG Bar')
+        make_sale(self.company, self.batch, self.account, self.items_a[0], date(2024, 6, 1), 50)
+
+        self.user = make_user(self.company, 'supplier_admin', username='sa_dg')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_account_distribution_dropdown_groups_by_brand(self):
+        """Context has exactly one brand group per brand, with all items nested."""
+        response = self.client.get(reverse('report_account_distribution'))
+        self.assertEqual(response.status_code, 200)
+        groups = response.context['available_items_by_brand']
+        brand_names = [g['brand_name'] for g in groups]
+        self.assertEqual(len(brand_names), 2, 'Should have exactly 2 brand groups')
+        self.assertIn('Alpha Wines', brand_names)
+        self.assertIn('Beta Spirits', brand_names)
+        total_items = sum(len(g['items']) for g in groups)
+        self.assertEqual(total_items, 8, 'Should have 8 items total across both brands')
+
+    def test_account_distribution_dropdown_select_all_buttons_present(self):
+        """Rendered HTML contains a brand-toggle-btn for each brand group."""
+        response = self.client.get(reverse('report_account_distribution'))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # Count actual button elements (class attribute string is distinct from CSS/JS references)
+        btn_occurrences = content.count('class="btn btn-link brand-toggle-btn"')
+        groups = response.context['available_items_by_brand']
+        self.assertEqual(
+            btn_occurrences, len(groups),
+            f'Expected {len(groups)} brand toggle buttons, found {btn_occurrences}',
+        )
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — bucket average display (Change 2)
+# ---------------------------------------------------------------------------
+
+class AccountDistributionBucketAveragesTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('Avg Co')
+        self.distributor = make_distributor(self.company, name='Avg Dist')
+        self.brand = make_brand(self.company, name='Avg Brand')
+        self.item = make_item_for_brand_dist(self.brand, 'Avg Item', 'AVG001')
+        self.batch = make_batch(self.company, self.distributor)
+
+        # 3 accounts in "25 to 49" bucket (thresholds [25, 50, 100])
+        self.acct_a = make_account(self.company, self.distributor, name='Avg Bar A')
+        self.acct_b = make_account(self.company, self.distributor, name='Avg Bar B')
+        self.acct_c = make_account(self.company, self.distributor, name='Avg Bar C')
+        make_sale(self.company, self.batch, self.acct_a, self.item, date(2024, 6, 1), 30)
+        make_sale(self.company, self.batch, self.acct_b, self.item, date(2024, 6, 1), 40)
+        make_sale(self.company, self.batch, self.acct_c, self.item, date(2024, 6, 1), 45)
+
+        self.user = make_user(self.company, 'supplier_admin', username='sa_avg')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_account_distribution_bucket_averages_correct(self):
+        """Bucket with 3 accounts (30+40+45=115 cases) shows count=3 avg=38."""
+        response = self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': '25,50,100', 'items': str(self.item.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        bucket_row = next(r for r in rows if r['bucket_label'] == '25 to 49')
+        yd = bucket_row['year_data'].get(2024, {'count': 0, 'avg': 0})
+        self.assertEqual(yd['count'], 3)
+        self.assertEqual(yd['avg'], 38)  # round(115/3) = 38
+
+    def test_account_distribution_empty_bucket_shows_no_average(self):
+        """Bucket with 0 accounts has count=0 and avg=0 (no parens rendered)."""
+        response = self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': '25,50,100', 'items': str(self.item.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        empty_row = next(r for r in rows if r['bucket_label'] == '1 to 24')
+        yd = empty_row['year_data'].get(2024, {'count': 0, 'avg': 0})
+        self.assertEqual(yd['count'], 0)
+        self.assertEqual(yd['avg'], 0)
+        # Rendered HTML for the empty bucket must not show avg in parens
+        content = response.content.decode()
+        self.assertIn('1 to 24', content)  # bucket label renders
+        self.assertNotIn('data-value="0">\n              0 <span', content)  # no "(avg)" after 0
+
+    def test_account_distribution_diff_columns_no_average(self):
+        """lfy_diff and diff are plain integers, not dicts."""
+        response = self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': '25,50,100', 'items': str(self.item.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        for row in rows:
+            self.assertIsInstance(row['diff'], int)
+            if row['lfy_diff'] is not None:
+                self.assertIsInstance(row['lfy_diff'], int)
+
+    def test_account_distribution_totals_row_includes_average(self):
+        """Totals row avg equals the average across all qualifying accounts in that period."""
+        # All 3 accounts are qualifying: avg = round((30+40+45)/3) = 38
+        response = self.client.get(
+            reverse('report_account_distribution'),
+            {'thresholds': '25,50,100', 'items': str(self.item.pk)},
+        )
+        self.assertEqual(response.status_code, 200)
+        total_by_year_data = response.context['total_by_year_data']
+        yd = total_by_year_data.get(2024, {'count': 0, 'avg': 0})
+        self.assertEqual(yd['count'], 3)
+        self.assertEqual(yd['avg'], 38)
+
+
+# ---------------------------------------------------------------------------
+# Account Distribution by Volume — CSV column structure (Change 3)
+# ---------------------------------------------------------------------------
+
+class AccountDistributionCsvColumnTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company('CSV Col Co')
+        self.distributor = make_distributor(self.company, name='CSV Col Dist')
+        self.brand = make_brand(self.company, name='CSV Col Brand')
+        self.item = make_item_for_brand_dist(self.brand, 'CSV Col Item', 'CSVCOL001')
+        self.batch = make_batch(self.company, self.distributor)
+        self.account = make_account(self.company, self.distributor, name='CSV Col Bar')
+        # One account with 50 cases in 2024 → lands in "50 to 99" bucket
+        make_sale(self.company, self.batch, self.account, self.item, date(2024, 6, 1), 50)
+        self.user = make_user(self.company, 'supplier_admin', username='sa_csvcol')
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def _get_csv_rows(self):
+        session = self.client.session
+        session['report_account_distribution_thresholds'] = [25, 50, 100]
+        session['report_account_distribution_items'] = [self.item.pk]
+        session.save()
+        response = self.client.get(reverse('report_account_distribution_csv'))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode('utf-8')
+        reader = csv.reader(io.StringIO(content))
+        rows = list(reader)
+        # Skip metadata rows (# lines and blank line)
+        data_rows = [r for r in rows if r and not r[0].startswith('#') and any(r)]
+        return data_rows
+
+    def test_account_distribution_csv_separate_count_and_avg_columns(self):
+        """Year columns are split into separate Count and Avg columns in the CSV."""
+        data_rows = self._get_csv_rows()
+        header = data_rows[0]
+        self.assertIn('2024 Count', header)
+        self.assertIn('2024 Avg', header)
+        # Bucket with 0 accounts: Avg column should be blank, not '0'
+        bucket_rows = [r for r in data_rows[1:] if r[0] not in ('TOTAL',)]
+        count_idx = header.index('2024 Count')
+        avg_idx = header.index('2024 Avg')
+        empty_buckets = [r for r in bucket_rows if r[count_idx] == '0']
+        for r in empty_buckets:
+            self.assertEqual(r[avg_idx], '', f'Avg should be blank for empty bucket, got {r[avg_idx]!r}')
+
+    def test_account_distribution_csv_diff_columns_unchanged(self):
+        """Diff columns in CSV are single integer values, not Count/Avg pairs."""
+        data_rows = self._get_csv_rows()
+        header = data_rows[0]
+        # Diff column headers should not contain 'Count' or 'Avg'
+        diff_cols = [h for h in header if 'Diff' in h or h == 'Diff']
+        for col in diff_cols:
+            self.assertNotIn('Count', col)
+            self.assertNotIn('Avg', col)
+        # 'Last 12m Count' and 'Last 12m Avg' should both exist (not a bare 'Last 12m')
+        self.assertIn('Last 12m Count', header)
+        self.assertIn('Last 12m Avg', header)
+        self.assertNotIn('Last 12m', [h for h in header if h == 'Last 12m'])

@@ -3,6 +3,7 @@ Reports views: Account Sales by Year report.
 """
 import csv
 from datetime import date
+from itertools import groupby
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -1390,7 +1391,9 @@ def compute_bucket_counts(period_qs, accounts_qs, buckets, selected_item_ids):
     accounts_qs: accounts queryset (user-scoped, with filters applied)
     buckets: list of (min, max, label) tuples
     selected_item_ids: list of Item IDs to include
-    Returns: dict mapping bucket label to account count
+    Returns: dict mapping bucket label to {'count': N, 'avg': M, '_sum': S}
+    where avg is rounded to nearest integer. _sum is used internally to compute
+    period-level totals avg without re-querying.
     """
     account_totals = (
         period_qs
@@ -1402,14 +1405,17 @@ def compute_bucket_counts(period_qs, accounts_qs, buckets, selected_item_ids):
     )
     totals = [row['total'] for row in account_totals]
 
-    bucket_counts = {}
+    bucket_data = {}
     for low, high, label in buckets:
         if high is None:
-            count = sum(1 for t in totals if t >= low)
+            bucket_totals = [t for t in totals if t >= low]
         else:
-            count = sum(1 for t in totals if low <= t <= high)
-        bucket_counts[label] = count
-    return bucket_counts
+            bucket_totals = [t for t in totals if low <= t <= high]
+        count = len(bucket_totals)
+        bsum = sum(bucket_totals)
+        avg = round(bsum / count) if count > 0 else 0
+        bucket_data[label] = {'count': count, 'avg': avg, '_sum': bsum}
+    return bucket_data
 
 
 # ---------------------------------------------------------------------------
@@ -1678,9 +1684,12 @@ def report_account_distribution(request):
         if selected_item_ids:
             request.session[_REPORT_DISTRIBUTION_ITEMS_SESSION_KEY] = selected_item_ids
 
-    available_items = [
-        {'id': item.pk, 'name': item.name, 'brand_name': item.brand.name}
-        for item in company_items
+    available_items_by_brand = [
+        {
+            'brand_name': brand_name,
+            'items': [{'id': item.pk, 'name': item.name} for item in group],
+        }
+        for brand_name, group in groupby(company_items, key=lambda i: i.brand.name)
     ]
 
     # ---- Build buckets --------------------------------------------------
@@ -1702,32 +1711,44 @@ def report_account_distribution(request):
     )
 
     # ---- Build rows -----------------------------------------------------
+    _zero_data = {'count': 0, 'avg': 0}
     rows = []
     for low, high, label in buckets:
+        mry_data = yearly_bucket_counts[most_recent_year].get(label, _zero_data) if most_recent_year else _zero_data
+        py_data = yearly_bucket_counts[prior_year].get(label, _zero_data) if prior_year else _zero_data
+        l12_data = l12m_bucket_counts.get(label, _zero_data)
         row = {
             'bucket_label': label,
-            'year_counts': {y: yearly_bucket_counts[y].get(label, 0) for y in years},
-            'last_12_count': l12m_bucket_counts.get(label, 0),
-            'diff': (l12m_bucket_counts.get(label, 0) -
-                     yearly_bucket_counts[most_recent_year].get(label, 0))
-                    if most_recent_year else 0,
-            'lfy_diff': (
-                yearly_bucket_counts[most_recent_year].get(label, 0) -
-                yearly_bucket_counts[prior_year].get(label, 0)
-            ) if (most_recent_year and prior_year) else None,
+            'year_data': {y: yearly_bucket_counts[y].get(label, _zero_data) for y in years},
+            'last_12_data': l12_data,
+            'diff': (l12_data['count'] - mry_data['count']) if most_recent_year else 0,
+            'lfy_diff': (mry_data['count'] - py_data['count']) if (most_recent_year and prior_year) else None,
         }
         rows.append(row)
 
-    # ---- Totals row: count of qualifying accounts per period -----------
-    total_by_year = {y: sum(yearly_bucket_counts[y].get(label, 0) for _, _, label in buckets)
-                     for y in years}
-    total_last_12 = sum(l12m_bucket_counts.get(label, 0) for _, _, label in buckets)
-    most_recent_year_total = total_by_year.get(most_recent_year, 0) if most_recent_year else 0
-    total_diff = total_last_12 - most_recent_year_total
-    total_lfy_diff = (
-        total_by_year.get(most_recent_year, 0) - total_by_year.get(prior_year, 0)
-        if prior_year and most_recent_year else None
-    )
+    # ---- Totals row: count + avg of qualifying accounts per period -----
+    total_by_year_data = {}
+    for y in years:
+        y_count = sum(yearly_bucket_counts[y].get(label, _zero_data)['count'] for _, _, label in buckets)
+        y_sum = sum(yearly_bucket_counts[y].get(label, {'_sum': 0})['_sum'] for _, _, label in buckets)
+        total_by_year_data[y] = {'count': y_count, 'avg': round(y_sum / y_count) if y_count > 0 else 0}
+
+    l12m_total_count = sum(l12m_bucket_counts.get(label, _zero_data)['count'] for _, _, label in buckets)
+    l12m_total_sum = sum(l12m_bucket_counts.get(label, {'_sum': 0})['_sum'] for _, _, label in buckets)
+    total_last_12_data = {
+        'count': l12m_total_count,
+        'avg': round(l12m_total_sum / l12m_total_count) if l12m_total_count > 0 else 0,
+    }
+
+    most_recent_year_total_count = total_by_year_data.get(most_recent_year, _zero_data)['count'] if most_recent_year else 0
+    total_diff = total_last_12_data['count'] - most_recent_year_total_count
+    if prior_year and most_recent_year:
+        total_lfy_diff = (
+            total_by_year_data.get(most_recent_year, _zero_data)['count'] -
+            total_by_year_data.get(prior_year, _zero_data)['count']
+        )
+    else:
+        total_lfy_diff = None
 
     # ---- Items summary for button label ---------------------------------
     selected_items_count = len(selected_item_ids)
@@ -1743,8 +1764,8 @@ def report_account_distribution(request):
         'available_account_types': available_account_types,
         'selected_distributor': selected_distributor,
         'multiple_distributors': multiple_distributors,
-        'total_by_year': total_by_year,
-        'total_last_12': total_last_12,
+        'total_by_year_data': total_by_year_data,
+        'total_last_12_data': total_last_12_data,
         'total_diff': total_diff,
         'total_lfy_diff': total_lfy_diff,
         'user_routes': user_routes,
@@ -1753,7 +1774,7 @@ def report_account_distribution(request):
         'prior_year': prior_year,
         'thresholds': thresholds,
         'thresholds_str': ', '.join(str(t) for t in thresholds),
-        'available_items': available_items,
+        'available_items_by_brand': available_items_by_brand,
         'selected_item_ids': selected_item_ids,
         'selected_items_count': selected_items_count,
         'buckets': buckets,
@@ -1921,31 +1942,43 @@ def report_account_distribution_csv(request):
     l12m_qs = base_qs.filter(sale_date__gte=window_start, sale_date__lte=window_end)
     l12m_bucket_counts = compute_bucket_counts(l12m_qs, accounts_qs, buckets, selected_item_ids)
 
+    _zero_data = {'count': 0, 'avg': 0}
     rows = []
     for low, high, label in buckets:
+        mry_data = yearly_bucket_counts[most_recent_year].get(label, _zero_data) if most_recent_year else _zero_data
+        py_data = yearly_bucket_counts[prior_year].get(label, _zero_data) if prior_year else _zero_data
+        l12_data = l12m_bucket_counts.get(label, _zero_data)
         row = {
             'bucket_label': label,
-            'year_counts': {y: yearly_bucket_counts[y].get(label, 0) for y in years},
-            'last_12_count': l12m_bucket_counts.get(label, 0),
-            'diff': (l12m_bucket_counts.get(label, 0) -
-                     yearly_bucket_counts[most_recent_year].get(label, 0))
-                    if most_recent_year else 0,
-            'lfy_diff': (
-                yearly_bucket_counts[most_recent_year].get(label, 0) -
-                yearly_bucket_counts[prior_year].get(label, 0)
-            ) if (most_recent_year and prior_year) else None,
+            'year_data': {y: yearly_bucket_counts[y].get(label, _zero_data) for y in years},
+            'last_12_data': l12_data,
+            'diff': (l12_data['count'] - mry_data['count']) if most_recent_year else 0,
+            'lfy_diff': (mry_data['count'] - py_data['count']) if (most_recent_year and prior_year) else None,
         }
         rows.append(row)
 
-    total_by_year = {y: sum(yearly_bucket_counts[y].get(label, 0) for _, _, label in buckets)
-                     for y in years}
-    total_last_12 = sum(l12m_bucket_counts.get(label, 0) for _, _, label in buckets)
-    most_recent_year_total = total_by_year.get(most_recent_year, 0) if most_recent_year else 0
-    total_diff = total_last_12 - most_recent_year_total
-    total_lfy_diff = (
-        total_by_year.get(most_recent_year, 0) - total_by_year.get(prior_year, 0)
-        if prior_year and most_recent_year else None
-    )
+    total_by_year_data = {}
+    for y in years:
+        y_count = sum(yearly_bucket_counts[y].get(label, _zero_data)['count'] for _, _, label in buckets)
+        y_sum = sum(yearly_bucket_counts[y].get(label, {'_sum': 0})['_sum'] for _, _, label in buckets)
+        total_by_year_data[y] = {'count': y_count, 'avg': round(y_sum / y_count) if y_count > 0 else 0}
+
+    l12m_total_count = sum(l12m_bucket_counts.get(label, _zero_data)['count'] for _, _, label in buckets)
+    l12m_total_sum = sum(l12m_bucket_counts.get(label, {'_sum': 0})['_sum'] for _, _, label in buckets)
+    total_last_12_data = {
+        'count': l12m_total_count,
+        'avg': round(l12m_total_sum / l12m_total_count) if l12m_total_count > 0 else 0,
+    }
+
+    most_recent_year_total_count = total_by_year_data.get(most_recent_year, _zero_data)['count'] if most_recent_year else 0
+    total_diff = total_last_12_data['count'] - most_recent_year_total_count
+    if prior_year and most_recent_year:
+        total_lfy_diff = (
+            total_by_year_data.get(most_recent_year, _zero_data)['count'] -
+            total_by_year_data.get(prior_year, _zero_data)['count']
+        )
+    else:
+        total_lfy_diff = None
 
     # ---- Item names for metadata ----------------------------------------
     selected_items_qs = Item.objects.filter(pk__in=selected_item_ids).order_by('brand__name', 'name')
@@ -1958,26 +1991,40 @@ def report_account_distribution_csv(request):
     writer.writerow([f'# Last reported: {lfm_display}'])
     writer.writerow([])
 
+    year_count_avg_cols = []
+    for y in years:
+        year_count_avg_cols += [f'{y} Count', f'{y} Avg']
     if prior_year and most_recent_year:
-        header = (['Bucket'] + [str(y) for y in years]
-                  + [f'{most_recent_year} Diff', 'Last 12m', 'Diff'])
+        header = (['Bucket'] + year_count_avg_cols
+                  + [f'{most_recent_year} Diff', 'Last 12m Count', 'Last 12m Avg', 'Diff'])
     else:
-        header = ['Bucket'] + [str(y) for y in years] + ['Last 12m', 'Diff']
+        header = ['Bucket'] + year_count_avg_cols + ['Last 12m Count', 'Last 12m Avg', 'Diff']
     writer.writerow(header)
 
     for row in rows:
         data_row = [row['bucket_label']]
-        data_row += [row['year_counts'].get(y, 0) for y in years]
+        for y in years:
+            yd = row['year_data'].get(y, _zero_data)
+            data_row.append(yd['count'])
+            data_row.append(yd['avg'] if yd['count'] > 0 else '')
         if prior_year and most_recent_year:
             data_row.append(row['lfy_diff'] if row['lfy_diff'] is not None else '')
-        data_row += [row['last_12_count'], row['diff']]
+        l12d = row['last_12_data']
+        data_row.append(l12d['count'])
+        data_row.append(l12d['avg'] if l12d['count'] > 0 else '')
+        data_row.append(row['diff'])
         writer.writerow(data_row)
 
     totals_row = ['TOTAL']
-    totals_row += [total_by_year.get(y, 0) for y in years]
+    for y in years:
+        yd = total_by_year_data.get(y, _zero_data)
+        totals_row.append(yd['count'])
+        totals_row.append(yd['avg'] if yd['count'] > 0 else '')
     if prior_year and most_recent_year:
         totals_row.append(total_lfy_diff if total_lfy_diff is not None else '')
-    totals_row += [total_last_12, total_diff]
+    totals_row.append(total_last_12_data['count'])
+    totals_row.append(total_last_12_data['avg'] if total_last_12_data['count'] > 0 else '')
+    totals_row.append(total_diff)
     writer.writerow(totals_row)
 
     return response
