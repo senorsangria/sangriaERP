@@ -214,8 +214,9 @@
        aria-labelledby="tab-safety-stock">
 
     <p class="text-muted small mb-3">
-      Set the safety stock target (in cases) for each item at this distributor.
-      Leave blank or enter 0 to clear a value. Only active items are shown.
+      Set whether this distributor carries each item and the safety stock target in cases.
+      Uncheck Active to mark an item as not carried by this distributor.
+      Leave the safety stock value blank to clear it.
     </p>
 
     {% if items %}
@@ -226,7 +227,8 @@
           <table class="table table-sm align-middle mb-0">
             <thead class="table-light">
               <tr>
-                <th class="ps-3">Item</th>
+                <th class="ps-3" style="width: 60px;">Active</th>
+                <th>Item</th>
                 <th class="text-end pe-3" style="width: 160px;">Safety Stock (cases)</th>
               </tr>
             </thead>
@@ -234,26 +236,37 @@
               {% for item in items %}
               {% ifchanged item.brand.name %}
               <tr class="table-secondary">
-                <td colspan="2" class="ps-3 py-1">
+                <td colspan="3" class="ps-3 py-1">
                   <h6 class="mb-0 fw-semibold small text-uppercase text-muted brand-header" data-brand="{{ item.brand.name }}">{{ item.brand.name }}</h6>
                 </td>
               </tr>
               {% endifchanged %}
-              <tr>
-                <td class="ps-3">
+              {% with is_active=active_status_map|get_item:item.pk %}
+              <tr class="{% if not is_active %}table-light text-muted{% endif %}">
+                <td class="ps-3 text-center">
+                  <input type="checkbox"
+                         name="is_active_{{ item.pk }}"
+                         class="form-check-input safety-stock-active-cb"
+                         data-item-key="{{ item.pk }}"
+                         {% if is_active %}checked{% endif %}>
+                </td>
+                <td>
                   <div class="fw-medium small">{{ item.name }}</div>
                   <div class="text-muted" style="font-size: 0.75rem;">{{ item.item_code }}</div>
                 </td>
                 <td class="text-end pe-3">
                   <input type="number"
                          name="safety_stock_{{ item.pk }}"
-                         class="form-control form-control-sm text-end"
+                         class="form-control form-control-sm text-end safety-stock-input"
+                         data-item-key="{{ item.pk }}"
                          style="width: 110px; margin-left: auto;"
                          min="1"
                          value="{{ safety_stock_map|get_item:item.pk|default:'' }}"
-                         placeholder="—">
+                         placeholder="—"
+                         {% if not is_active %}disabled{% endif %}>
                 </td>
               </tr>
+              {% endwith %}
               {% endfor %}
             </tbody>
           </table>
@@ -263,6 +276,20 @@
         <i class="bi bi-check-lg me-1"></i>Save Safety Stock
       </button>
     </form>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('.safety-stock-active-cb').forEach(function(cb) {
+        var key = cb.dataset.itemKey;
+        var input = document.querySelector('.safety-stock-input[data-item-key="' + key + '"]');
+        if (!input) return;
+        cb.addEventListener('change', function() {
+          input.disabled = !cb.checked;
+        });
+      });
+    });
+    </script>
+
     {% else %}
     <div class="card border-0 shadow-sm">
       <div class="card-body text-center py-4 text-muted">

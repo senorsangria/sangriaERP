@@ -1,5 +1,5 @@
 """
-Distribution models: Distributor, DistributorItemProfile.
+Distribution models: Distributor, DistributorItemProfile, InventorySnapshot.
 """
 from django.db import models
 from apps.core.models import TimeStampedModel
@@ -52,10 +52,13 @@ class Distributor(TimeStampedModel):
 
 class DistributorItemProfile(TimeStampedModel):
     """
-    Per-distributor per-item safety stock target.
+    Per-distributor per-item configuration: safety stock target and active flag.
 
-    A null safety_stock_cases means the value has not yet been configured.
-    A missing record is equivalent to null (no profile set).
+    A profile only exists when it holds non-default data:
+    - is_active=False (distributor does not carry this item), OR
+    - safety_stock_cases is set (a target has been configured).
+
+    A missing profile is equivalent to is_active=True with no safety stock target.
     """
 
     distributor = models.ForeignKey(
@@ -72,6 +75,13 @@ class DistributorItemProfile(TimeStampedModel):
         null=True,
         blank=True,
     )
+    is_active = models.BooleanField(
+        default=True,
+        help_text=(
+            'Whether this distributor carries this item. When inactive, '
+            'the item is hidden from inventory views and excluded from forecasts.'
+        ),
+    )
 
     class Meta:
         verbose_name = 'Distributor Item Profile'
@@ -82,4 +92,47 @@ class DistributorItemProfile(TimeStampedModel):
         return (
             f'Safety stock for {self.item} at {self.distributor}: '
             f'{self.safety_stock_cases} cases'
+        )
+
+
+class InventorySnapshot(TimeStampedModel):
+    """
+    On-hand inventory for a specific (distributor, item) as of a given month.
+
+    quantity_cases may be zero — some snapshots legitimately record zero on hand.
+    year + month use the integer-pair convention established in Phase 2a.
+    Unique per (distributor, item, year, month): one snapshot per SKU per month.
+    """
+
+    distributor = models.ForeignKey(
+        'distribution.Distributor',
+        on_delete=models.PROTECT,
+        related_name='inventory_snapshots',
+    )
+    item = models.ForeignKey(
+        'catalog.Item',
+        on_delete=models.PROTECT,
+        related_name='inventory_snapshots',
+    )
+    quantity_cases = models.PositiveIntegerField()
+    year = models.IntegerField()
+    month = models.IntegerField()
+    created_by = models.ForeignKey(
+        'core.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='inventory_snapshots_created',
+    )
+
+    class Meta:
+        verbose_name = 'Inventory Snapshot'
+        verbose_name_plural = 'Inventory Snapshots'
+        unique_together = [['distributor', 'item', 'year', 'month']]
+        ordering = ['-year', '-month', 'distributor__name', 'item__name']
+
+    def __str__(self):
+        return (
+            f'{self.distributor} / {self.item} / '
+            f'{self.year}-{self.month:02d}: {self.quantity_cases} cases'
         )

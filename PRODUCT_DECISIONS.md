@@ -385,17 +385,84 @@ Active tab on page load is determined by the `?tab=` query parameter. Valid valu
   role differentiation (e.g., a future "Inventory Manager" role could get
   `can_manage_distributor_inventory` without `can_manage_distributors`).
 
-#### Time Granularity Convention (future phases)
+#### Time Granularity Convention
 
-When Phases 2–4 require month-level data (snapshot month, order month, forecast month),
-the convention will be **separate `year (IntegerField)` + `month (IntegerField)` fields**,
+**Established in Phase 2a.** All inventory and forecast models use **separate
+`year (IntegerField)` + `month (IntegerField)` fields** for month-level data. This is
 consistent with how the reports utils already think about months as `(year, month)` integer
-pairs. No date convention is introduced in Phase 1.
+pairs, and avoids the leaky `day=1` DateField convention. `InventorySnapshot` is the first
+model using this convention; all future phases follow it.
+
+---
+
+### Phase 2a — Inventory Foundation
+
+#### `DistributorItemProfile.is_active` (added)
+
+`BooleanField, default=True`. Controls whether this distributor carries this item.
+When `False`, the item is hidden from inventory views and excluded from forecasts.
+
+**Profile persistence rule:** A profile only exists when it holds non-default data:
+- `is_active=False` (distributor does not carry this item), OR
+- `safety_stock_cases` is set (a target is configured).
+
+A missing profile is equivalent to `is_active=True` with no safety stock target.
+The save endpoint implements three explicit paths:
+
+- **Path 1 — Active + valid value:** `get_or_create` profile, set `is_active=True`,
+  set `safety_stock_cases`, save.
+- **Path 2 — Active + blank/zero value:** delete any existing profile (return to default state).
+- **Path 3 — Inactive (checkbox absent from POST):** `get_or_create` profile, set
+  `is_active=False`, set `safety_stock_cases=None`, save. Safety stock input value is ignored.
+
+#### `InventorySnapshot` model (new, `apps/distribution/models.py`)
+
+Stores on-hand inventory for one (distributor, item) combination as of a given month.
+
+- `distributor` — FK → Distributor, PROTECT
+- `item` — FK → catalog.Item, PROTECT
+- `quantity_cases` — PositiveIntegerField (zero is valid; some months may have zero on hand)
+- `year` — IntegerField
+- `month` — IntegerField (1–12)
+- `created_by` — FK → core.User, SET_NULL, null/blank (null when set by system)
+- `unique_together = [['distributor', 'item', 'year', 'month']]`
+- `ordering = ['-year', '-month', 'distributor__name', 'item__name']`
+
+#### Distributor list page — 3-tab structure
+
+`/distributors/` is now a 3-tab Bootstrap nav-tabs page mirroring the edit page pattern:
+
+- **Distributors tab** (default): existing distributor list, search, add button. Always visible
+  with `can_manage_distributors`.
+- **Inventory tab**: empty state (Phase 2b will add upload). Requires
+  `can_manage_distributor_inventory`.
+- **Snapshots tab**: empty state (Phase 2b will add upload). Requires
+  `can_manage_distributor_inventory`.
+
+Active tab controlled by `?tab=` query parameter (`distributors` default). Users without
+`can_manage_distributor_inventory` see only the Distributors tab; `?tab=inventory` and
+`?tab=snapshots` fall back to `distributors` for unpermissioned users.
+
+#### Safety Stock tab — Active checkbox column
+
+The Safety Stock tab on the distributor edit page now has three columns:
+**Active** (checkbox) | **Item** (name + code) | **Safety Stock (cases)** (editable input).
+
+Items with `is_active=False` are greyed out but remain visible so the user can re-enable them.
+When the Active checkbox is unchecked, the safety stock input is disabled (via JS on toggle;
+via `disabled` attribute on initial render for inactive items).
+
+---
+
+### Phase 2b — CSV Upload (Pending)
+
+Inventory snapshot CSV upload, validation, preview, and snapshot management UI.
+Upload will create `InventorySnapshot` records for the selected distributor and month.
+The `ImportBatch.ImportType.INVENTORY_DATA` choice (pre-existing stub in `apps/imports/models.py`)
+may be used to track inventory upload batches, or a separate model may be introduced.
 
 #### Future Phases
 
-- **Phase 2:** Inventory snapshot CSV import — import current on-hand cases per item per
-  distributor into a snapshot model (distributor, item, year, month, cases_on_hand).
 - **Phase 3:** PO entry — manual entry of purchase order lines (distributor, item, year,
   month, cases_ordered).
 - **Phase 4:** Forecast tool — projection and order-generation algorithm using safety stock

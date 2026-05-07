@@ -28,15 +28,24 @@ def distributor_list(request):
     if denied:
         return denied
 
-    distributors = Distributor.objects.filter(company=request.user.company).order_by('name')
+    can_manage_inventory = request.user.has_permission('can_manage_distributor_inventory')
 
+    distributors = Distributor.objects.filter(company=request.user.company).order_by('name')
     search = request.GET.get('q', '').strip()
     if search:
         distributors = distributors.filter(name__icontains=search)
 
+    active_tab = request.GET.get('tab', 'distributors')
+    if active_tab not in ('distributors', 'inventory', 'snapshots'):
+        active_tab = 'distributors'
+    if active_tab in ('inventory', 'snapshots') and not can_manage_inventory:
+        active_tab = 'distributors'
+
     return render(request, 'distribution/distributor_list.html', {
         'distributors': distributors,
         'search': search,
+        'active_tab': active_tab,
+        'can_manage_inventory': can_manage_inventory,
     })
 
 
@@ -89,15 +98,21 @@ def distributor_edit(request, pk):
 
     items = []
     safety_stock_map = {}
+    active_status_map = {}
     if can_manage_inventory:
         items = list(
             Item.objects.filter(brand__company=request.user.company, is_active=True)
             .select_related('brand')
             .order_by('brand__name', 'sort_order', 'name')
         )
-        safety_stock_map = {
-            p.item_id: p.safety_stock_cases
+        profiles = {
+            p.item_id: p
             for p in DistributorItemProfile.objects.filter(distributor=distributor)
+        }
+        safety_stock_map = {pid: p.safety_stock_cases for pid, p in profiles.items()}
+        active_status_map = {
+            item.pk: profiles[item.pk].is_active if item.pk in profiles else True
+            for item in items
         }
 
     active_tab = request.GET.get('tab', 'basic')
@@ -110,6 +125,7 @@ def distributor_edit(request, pk):
         'can_manage_inventory': can_manage_inventory,
         'items': items,
         'safety_stock_map': safety_stock_map,
+        'active_status_map': active_status_map,
         'active_tab': active_tab,
     })
 
@@ -188,30 +204,47 @@ def distributor_safety_stock_save(request, pk):
     warning_items = []
 
     for item in items:
-        raw = request.POST.get(f'safety_stock_{item.pk}', '').strip()
+        # HTML checkboxes only post when checked; absence means unchecked (inactive).
+        is_active = f'is_active_{item.pk}' in request.POST
+        raw_ss = request.POST.get(f'safety_stock_{item.pk}', '').strip()
 
-        if not raw or raw == '0':
-            DistributorItemProfile.objects.filter(
-                distributor=distributor, item=item
-            ).delete()
-            continue
+        if is_active:
+            # Path 1: Active + valid positive safety stock → create/update profile.
+            # Path 2: Active + blank/zero → delete profile (return to default state).
+            if raw_ss and raw_ss != '0':
+                try:
+                    value = int(raw_ss)
+                    if value <= 0:
+                        raise ValueError
+                except ValueError:
+                    warning_items.append(item.name)
+                    continue
 
-        try:
-            value = int(raw)
-            if value <= 0:
-                raise ValueError
-        except ValueError:
-            warning_items.append(item.name)
-            continue
-
-        profile, created = DistributorItemProfile.objects.get_or_create(
-            distributor=distributor,
-            item=item,
-            defaults={'safety_stock_cases': value},
-        )
-        if not created:
-            profile.safety_stock_cases = value
-            profile.save(update_fields=['safety_stock_cases'])
+                profile, created = DistributorItemProfile.objects.get_or_create(
+                    distributor=distributor,
+                    item=item,
+                    defaults={'safety_stock_cases': value, 'is_active': True},
+                )
+                if not created:
+                    profile.safety_stock_cases = value
+                    profile.is_active = True
+                    profile.save(update_fields=['safety_stock_cases', 'is_active'])
+            else:
+                DistributorItemProfile.objects.filter(
+                    distributor=distributor, item=item
+                ).delete()
+        else:
+            # Path 3: Inactive → create/update profile with is_active=False, safety_stock_cases=None.
+            # Safety stock input value is ignored when inactive.
+            profile, created = DistributorItemProfile.objects.get_or_create(
+                distributor=distributor,
+                item=item,
+                defaults={'is_active': False, 'safety_stock_cases': None},
+            )
+            if not created:
+                profile.is_active = False
+                profile.safety_stock_cases = None
+                profile.save(update_fields=['is_active', 'safety_stock_cases'])
 
     if warning_items:
         messages.warning(

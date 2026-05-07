@@ -9,139 +9,224 @@
     <h1 class="h3 mb-0 fw-bold">Distributors</h1>
     <p class="text-muted small mb-0">Distribution partners for {{ user.company.name }}</p>
   </div>
-  <a href="{% url 'distributor_create' %}" class="btn btn-primary">
-    <i class="bi bi-plus-lg me-1"></i>Add Distributor
-  </a>
 </div>
 
-<!-- Search bar -->
-<div class="card border-0 shadow-sm mb-4">
-  <div class="card-body py-3">
-    <form method="get" class="row g-2 align-items-end">
-      <div class="col-12 col-sm">
-        <label class="form-label small text-muted mb-1">Search</label>
-        <div class="input-group input-group-sm">
-          <span class="input-group-text"><i class="bi bi-search"></i></span>
-          <input
-            type="text"
-            name="q"
-            class="form-control"
-            placeholder="Distributor name…"
-            value="{{ search }}"
-          >
-        </div>
+<!-- Tab nav -->
+<ul class="nav nav-tabs mb-4" id="distributorListTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'distributors' %}active{% endif %}"
+            id="tab-distributors"
+            data-bs-toggle="tab"
+            data-bs-target="#pane-distributors"
+            type="button" role="tab"
+            aria-controls="pane-distributors"
+            aria-selected="{% if active_tab == 'distributors' %}true{% else %}false{% endif %}">
+      Distributors
+    </button>
+  </li>
+  {% if can_manage_inventory %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'inventory' %}active{% endif %}"
+            id="tab-inventory"
+            data-bs-toggle="tab"
+            data-bs-target="#pane-inventory"
+            type="button" role="tab"
+            aria-controls="pane-inventory"
+            aria-selected="{% if active_tab == 'inventory' %}true{% else %}false{% endif %}">
+      Inventory
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'snapshots' %}active{% endif %}"
+            id="tab-snapshots"
+            data-bs-toggle="tab"
+            data-bs-target="#pane-snapshots"
+            type="button" role="tab"
+            aria-controls="pane-snapshots"
+            aria-selected="{% if active_tab == 'snapshots' %}true{% else %}false{% endif %}">
+      Snapshots
+    </button>
+  </li>
+  {% endif %}
+</ul>
+
+<div class="tab-content" id="distributorListTabContent">
+
+  <!-- TAB 1: Distributors -->
+  <div class="tab-pane fade {% if active_tab == 'distributors' %}show active{% endif %}"
+       id="pane-distributors"
+       role="tabpanel"
+       aria-labelledby="tab-distributors">
+
+    <div class="d-flex justify-content-end mb-3">
+      <a href="{% url 'distributor_create' %}" class="btn btn-primary btn-sm">
+        <i class="bi bi-plus-lg me-1"></i>Add Distributor
+      </a>
+    </div>
+
+    <!-- Search bar -->
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-body py-3">
+        <form method="get" class="row g-2 align-items-end">
+          <input type="hidden" name="tab" value="distributors">
+          <div class="col-12 col-sm">
+            <label class="form-label small text-muted mb-1">Search</label>
+            <div class="input-group input-group-sm">
+              <span class="input-group-text"><i class="bi bi-search"></i></span>
+              <input
+                type="text"
+                name="q"
+                class="form-control"
+                placeholder="Distributor name…"
+                value="{{ search }}"
+              >
+            </div>
+          </div>
+          <div class="col-12 col-sm-auto">
+            <button type="submit" class="btn btn-outline-primary btn-sm w-100 w-sm-auto">Search</button>
+            {% if search %}
+            <a href="{% url 'distributor_list' %}?tab=distributors" class="btn btn-outline-secondary btn-sm ms-1">Clear</a>
+            {% endif %}
+          </div>
+        </form>
       </div>
-      <div class="col-12 col-sm-auto">
-        <button type="submit" class="btn btn-outline-primary btn-sm w-100 w-sm-auto">Search</button>
-        {% if search %}
-        <a href="{% url 'distributor_list' %}" class="btn btn-outline-secondary btn-sm ms-1">Clear</a>
+    </div>
+
+    {% if distributors %}
+    <div class="card border-0 shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Distributor Name</th>
+              <th class="d-none d-md-table-cell">City</th>
+              <th class="d-none d-md-table-cell">State</th>
+              <th class="d-none d-sm-table-cell text-center">Status</th>
+              <th class="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for dist in distributors %}
+            <tr>
+              <td>
+                <div class="fw-medium">
+                  <a href="{% url 'distributor_detail' dist.pk %}" class="text-decoration-none text-dark">
+                    {{ dist.name }}
+                  </a>
+                </div>
+                <!-- Mobile: city/state + status under name -->
+                <div class="d-md-none text-muted small">
+                  {% if dist.city or dist.state %}
+                  {{ dist.city }}{% if dist.city and dist.state %}, {% endif %}{{ dist.state }}
+                  {% endif %}
+                </div>
+                <div class="d-sm-none mt-1">
+                  {% if dist.is_active %}
+                  <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size:.7rem;">Active</span>
+                  {% else %}
+                  <span class="badge bg-secondary bg-opacity-10 text-secondary border" style="font-size:.7rem;">Inactive</span>
+                  {% endif %}
+                </div>
+              </td>
+              <td class="d-none d-md-table-cell text-muted small">{{ dist.city|default:"—" }}</td>
+              <td class="d-none d-md-table-cell text-muted small">{{ dist.state|default:"—" }}</td>
+              <td class="d-none d-sm-table-cell text-center">
+                {% if dist.is_active %}
+                <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
+                {% else %}
+                <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
+                {% endif %}
+              </td>
+              <td class="text-end">
+                <div class="d-flex gap-1 justify-content-end flex-wrap">
+                  <a href="{% url 'distributor_detail' dist.pk %}" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-eye d-sm-none"></i>
+                    <span class="d-none d-sm-inline">View</span>
+                  </a>
+                  <a href="{% url 'distributor_edit' dist.pk %}" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
+                  </a>
+                  <form method="post" action="{% url 'distributor_toggle' dist.pk %}" class="d-inline">
+                    {% csrf_token %}
+                    {% if dist.is_active %}
+                    <button type="submit" class="btn btn-outline-danger btn-sm"
+                      onclick="return confirm('Deactivate {{ dist.name|escapejs }}?')">
+                      <i class="bi bi-dash-circle d-sm-none"></i>
+                      <span class="d-none d-sm-inline">Deactivate</span>
+                    </button>
+                    {% else %}
+                    <button type="submit" class="btn btn-outline-success btn-sm"
+                      onclick="return confirm('Reactivate {{ dist.name|escapejs }}?')">
+                      <i class="bi bi-check-circle d-sm-none"></i>
+                      <span class="d-none d-sm-inline">Reactivate</span>
+                    </button>
+                    {% endif %}
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p class="text-muted small mt-2">{{ distributors|length }} distributor{{ distributors|length|pluralize }}</p>
+
+    {% else %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center py-5">
+        <i class="bi bi-truck fs-1 text-muted d-block mb-3"></i>
+        <h5 class="fw-semibold">
+          {% if search %}No distributors match "{{ search }}"{% else %}No distributors yet{% endif %}
+        </h5>
+        <p class="text-muted mb-3">
+          {% if search %}
+            Try a different search term.
+          {% else %}
+            Add your first distribution partner to get started.
+          {% endif %}
+        </p>
+        {% if not search %}
+        <a href="{% url 'distributor_create' %}" class="btn btn-primary">
+          <i class="bi bi-plus-lg me-1"></i>Add Distributor
+        </a>
         {% endif %}
       </div>
-    </form>
-  </div>
-</div>
-
-{% if distributors %}
-<div class="card border-0 shadow-sm">
-  <div class="table-responsive">
-    <table class="table table-hover mb-0 align-middle">
-      <thead class="table-light">
-        <tr>
-          <th>Distributor Name</th>
-          <th class="d-none d-md-table-cell">City</th>
-          <th class="d-none d-md-table-cell">State</th>
-          <th class="d-none d-sm-table-cell text-center">Status</th>
-          <th class="text-end">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for dist in distributors %}
-        <tr>
-          <td>
-            <div class="fw-medium">
-              <a href="{% url 'distributor_detail' dist.pk %}" class="text-decoration-none text-dark">
-                {{ dist.name }}
-              </a>
-            </div>
-            <!-- Mobile: city/state + status under name -->
-            <div class="d-md-none text-muted small">
-              {% if dist.city or dist.state %}
-              {{ dist.city }}{% if dist.city and dist.state %}, {% endif %}{{ dist.state }}
-              {% endif %}
-            </div>
-            <div class="d-sm-none mt-1">
-              {% if dist.is_active %}
-              <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size:.7rem;">Active</span>
-              {% else %}
-              <span class="badge bg-secondary bg-opacity-10 text-secondary border" style="font-size:.7rem;">Inactive</span>
-              {% endif %}
-            </div>
-          </td>
-          <td class="d-none d-md-table-cell text-muted small">{{ dist.city|default:"—" }}</td>
-          <td class="d-none d-md-table-cell text-muted small">{{ dist.state|default:"—" }}</td>
-          <td class="d-none d-sm-table-cell text-center">
-            {% if dist.is_active %}
-            <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
-            {% else %}
-            <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
-            {% endif %}
-          </td>
-          <td class="text-end">
-            <div class="d-flex gap-1 justify-content-end flex-wrap">
-              <a href="{% url 'distributor_detail' dist.pk %}" class="btn btn-outline-secondary btn-sm">
-                <i class="bi bi-eye d-sm-none"></i>
-                <span class="d-none d-sm-inline">View</span>
-              </a>
-              <a href="{% url 'distributor_edit' dist.pk %}" class="btn btn-outline-secondary btn-sm">
-                <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
-              </a>
-              <form method="post" action="{% url 'distributor_toggle' dist.pk %}" class="d-inline">
-                {% csrf_token %}
-                {% if dist.is_active %}
-                <button type="submit" class="btn btn-outline-danger btn-sm"
-                  onclick="return confirm('Deactivate {{ dist.name|escapejs }}?')">
-                  <i class="bi bi-dash-circle d-sm-none"></i>
-                  <span class="d-none d-sm-inline">Deactivate</span>
-                </button>
-                {% else %}
-                <button type="submit" class="btn btn-outline-success btn-sm"
-                  onclick="return confirm('Reactivate {{ dist.name|escapejs }}?')">
-                  <i class="bi bi-check-circle d-sm-none"></i>
-                  <span class="d-none d-sm-inline">Reactivate</span>
-                </button>
-                {% endif %}
-              </form>
-            </div>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-<p class="text-muted small mt-2">{{ distributors|length }} distributor{{ distributors|length|pluralize }}</p>
-
-{% else %}
-<div class="card border-0 shadow-sm">
-  <div class="card-body text-center py-5">
-    <i class="bi bi-truck fs-1 text-muted d-block mb-3"></i>
-    <h5 class="fw-semibold">
-      {% if search %}No distributors match "{{ search }}"{% else %}No distributors yet{% endif %}
-    </h5>
-    <p class="text-muted mb-3">
-      {% if search %}
-        Try a different search term.
-      {% else %}
-        Add your first distribution partner to get started.
-      {% endif %}
-    </p>
-    {% if not search %}
-    <a href="{% url 'distributor_create' %}" class="btn btn-primary">
-      <i class="bi bi-plus-lg me-1"></i>Add Distributor
-    </a>
+    </div>
     {% endif %}
+
+  </div>{# /pane-distributors #}
+
+  {% if can_manage_inventory %}
+
+  <!-- TAB 2: Inventory -->
+  <div class="tab-pane fade {% if active_tab == 'inventory' %}show active{% endif %}"
+       id="pane-inventory"
+       role="tabpanel"
+       aria-labelledby="tab-inventory">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center py-4 text-muted">
+        <i class="bi bi-boxes fs-2 d-block mb-2"></i>
+        No inventory data yet.
+      </div>
+    </div>
   </div>
-</div>
-{% endif %}
+
+  <!-- TAB 3: Snapshots -->
+  <div class="tab-pane fade {% if active_tab == 'snapshots' %}show active{% endif %}"
+       id="pane-snapshots"
+       role="tabpanel"
+       aria-labelledby="tab-snapshots">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center py-4 text-muted">
+        <i class="bi bi-clock-history fs-2 d-block mb-2"></i>
+        No snapshots uploaded yet.
+      </div>
+    </div>
+  </div>
+
+  {% endif %}{# can_manage_inventory #}
+
+</div>{# tab-content #}
 
 {% endblock %}

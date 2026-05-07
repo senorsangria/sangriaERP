@@ -1,12 +1,19 @@
 """
-Tests for Phase 1 of the distributor inventory and order forecasting tool.
+Tests for Phases 1 and 2a of the distributor inventory and order forecasting tool.
 
-Covers:
+Phase 1 covers:
 - Model fields (Item.cases_per_pallet, Distributor order quantity, DistributorItemProfile)
 - Permission: can_manage_distributor_inventory granted to supplier_admin only
 - Distributor edit page 3-tab rendering and permission gating
 - Order profile save endpoint
 - Safety stock save endpoint (create, update, delete, invalid values, brand grouping)
+
+Phase 2a covers:
+- DistributorItemProfile.is_active field
+- InventorySnapshot model
+- Updated safety stock save (three-path logic: active+value, active+blank, inactive)
+- Distributor list page 3-tab structure (Distributors, Inventory, Snapshots)
+- Active checkbox column on Safety Stock tab
 """
 from django.db import IntegrityError
 from django.db.utils import IntegrityError as DBIntegrityError
@@ -17,7 +24,7 @@ from django.db.models import ProtectedError
 from apps.catalog.models import Brand, Item
 from apps.core.models import Company, User
 from apps.core.rbac import Permission, Role
-from apps.distribution.models import Distributor, DistributorItemProfile
+from apps.distribution.models import Distributor, DistributorItemProfile, InventorySnapshot
 
 
 # ---------------------------------------------------------------------------
@@ -360,8 +367,11 @@ class DistributorSafetyStockSaveTest(TestCase):
         self.url = reverse('distributor_safety_stock_save', args=[self.distributor.pk])
 
     def test_safety_stock_save_creates_profiles(self):
+        # Both items active (checkbox posted) with valid values.
         self.client.post(self.url, {
+            f'is_active_{self.item1.pk}': 'on',
             f'safety_stock_{self.item1.pk}': '50',
+            f'is_active_{self.item2.pk}': 'on',
             f'safety_stock_{self.item2.pk}': '75',
         })
         self.assertEqual(DistributorItemProfile.objects.count(), 2)
@@ -374,9 +384,14 @@ class DistributorSafetyStockSaveTest(TestCase):
         DistributorItemProfile.objects.create(
             distributor=self.distributor, item=self.item1, safety_stock_cases=50
         )
+        # Post item1 active+value, item2 also active+blank (no-op: no profile).
         self.client.post(self.url, {
+            f'is_active_{self.item1.pk}': 'on',
             f'safety_stock_{self.item1.pk}': '120',
+            f'is_active_{self.item2.pk}': 'on',
+            f'safety_stock_{self.item2.pk}': '',
         })
+        # Only one profile should exist (item1's updated value, item2 has no profile).
         self.assertEqual(DistributorItemProfile.objects.count(), 1)
         p = DistributorItemProfile.objects.get(distributor=self.distributor, item=self.item1)
         self.assertEqual(p.safety_stock_cases, 120)
@@ -385,7 +400,9 @@ class DistributorSafetyStockSaveTest(TestCase):
         DistributorItemProfile.objects.create(
             distributor=self.distributor, item=self.item1, safety_stock_cases=50
         )
+        # Active + blank → delete profile (Path 2).
         self.client.post(self.url, {
+            f'is_active_{self.item1.pk}': 'on',
             f'safety_stock_{self.item1.pk}': '',
         })
         self.assertFalse(
@@ -398,7 +415,9 @@ class DistributorSafetyStockSaveTest(TestCase):
         DistributorItemProfile.objects.create(
             distributor=self.distributor, item=self.item1, safety_stock_cases=50
         )
+        # Active + zero → delete profile (Path 2).
         self.client.post(self.url, {
+            f'is_active_{self.item1.pk}': 'on',
             f'safety_stock_{self.item1.pk}': '0',
         })
         self.assertFalse(
@@ -409,16 +428,18 @@ class DistributorSafetyStockSaveTest(TestCase):
 
     def test_safety_stock_save_invalid_value_warning(self):
         resp = self.client.post(self.url, {
+            f'is_active_{self.item1.pk}': 'on',
             f'safety_stock_{self.item1.pk}': 'abc',
+            f'is_active_{self.item2.pk}': 'on',
             f'safety_stock_{self.item2.pk}': '60',
         }, follow=True)
-        # Item2's valid value should still be saved
+        # Item2's valid value should still be saved.
         self.assertTrue(
             DistributorItemProfile.objects.filter(
                 distributor=self.distributor, item=self.item2, safety_stock_cases=60
             ).exists()
         )
-        # Item1's invalid value should be skipped; no profile created
+        # Item1's invalid value should be skipped; no profile created.
         self.assertFalse(
             DistributorItemProfile.objects.filter(
                 distributor=self.distributor, item=self.item1
@@ -507,3 +528,396 @@ class DistributorOrderProfileFieldOrderTest(TestCase):
         self.assertGreater(unit_pos, -1, 'Unit field not found in response')
         self.assertGreater(value_pos, -1, 'Value field not found in response')
         self.assertLess(unit_pos, value_pos, 'Unit field must appear before quantity field in HTML')
+
+
+# ===========================================================================
+# PHASE 2a TESTS
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# 9. DistributorItemProfile.is_active
+# ---------------------------------------------------------------------------
+
+class DistributorItemProfileIsActiveTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.distributor = make_distributor(self.company)
+        self.brand = make_brand(self.company)
+        self.item = make_item(self.brand)
+
+    def test_distributor_item_profile_is_active_default_true(self):
+        profile = DistributorItemProfile.objects.create(
+            distributor=self.distributor,
+            item=self.item,
+        )
+        self.assertTrue(profile.is_active)
+
+    def test_distributor_item_profile_is_active_can_be_set_false(self):
+        profile = DistributorItemProfile.objects.create(
+            distributor=self.distributor,
+            item=self.item,
+            is_active=False,
+        )
+        profile.refresh_from_db()
+        self.assertFalse(profile.is_active)
+
+
+# ---------------------------------------------------------------------------
+# 10. InventorySnapshot model
+# ---------------------------------------------------------------------------
+
+class InventorySnapshotModelTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.distributor = make_distributor(self.company)
+        self.brand = make_brand(self.company)
+        self.item = make_item(self.brand)
+
+    def test_inventory_snapshot_model_create(self):
+        snapshot = InventorySnapshot.objects.create(
+            distributor=self.distributor,
+            item=self.item,
+            quantity_cases=100,
+            year=2025,
+            month=3,
+        )
+        fetched = InventorySnapshot.objects.get(pk=snapshot.pk)
+        self.assertEqual(fetched.distributor, self.distributor)
+        self.assertEqual(fetched.item, self.item)
+        self.assertEqual(fetched.quantity_cases, 100)
+        self.assertEqual(fetched.year, 2025)
+        self.assertEqual(fetched.month, 3)
+
+    def test_inventory_snapshot_zero_quantity_allowed(self):
+        snapshot = InventorySnapshot.objects.create(
+            distributor=self.distributor,
+            item=self.item,
+            quantity_cases=0,
+            year=2025,
+            month=4,
+        )
+        self.assertEqual(snapshot.quantity_cases, 0)
+
+    def test_inventory_snapshot_unique_constraint(self):
+        InventorySnapshot.objects.create(
+            distributor=self.distributor,
+            item=self.item,
+            quantity_cases=50,
+            year=2025,
+            month=1,
+        )
+        with self.assertRaises(Exception):
+            InventorySnapshot.objects.create(
+                distributor=self.distributor,
+                item=self.item,
+                quantity_cases=75,
+                year=2025,
+                month=1,
+            )
+
+    def test_inventory_snapshot_protect_on_delete_distributor(self):
+        InventorySnapshot.objects.create(
+            distributor=self.distributor,
+            item=self.item,
+            quantity_cases=10,
+            year=2025,
+            month=2,
+        )
+        with self.assertRaises(ProtectedError):
+            self.distributor.delete()
+
+    def test_inventory_snapshot_protect_on_delete_item(self):
+        InventorySnapshot.objects.create(
+            distributor=self.distributor,
+            item=self.item,
+            quantity_cases=10,
+            year=2025,
+            month=2,
+        )
+        with self.assertRaises(ProtectedError):
+            self.item.delete()
+
+    def test_inventory_snapshot_created_by_set_null(self):
+        creator = User.objects.create_user(
+            username='snapshot_creator',
+            password='testpass123',
+            company=self.company,
+        )
+        snapshot = InventorySnapshot.objects.create(
+            distributor=self.distributor,
+            item=self.item,
+            quantity_cases=20,
+            year=2025,
+            month=5,
+            created_by=creator,
+        )
+        creator.delete()
+        snapshot.refresh_from_db()
+        self.assertIsNone(snapshot.created_by)
+
+    def test_inventory_snapshot_ordering(self):
+        # Create snapshots out of order; expect newest first, then dist/item name.
+        InventorySnapshot.objects.create(
+            distributor=self.distributor, item=self.item,
+            quantity_cases=10, year=2024, month=3,
+        )
+        InventorySnapshot.objects.create(
+            distributor=self.distributor, item=self.item,
+            quantity_cases=20, year=2025, month=1,
+        )
+        InventorySnapshot.objects.create(
+            distributor=self.distributor, item=self.item,
+            quantity_cases=30, year=2024, month=11,
+        )
+        snapshots = list(InventorySnapshot.objects.all())
+        self.assertEqual(snapshots[0].year, 2025)
+        self.assertEqual(snapshots[0].month, 1)
+        self.assertEqual(snapshots[1].year, 2024)
+        self.assertEqual(snapshots[1].month, 11)
+        self.assertEqual(snapshots[2].year, 2024)
+        self.assertEqual(snapshots[2].month, 3)
+
+
+# ---------------------------------------------------------------------------
+# 11. Safety stock save — Phase 2a three-path logic
+# ---------------------------------------------------------------------------
+
+class SafetyStockSavePhase2aTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.distributor = make_distributor(self.company)
+        self.brand = make_brand(self.company)
+        self.item = make_item(self.brand, name='Item A', item_code='A001', sort_order=1)
+        self.item2 = make_item(self.brand, name='Item B', item_code='B001', sort_order=2)
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+        self.url = reverse('distributor_safety_stock_save', args=[self.distributor.pk])
+
+    def _post(self, data):
+        return self.client.post(self.url, data, follow=True)
+
+    def test_safety_stock_save_active_with_value(self):
+        """Path 1: active + valid value → create profile."""
+        self._post({f'is_active_{self.item.pk}': 'on', f'safety_stock_{self.item.pk}': '50'})
+        profile = DistributorItemProfile.objects.get(distributor=self.distributor, item=self.item)
+        self.assertTrue(profile.is_active)
+        self.assertEqual(profile.safety_stock_cases, 50)
+
+    def test_safety_stock_save_active_blank_value_no_existing_profile(self):
+        """Path 2: active + blank, no profile → no profile created."""
+        self._post({f'is_active_{self.item.pk}': 'on', f'safety_stock_{self.item.pk}': ''})
+        self.assertFalse(
+            DistributorItemProfile.objects.filter(
+                distributor=self.distributor, item=self.item
+            ).exists()
+        )
+
+    def test_safety_stock_save_active_blank_value_existing_profile_with_safety_stock(self):
+        """Path 2: active + blank, profile exists → profile deleted."""
+        DistributorItemProfile.objects.create(
+            distributor=self.distributor, item=self.item,
+            is_active=True, safety_stock_cases=50,
+        )
+        self._post({f'is_active_{self.item.pk}': 'on', f'safety_stock_{self.item.pk}': ''})
+        self.assertFalse(
+            DistributorItemProfile.objects.filter(
+                distributor=self.distributor, item=self.item
+            ).exists()
+        )
+
+    def test_safety_stock_save_active_blank_value_existing_inactive_profile(self):
+        """Path 2: active + blank, inactive profile exists → profile deleted."""
+        DistributorItemProfile.objects.create(
+            distributor=self.distributor, item=self.item,
+            is_active=False, safety_stock_cases=None,
+        )
+        self._post({f'is_active_{self.item.pk}': 'on', f'safety_stock_{self.item.pk}': ''})
+        self.assertFalse(
+            DistributorItemProfile.objects.filter(
+                distributor=self.distributor, item=self.item
+            ).exists()
+        )
+
+    def test_safety_stock_save_inactive_no_existing_profile(self):
+        """Path 3: inactive, no profile → profile created with is_active=False, no safety stock."""
+        self._post({f'safety_stock_{self.item.pk}': ''})  # checkbox absent = inactive
+        profile = DistributorItemProfile.objects.get(distributor=self.distributor, item=self.item)
+        self.assertFalse(profile.is_active)
+        self.assertIsNone(profile.safety_stock_cases)
+
+    def test_safety_stock_save_inactive_with_safety_stock_value_ignored(self):
+        """Path 3: inactive + value posted → profile created, value ignored."""
+        self._post({f'safety_stock_{self.item.pk}': '50'})  # checkbox absent = inactive
+        profile = DistributorItemProfile.objects.get(distributor=self.distributor, item=self.item)
+        self.assertFalse(profile.is_active)
+        self.assertIsNone(profile.safety_stock_cases)
+
+    def test_safety_stock_save_inactive_existing_active_profile_deactivates(self):
+        """Path 3: inactive, active profile exists → profile updated to inactive, safety stock cleared."""
+        DistributorItemProfile.objects.create(
+            distributor=self.distributor, item=self.item,
+            is_active=True, safety_stock_cases=50,
+        )
+        self._post({f'safety_stock_{self.item.pk}': '50'})  # checkbox absent = inactive
+        profile = DistributorItemProfile.objects.get(distributor=self.distributor, item=self.item)
+        self.assertFalse(profile.is_active)
+        self.assertIsNone(profile.safety_stock_cases)
+
+    def test_safety_stock_save_invalid_value_when_active_warns(self):
+        """Active + non-numeric value → warning shown, no profile created/changed."""
+        resp = self._post({
+            f'is_active_{self.item.pk}': 'on',
+            f'safety_stock_{self.item.pk}': 'abc',
+        })
+        self.assertFalse(
+            DistributorItemProfile.objects.filter(
+                distributor=self.distributor, item=self.item
+            ).exists()
+        )
+        messages_list = list(resp.context['messages'])
+        warning_texts = [str(m) for m in messages_list if m.level_tag == 'warning']
+        self.assertTrue(any('Item A' in t for t in warning_texts))
+
+    def test_safety_stock_save_only_one_profile_created_on_duplicate_post(self):
+        """Posting the same item twice in sequence creates only one profile."""
+        self._post({f'is_active_{self.item.pk}': 'on', f'safety_stock_{self.item.pk}': '30'})
+        self._post({f'is_active_{self.item.pk}': 'on', f'safety_stock_{self.item.pk}': '60'})
+        self.assertEqual(
+            DistributorItemProfile.objects.filter(
+                distributor=self.distributor, item=self.item
+            ).count(), 1
+        )
+        profile = DistributorItemProfile.objects.get(distributor=self.distributor, item=self.item)
+        self.assertEqual(profile.safety_stock_cases, 60)
+
+
+# ---------------------------------------------------------------------------
+# 12. Distributor list page — 3-tab structure
+# ---------------------------------------------------------------------------
+
+class DistributorListTabsTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.distributor = make_distributor(self.company)
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+        self.url = reverse('distributor_list')
+
+    def test_distributor_list_default_tab_distributors(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_tab'], 'distributors')
+        self.assertContains(resp, 'pane-distributors')
+
+    def test_distributor_list_inventory_tab_renders_with_permission(self):
+        resp = self.client.get(self.url + '?tab=inventory')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_tab'], 'inventory')
+        self.assertContains(resp, 'No inventory data yet')
+
+    def test_distributor_list_snapshots_tab_renders_with_permission(self):
+        resp = self.client.get(self.url + '?tab=snapshots')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_tab'], 'snapshots')
+        self.assertContains(resp, 'No snapshots uploaded yet')
+
+    def test_distributor_list_invalid_tab_falls_back_to_distributors(self):
+        resp = self.client.get(self.url + '?tab=garbage')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_tab'], 'distributors')
+
+    def test_distributor_list_inventory_tab_hidden_without_inventory_permission(self):
+        limited_role, _ = Role.objects.get_or_create(
+            codename='test_dist_list_only',
+            defaults={'name': 'Test Dist List Only'},
+        )
+        perm = Permission.objects.get(codename='can_manage_distributors')
+        limited_role.permissions.set([perm])
+        limited_user = User.objects.create_user(
+            username='limited_list', password='testpass123', company=self.company,
+        )
+        limited_user.roles.set([limited_role])
+
+        c = Client()
+        c.login(username='limited_list', password='testpass123')
+        resp = c.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'tab-inventory')
+        self.assertNotContains(resp, 'tab-snapshots')
+        # tab-distributors is always visible
+        self.assertContains(resp, 'tab-distributors')
+
+    def test_distributor_list_inventory_tab_forced_to_distributors_without_permission(self):
+        """Even with ?tab=inventory, users without inventory permission get distributors tab."""
+        limited_role, _ = Role.objects.get_or_create(
+            codename='test_dist_list_only2',
+            defaults={'name': 'Test Dist List Only 2'},
+        )
+        perm = Permission.objects.get(codename='can_manage_distributors')
+        limited_role.permissions.set([perm])
+        limited_user = User.objects.create_user(
+            username='limited_list2', password='testpass123', company=self.company,
+        )
+        limited_user.roles.set([limited_role])
+
+        c = Client()
+        c.login(username='limited_list2', password='testpass123')
+        resp = c.get(self.url + '?tab=inventory')
+        self.assertEqual(resp.context['active_tab'], 'distributors')
+
+
+# ---------------------------------------------------------------------------
+# 13. Safety Stock tab — Active column UI
+# ---------------------------------------------------------------------------
+
+class SafetyStockActiveColumnUITest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.distributor = make_distributor(self.company)
+        self.brand = make_brand(self.company)
+        self.item = make_item(self.brand, name='Item A', item_code='A001', sort_order=1)
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def _get_safety_stock_tab(self):
+        url = reverse('distributor_edit', args=[self.distributor.pk]) + '?tab=safety-stock'
+        return self.client.get(url)
+
+    def test_safety_stock_table_has_active_column(self):
+        resp = self._get_safety_stock_tab()
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Active')
+        self.assertContains(resp, 'safety-stock-active-cb')
+
+    def test_safety_stock_table_active_column_default_checked_for_no_profile(self):
+        resp = self._get_safety_stock_tab()
+        content = resp.content.decode()
+        # The checkbox for this item should be checked (no profile = active by default)
+        cb_marker = f'is_active_{self.item.pk}'
+        self.assertIn(cb_marker, content)
+        # Find the checkbox block and assert it has 'checked'
+        cb_idx = content.find(f'name="is_active_{self.item.pk}"')
+        self.assertGreater(cb_idx, -1)
+        snippet = content[cb_idx:cb_idx + 200]
+        self.assertIn('checked', snippet)
+
+    def test_safety_stock_table_active_column_unchecked_for_inactive_profile(self):
+        DistributorItemProfile.objects.create(
+            distributor=self.distributor,
+            item=self.item,
+            is_active=False,
+        )
+        resp = self._get_safety_stock_tab()
+        content = resp.content.decode()
+        cb_idx = content.find(f'name="is_active_{self.item.pk}"')
+        self.assertGreater(cb_idx, -1)
+        snippet = content[cb_idx:cb_idx + 200]
+        self.assertNotIn('checked', snippet)
