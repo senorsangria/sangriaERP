@@ -357,15 +357,17 @@ nav-tabs interface. Uses the `distributor_edit.html` template (separate from
 **Tab 1 — Basic Info:** Name, address, city, state, notes, active flag. Always visible.
 Posts to `POST /distributors/<pk>/edit/` (existing DistributorForm).
 
-**Tab 2 — Order Profile:** Order quantity value + unit. Only visible to users with
-`can_manage_distributor_inventory`. Posts to `POST /distributors/<pk>/order-profile/`.
-Redirects back to `?tab=order-profile`.
+**Tab 2 — Order Profile:** Unit (Pallets / Cases) first, then order quantity value. Fields
+appear in that order so the form reads naturally: "Pallets, 20" rather than "20... of what?"
+Only visible to users with `can_manage_distributor_inventory`. Posts to
+`POST /distributors/<pk>/order-profile/`. Redirects back to `?tab=order-profile`.
 
 **Tab 3 — Safety Stock:** Editable table of all active company items grouped by brand
-(brand name as a section row header, using `{% ifchanged %}`). Each item row shows:
-item name, item code, cases per pallet (with a link to item edit if not set), and an
-editable safety stock input. One form, posts to `POST /distributors/<pk>/safety-stock/`.
-Redirects back to `?tab=safety-stock`.
+(brand name as a section row header, using `{% ifchanged %}`). Two columns only: Item
+(name + item code) and Safety Stock (cases, editable input). The `cases_per_pallet` field
+still exists on the Item model and is editable on the item edit form, but is not displayed
+here — it will be used by the future forecast tool (Phase 4) where it belongs. One form,
+posts to `POST /distributors/<pk>/safety-stock/`. Redirects back to `?tab=safety-stock`.
 
 Active tab on page load is determined by the `?tab=` query parameter. Valid values:
 `basic` (default), `order-profile`, `safety-stock`.

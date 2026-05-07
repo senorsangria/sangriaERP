@@ -163,6 +163,19 @@
               {% csrf_token %}
 
               <div class="mb-3">
+                <label for="id_order_quantity_unit" class="form-label fw-medium">
+                  Unit
+                </label>
+                <select id="id_order_quantity_unit"
+                        name="order_quantity_unit"
+                        class="form-select">
+                  <option value="">— Select Unit —</option>
+                  <option value="pallets" {% if distributor.order_quantity_unit == 'pallets' %}selected{% endif %}>Pallets</option>
+                  <option value="cases" {% if distributor.order_quantity_unit == 'cases' %}selected{% endif %}>Cases</option>
+                </select>
+              </div>
+
+              <div class="mb-4">
                 <label for="id_order_quantity_value" class="form-label fw-medium">
                   Typical Order Quantity
                 </label>
@@ -174,19 +187,6 @@
                        value="{{ distributor.order_quantity_value|default:'' }}"
                        placeholder="e.g. 5">
                 <div class="form-text">Whole number — number of pallets or cases per order.</div>
-              </div>
-
-              <div class="mb-4">
-                <label for="id_order_quantity_unit" class="form-label fw-medium">
-                  Unit
-                </label>
-                <select id="id_order_quantity_unit"
-                        name="order_quantity_unit"
-                        class="form-select">
-                  <option value="">— Select Unit —</option>
-                  <option value="pallets" {% if distributor.order_quantity_unit == 'pallets' %}selected{% endif %}>Pallets</option>
-                  <option value="cases" {% if distributor.order_quantity_unit == 'cases' %}selected{% endif %}>Cases</option>
-                </select>
               </div>
 
               <div class="d-flex gap-2">
@@ -227,7 +227,6 @@
             <thead class="table-light">
               <tr>
                 <th class="ps-3">Item</th>
-                <th>Cases / Pallet</th>
                 <th class="text-end pe-3" style="width: 160px;">Safety Stock (cases)</th>
               </tr>
             </thead>
@@ -235,7 +234,7 @@
               {% for item in items %}
               {% ifchanged item.brand.name %}
               <tr class="table-secondary">
-                <td colspan="3" class="ps-3 py-1">
+                <td colspan="2" class="ps-3 py-1">
                   <h6 class="mb-0 fw-semibold small text-uppercase text-muted brand-header" data-brand="{{ item.brand.name }}">{{ item.brand.name }}</h6>
                 </td>
               </tr>
@@ -244,16 +243,6 @@
                 <td class="ps-3">
                   <div class="fw-medium small">{{ item.name }}</div>
                   <div class="text-muted" style="font-size: 0.75rem;">{{ item.item_code }}</div>
-                </td>
-                <td class="text-muted small">
-                  {% if item.cases_per_pallet %}
-                    {{ item.cases_per_pallet }}
-                  {% else %}
-                    <span class="text-muted">Not set</span>
-                    <a href="{% url 'item_edit' item.brand.pk item.pk %}" class="text-decoration-none ms-1" style="font-size: 0.75rem;" title="Set cases per pallet on item">
-                      <i class="bi bi-pencil-fill"></i>
-                    </a>
-                  {% endif %}
                 </td>
                 <td class="text-end pe-3">
                   <input type="number"

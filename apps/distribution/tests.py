@@ -476,3 +476,34 @@ class DistributorSafetyStockSaveTest(TestCase):
         self.assertIn('Item A', content)
         self.assertIn('Item B', content)
         self.assertIn('Item C', content)
+
+    def test_safety_stock_table_no_cases_per_pallet_column(self):
+        url = reverse('distributor_edit', args=[self.distributor.pk]) + '?tab=safety-stock'
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'Cases / Pallet')
+
+
+# ---------------------------------------------------------------------------
+# 8. Order Profile tab — field order
+# ---------------------------------------------------------------------------
+
+class DistributorOrderProfileFieldOrderTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.distributor = make_distributor(self.company)
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_order_profile_tab_unit_field_appears_before_quantity(self):
+        url = reverse('distributor_edit', args=[self.distributor.pk]) + '?tab=order-profile'
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        unit_pos = content.find('id_order_quantity_unit')
+        value_pos = content.find('id_order_quantity_value')
+        self.assertGreater(unit_pos, -1, 'Unit field not found in response')
+        self.assertGreater(value_pos, -1, 'Value field not found in response')
+        self.assertLess(unit_pos, value_pos, 'Unit field must appear before quantity field in HTML')
