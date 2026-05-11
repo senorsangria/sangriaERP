@@ -705,3 +705,29 @@ class InventoryTabTest(TestCase):
         )
         response = self.client.get(self.url)
         self.assertContains(response, reverse('inventory_upload'))
+
+    def test_inventory_tab_data_loads_when_default_tab_active(self):
+        """Inventory data must be populated even when landing on the default tab.
+
+        Regression test: the Bootstrap tab button doesn't reload the page, so
+        inventory data must be loaded server-side regardless of active_tab.
+        Previously the data was gated behind active_tab == 'inventory', which
+        meant a user arriving at /distributors/ (active_tab='distributors') and
+        clicking the Inventory tab via Bootstrap JS would always see empty state.
+        """
+        InventorySnapshot.objects.create(
+            distributor=self.distributor,
+            item=self.item,
+            quantity_cases=Decimal('42'),
+            year=2026,
+            month=4,
+        )
+        # GET without ?tab= param → active_tab defaults to 'distributors'
+        base_url = reverse('distributor_list')
+        response = self.client.get(base_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['active_tab'], 'distributors')
+        # Inventory data must still be populated
+        self.assertTrue(response.context['has_any_snapshots'])
+        self.assertEqual(len(response.context['inventory_rows']), 1)
+        self.assertEqual(response.context['inventory_rows'][0]['quantity_display'], '42')

@@ -275,7 +275,7 @@ def distributor_list(request):
     inventory_sort = 'distributor'
     has_any_snapshots = False
 
-    if active_tab == 'inventory' and can_manage_inventory:
+    if can_manage_inventory:
         inv_distributor_filter = request.GET.get('inv_distributor', '')
         inv_brand_filter = request.GET.get('inv_brand', '')
         inv_period_filter = request.GET.get('inv_period', '')
