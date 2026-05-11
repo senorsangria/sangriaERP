@@ -454,12 +454,97 @@ via `disabled` attribute on initial render for inactive items).
 
 ---
 
-### Phase 2b — CSV Upload (Pending)
+### Phase 2b-1 — CSV Upload (Complete)
 
-Inventory snapshot CSV upload, validation, preview, and snapshot management UI.
-Upload will create `InventorySnapshot` records for the selected distributor and month.
-The `ImportBatch.ImportType.INVENTORY_DATA` choice (pre-existing stub in `apps/imports/models.py`)
-may be used to track inventory upload batches, or a separate model may be introduced.
+#### Model changes
+
+- **`InventorySnapshot.quantity_cases`** changed from `PositiveIntegerField` to
+  `DecimalField(max_digits=10, decimal_places=6)` with `MinValueValidator(0)`.
+  Supports fractional case counts from real VIP inventory reports (e.g., 54.166667
+  for partial cases / loose bottles). Zero is still valid.
+
+- **`InventoryImportBatch`** — new model in `apps/distribution/models.py`. Tracks
+  one upload event. Fields: `company` (FK→Company, PROTECT), `year`, `month`,
+  `uploaded_by` (FK→User, SET_NULL), `filename`, `distributor_count`,
+  `snapshots_created`. Inherits `created_at`/`updated_at` from `TimeStampedModel`.
+  Ordering: `['-created_at']`. No `status` field — uploads are atomic (complete or
+  fully rolled back, no partial states).
+
+- **`InventorySnapshot.import_batch`** — new nullable FK → `InventoryImportBatch`,
+  `on_delete=SET_NULL`. Allows tracking which upload created each snapshot. Null for
+  manually created snapshots or after batch deletion.
+
+- The pre-existing `ImportBatch.ImportType.INVENTORY_DATA` stub in `apps/imports/models.py`
+  remains unwired. Inventory import tracking uses `InventoryImportBatch` in
+  `apps/distribution/` instead (same pattern as `HistoricalImportBatch` for events).
+
+#### CSV format
+
+Row 1 is the header row. Exactly **3 columns** required:
+
+| Position | Header (case-insensitive) | Content |
+|---|---|---|
+| 1 | `Distributors` | Distributor name |
+| 2 | `Item Name ID` | Item code (must be mapped in ItemMapping) |
+| 3 | Any name | Quantity on hand (cases, decimals allowed) |
+
+150–500 rows typical. Blank rows silently skipped. Strict validation: any error
+(missing distributor, unmapped item, period conflict) aborts the entire upload.
+
+#### Distributor matching
+
+Case-insensitive exact match on `Distributor.name` within the company. Active
+distributors only (`is_active=True`).
+
+#### Item code matching
+
+Uses the existing `ItemMapping` table — same mechanism as Sales Import. Matches on
+`raw_item_name` (exact, case-sensitive). Codes with status `IGNORED` or `UNMAPPED`
+abort the upload with an error. The `apps/imports/` code is not modified; `ItemMapping`
+is imported read-only from the distribution views.
+
+#### Auto-activation
+
+Items present in the CSV automatically get `DistributorItemProfile.is_active=True`
+for their (distributor, item) pair. Pre-existing inactive profiles are updated.
+
+#### Upload flow
+
+Two-step preview flow at `/distributors/inventory/` (URL prefix):
+
+1. **Upload** (`GET/POST /distributors/inventory/upload/`) — year/month selector +
+   file upload. Parses and validates the CSV. On any error, re-renders with full error
+   list (no truncation). On success, saves temp file to
+   `MEDIA_ROOT/temp_inventory_imports/` and redirects to preview.
+2. **Preview** (`GET /distributors/inventory/preview/`) — shows period, filename, and
+   per-distributor summary (distributor name, item count, total cases). Cancel clears
+   session and deletes temp file. Confirm POSTs to `/distributors/inventory/confirm/`.
+3. **Confirm** (`POST /distributors/inventory/confirm/`) — re-parses and re-validates
+   against fresh DB state, then executes inside `transaction.atomic()`. On success:
+   creates `InventoryImportBatch` + `InventorySnapshot` rows + auto-activates profiles,
+   clears session, deletes temp file, redirects to `/distributors/?tab=inventory`.
+
+Session key: `pending_inventory_import`. Temp files deleted on success, cancel, or error.
+
+#### Inventory tab (Phase 2b-1 portion)
+
+The Inventory tab at `/distributors/?tab=inventory` now shows:
+- **Empty state** (no snapshots exist): icon + description + prominent Upload button.
+- **Populated state**: Upload button at top, filter dropdowns (distributor, brand,
+  period), sortable table (Distributor | Brand | Item | Item Code | Quantity | Period |
+  Uploaded). Default view shows the **most recent snapshot per (distributor, item) pair**.
+  Period filter overrides to show all rows for that specific month. Sort via `?sort=`
+  query param.
+- Quantity display: integer if whole (e.g., "248"), 2 decimal places if fractional
+  (e.g., "54.17").
+- Upload button hidden from users without `can_manage_distributor_inventory`.
+
+Permission: `can_manage_distributor_inventory` (supplier_admin only, unchanged).
+
+#### Phase 2b-2 (Pending)
+
+Snapshot management UI: list import batches, delete batches (cascades snapshots to
+null import_batch), delete individual snapshots, edit snapshot metadata.
 
 #### Future Phases
 

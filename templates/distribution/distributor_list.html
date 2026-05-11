@@ -204,12 +204,151 @@
        id="pane-inventory"
        role="tabpanel"
        aria-labelledby="tab-inventory">
+
+    {% if not has_any_snapshots %}
+    <!-- Empty state -->
     <div class="card border-0 shadow-sm">
-      <div class="card-body text-center py-4 text-muted">
-        <i class="bi bi-boxes fs-2 d-block mb-2"></i>
-        No inventory data yet.
+      <div class="card-body text-center py-5">
+        <i class="bi bi-boxes fs-1 text-muted d-block mb-3"></i>
+        <h5 class="fw-semibold">No inventory data yet</h5>
+        <p class="text-muted mb-4">Upload an inventory snapshot CSV from VIP to get started.</p>
+        {% if can_manage_inventory %}
+        <a href="{% url 'inventory_upload' %}" class="btn btn-primary">
+          <i class="bi bi-cloud-upload me-1"></i>Upload Inventory
+        </a>
+        {% endif %}
       </div>
     </div>
+
+    {% else %}
+    <!-- Populated state -->
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <span class="text-muted small">{{ inventory_rows|length }} item{{ inventory_rows|length|pluralize }} shown</span>
+      {% if can_manage_inventory %}
+      <a href="{% url 'inventory_upload' %}" class="btn btn-primary btn-sm">
+        <i class="bi bi-cloud-upload me-1"></i>Upload Inventory
+      </a>
+      {% endif %}
+    </div>
+
+    <!-- Filters -->
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body py-2">
+        <form method="get" class="row g-2 align-items-end">
+          <input type="hidden" name="tab" value="inventory">
+          {% if inventory_distributor_choices %}
+          <div class="col-12 col-sm-auto">
+            <label class="form-label small text-muted mb-1">Distributor</label>
+            <select name="inv_distributor" class="form-select form-select-sm">
+              <option value="">All Distributors</option>
+              {% for d in inventory_distributor_choices %}
+              <option value="{{ d.pk }}" {% if inv_distributor_filter == d.pk|stringformat:"s" %}selected{% endif %}>{{ d.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          {% if inventory_brand_choices %}
+          <div class="col-12 col-sm-auto">
+            <label class="form-label small text-muted mb-1">Brand</label>
+            <select name="inv_brand" class="form-select form-select-sm">
+              <option value="">All Brands</option>
+              {% for b in inventory_brand_choices %}
+              <option value="{{ b.pk }}" {% if inv_brand_filter == b.pk|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          {% if inventory_period_choices %}
+          <div class="col-12 col-sm-auto">
+            <label class="form-label small text-muted mb-1">Period</label>
+            <select name="inv_period" class="form-select form-select-sm">
+              <option value="">Most Recent</option>
+              {% for p in inventory_period_choices %}
+              <option value="{{ p.value }}" {% if inv_period_filter == p.value %}selected{% endif %}>{{ p.display }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          <div class="col-auto">
+            <button type="submit" class="btn btn-outline-primary btn-sm">Filter</button>
+            <a href="{% url 'distributor_list' %}?tab=inventory" class="btn btn-outline-secondary btn-sm ms-1">Clear</a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {% if inventory_rows %}
+    <div class="card border-0 shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-hover table-sm mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>
+                <a href="?tab=inventory&sort=distributor&inv_distributor={{ inv_distributor_filter }}&inv_brand={{ inv_brand_filter }}&inv_period={{ inv_period_filter }}"
+                   class="text-decoration-none text-dark {% if inventory_sort == 'distributor' %}fw-bold{% endif %}">
+                  Distributor
+                </a>
+              </th>
+              <th>
+                <a href="?tab=inventory&sort=brand&inv_distributor={{ inv_distributor_filter }}&inv_brand={{ inv_brand_filter }}&inv_period={{ inv_period_filter }}"
+                   class="text-decoration-none text-dark {% if inventory_sort == 'brand' %}fw-bold{% endif %}">
+                  Brand
+                </a>
+              </th>
+              <th>
+                <a href="?tab=inventory&sort=item&inv_distributor={{ inv_distributor_filter }}&inv_brand={{ inv_brand_filter }}&inv_period={{ inv_period_filter }}"
+                   class="text-decoration-none text-dark {% if inventory_sort == 'item' %}fw-bold{% endif %}">
+                  Item
+                </a>
+              </th>
+              <th>
+                <a href="?tab=inventory&sort=item_code&inv_distributor={{ inv_distributor_filter }}&inv_brand={{ inv_brand_filter }}&inv_period={{ inv_period_filter }}"
+                   class="text-decoration-none text-dark {% if inventory_sort == 'item_code' %}fw-bold{% endif %}">
+                  Item Code
+                </a>
+              </th>
+              <th class="text-end">
+                <a href="?tab=inventory&sort=quantity&inv_distributor={{ inv_distributor_filter }}&inv_brand={{ inv_brand_filter }}&inv_period={{ inv_period_filter }}"
+                   class="text-decoration-none text-dark {% if inventory_sort == 'quantity' %}fw-bold{% endif %}">
+                  Quantity (cases)
+                </a>
+              </th>
+              <th>
+                <a href="?tab=inventory&sort=period&inv_distributor={{ inv_distributor_filter }}&inv_brand={{ inv_brand_filter }}&inv_period={{ inv_period_filter }}"
+                   class="text-decoration-none text-dark {% if inventory_sort == 'period' %}fw-bold{% endif %}">
+                  Period
+                </a>
+              </th>
+              <th class="text-muted small">Uploaded</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in inventory_rows %}
+            <tr>
+              <td class="small">{{ row.distributor_name }}</td>
+              <td class="small text-muted">{{ row.brand_name }}</td>
+              <td class="small">{{ row.item_name }}</td>
+              <td><code class="small">{{ row.item_code }}</code></td>
+              <td class="text-end fw-medium">{{ row.quantity_display }}</td>
+              <td class="small">{{ row.period_display }}</td>
+              <td class="small text-muted">{{ row.uploaded|date:"M j, Y" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% else %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center text-muted py-4">
+        <i class="bi bi-funnel fs-4 d-block mb-2"></i>
+        No inventory data matches the selected filters.
+      </div>
+    </div>
+    {% endif %}
+
+    {% endif %}{# has_any_snapshots #}
   </div>
 
   <!-- TAB 3: Snapshots -->

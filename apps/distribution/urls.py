@@ -4,6 +4,11 @@ from . import views
 urlpatterns = [
     path('distributors/', views.distributor_list, name='distributor_list'),
     path('distributors/create/', views.distributor_create, name='distributor_create'),
+    # Inventory snapshot import (Phase 2b-1) — static paths before <int:pk>
+    path('distributors/inventory/upload/', views.inventory_upload, name='inventory_upload'),
+    path('distributors/inventory/preview/', views.inventory_preview, name='inventory_preview'),
+    path('distributors/inventory/confirm/', views.inventory_confirm, name='inventory_confirm'),
+    # Distributor CRUD
     path('distributors/<int:pk>/', views.distributor_detail, name='distributor_detail'),
     path('distributors/<int:pk>/edit/', views.distributor_edit, name='distributor_edit'),
     path('distributors/<int:pk>/toggle/', views.distributor_toggle, name='distributor_toggle'),

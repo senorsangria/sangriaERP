@@ -1,17 +1,28 @@
 """
-Distribution views: Distributor CRUD.
+Distribution views: Distributor CRUD and inventory snapshot import.
 Supplier Admin only.
 """
-from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.decorators import login_required
+import calendar
+import csv
+import os
+import uuid
+from decimal import Decimal, InvalidOperation
+
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.db import transaction
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 
-from apps.core.models import User
-from apps.catalog.models import Item
-from .models import Distributor, DistributorItemProfile
-from .forms import DistributorForm
+from apps.catalog.models import Brand as CatalogBrand, Item
+from apps.imports.models import ItemMapping
+from .forms import DistributorForm, InventoryImportUploadForm
+from .models import Distributor, DistributorItemProfile, InventoryImportBatch, InventorySnapshot
 
+
+# ---------------------------------------------------------------------------
+# Permission helpers
+# ---------------------------------------------------------------------------
 
 def _require_supplier_admin(request):
     """Return 403 response if user is not a Supplier Admin, else None."""
@@ -22,6 +33,224 @@ def _require_supplier_admin(request):
     return None
 
 
+def _require_inventory_permission(request):
+    """Return redirect with error if user lacks can_manage_distributor_inventory."""
+    if not request.user.is_authenticated:
+        return redirect('login')
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        messages.error(request, 'You do not have permission to manage inventory imports.')
+        return redirect(reverse('distributor_list') + '?tab=inventory')
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Inventory upload helpers
+# ---------------------------------------------------------------------------
+
+def _inv_temp_dir():
+    from django.conf import settings
+    path = os.path.join(settings.MEDIA_ROOT, 'temp_inventory_imports')
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _inv_save_temp_file(uploaded_file):
+    """Save uploaded CSV to temp storage; return file path."""
+    ext = os.path.splitext(uploaded_file.name)[1] or '.csv'
+    filename = f'{uuid.uuid4().hex}{ext}'
+    filepath = os.path.join(_inv_temp_dir(), filename)
+    with open(filepath, 'wb') as f:
+        for chunk in uploaded_file.chunks():
+            f.write(chunk)
+    return filepath
+
+
+def _inv_cleanup_temp_file(filepath):
+    """Delete a temp file if it exists."""
+    if filepath and os.path.exists(filepath):
+        try:
+            os.remove(filepath)
+        except OSError:
+            pass
+
+
+def _format_quantity_cases(qty):
+    """Format Decimal quantity: integer if whole, 2 decimal places if fractional."""
+    if qty == qty.to_integral_value():
+        return str(int(qty))
+    return f'{qty:.2f}'
+
+
+# ---------------------------------------------------------------------------
+# CSV parser
+# ---------------------------------------------------------------------------
+
+def parse_inventory_csv(filepath):
+    """
+    Parse an inventory snapshot CSV file.
+
+    Expected format:
+      Row 1: headers — column 1 "Distributors", column 2 "Item Name ID",
+             column 3 any name (quantity). Exactly 3 columns required.
+      Rows 2+: data rows.
+
+    Returns (rows, errors) where rows is a list of dicts:
+        {row_number, distributor_name, item_code, quantity (Decimal)}
+    and errors is a list of error strings.
+    """
+    rows = []
+    errors = []
+
+    with open(filepath, newline='', encoding='utf-8-sig') as f:
+        reader = csv.reader(f)
+
+        try:
+            header_row = next(reader)
+        except StopIteration:
+            return [], ['CSV file is empty or has no header row.']
+
+        headers = [h.strip() for h in header_row]
+
+        if len(headers) != 3:
+            return [], [
+                f'Expected exactly 3 columns (Distributors, Item Name ID, quantity). '
+                f'Got {len(headers)} column(s).'
+            ]
+
+        if headers[0].lower() != 'distributors' or headers[1].lower() != 'item name id':
+            return [], [
+                f"Expected columns 'Distributors' and 'Item Name ID' in positions 1 and 2. "
+                f"Got: {', '.join(repr(h) for h in headers[:2])}"
+            ]
+
+        for line_num, row in enumerate(reader, start=2):
+            if not any(cell.strip() for cell in row):
+                continue  # silently skip blank rows
+
+            if len(row) < 3 or not row[0].strip() or not row[1].strip() or not row[2].strip():
+                errors.append(f'Row {line_num} is missing required data.')
+                continue
+
+            distributor_name = row[0].strip()
+            item_code = row[1].strip()
+            raw_qty = row[2].strip()
+
+            try:
+                qty = Decimal(raw_qty)
+            except InvalidOperation:
+                errors.append(f"Row {line_num}: invalid quantity '{raw_qty}'")
+                continue
+
+            if qty < 0:
+                errors.append(f"Row {line_num}: invalid quantity '{raw_qty}' (negative values not allowed)")
+                continue
+
+            rows.append({
+                'row_number': line_num,
+                'distributor_name': distributor_name,
+                'item_code': item_code,
+                'quantity': qty,
+            })
+
+    return rows, errors
+
+
+# ---------------------------------------------------------------------------
+# Validator
+# ---------------------------------------------------------------------------
+
+def validate_inventory_import(rows, company, year, month):
+    """
+    Validate parsed CSV rows against the database.
+
+    Steps:
+      1. Resolve each distributor by name (case-insensitive, active only).
+      2. Resolve each item code via ItemMapping (exact match on raw_item_name).
+      3. Check for period conflicts (snapshot already exists for that distributor/period).
+
+    Any error in any step aborts the entire upload.
+
+    Returns (resolved_rows, errors) where resolved_rows is a list of dicts:
+        {distributor (Distributor), item (Item), quantity (Decimal), row_number}
+    """
+    errors = []
+
+    # Step 1: Distributor resolution
+    unique_dist_names = {r['distributor_name'] for r in rows}
+    distributor_map = {}  # {csv_name: Distributor}
+    for name in sorted(unique_dist_names):
+        dist = Distributor.objects.filter(
+            company=company, name__iexact=name, is_active=True
+        ).first()
+        if dist is None:
+            errors.append(f"Distributor not found in system: '{name}'")
+        else:
+            distributor_map[name] = dist
+
+    if errors:
+        return [], errors
+
+    # Step 2: Item code resolution via ItemMapping
+    unique_pairs = {(r['distributor_name'], r['item_code']) for r in rows}
+    item_map = {}  # {(csv_dist_name, item_code): Item}
+    for dist_name, item_code in sorted(unique_pairs):
+        dist = distributor_map[dist_name]
+        try:
+            mapping = ItemMapping.objects.get(
+                company=company,
+                distributor=dist,
+                raw_item_name=item_code,
+            )
+        except ItemMapping.DoesNotExist:
+            errors.append(
+                f"Item code '{item_code}' for distributor '{dist_name}' is not mapped. "
+                f"Add the mapping at /imports/item-mappings/ first."
+            )
+            continue
+
+        if mapping.status != ItemMapping.Status.MAPPED or mapping.mapped_item is None:
+            errors.append(
+                f"Item code '{item_code}' for distributor '{dist_name}' is not mapped. "
+                f"Add the mapping at /imports/item-mappings/ first."
+            )
+            continue
+
+        item_map[(dist_name, item_code)] = mapping.mapped_item
+
+    if errors:
+        return [], errors
+
+    # Step 3: Period conflict check
+    month_name = calendar.month_name[month]
+    for csv_name, dist in sorted(distributor_map.items(), key=lambda x: x[0]):
+        if InventorySnapshot.objects.filter(distributor=dist, year=year, month=month).exists():
+            errors.append(
+                f"Distributor '{dist.name}' already has inventory data for "
+                f"{month_name} {year}. Delete the existing snapshot before re-uploading."
+            )
+
+    if errors:
+        return [], errors
+
+    # Build resolved rows
+    resolved_rows = []
+    for row in rows:
+        dist = distributor_map[row['distributor_name']]
+        item = item_map[(row['distributor_name'], row['item_code'])]
+        resolved_rows.append({
+            'distributor': dist,
+            'item': item,
+            'quantity': row['quantity'],
+            'row_number': row['row_number'],
+        })
+
+    return resolved_rows, []
+
+
+# ---------------------------------------------------------------------------
+# Distributor list (3-tab page)
+# ---------------------------------------------------------------------------
+
 @login_required
 def distributor_list(request):
     denied = _require_supplier_admin(request)
@@ -29,8 +258,9 @@ def distributor_list(request):
         return denied
 
     can_manage_inventory = request.user.has_permission('can_manage_distributor_inventory')
+    company = request.user.company
 
-    distributors = Distributor.objects.filter(company=request.user.company).order_by('name')
+    distributors = Distributor.objects.filter(company=company).order_by('name')
     search = request.GET.get('q', '').strip()
     if search:
         distributors = distributors.filter(name__icontains=search)
@@ -41,13 +271,146 @@ def distributor_list(request):
     if active_tab in ('inventory', 'snapshots') and not can_manage_inventory:
         active_tab = 'distributors'
 
+    # Inventory tab data
+    inventory_rows = []
+    inventory_distributor_choices = []
+    inventory_brand_choices = []
+    inventory_period_choices = []
+    inv_distributor_filter = ''
+    inv_brand_filter = ''
+    inv_period_filter = ''
+    inventory_sort = 'distributor'
+    has_any_snapshots = False
+
+    if active_tab == 'inventory' and can_manage_inventory:
+        inv_distributor_filter = request.GET.get('inv_distributor', '')
+        inv_brand_filter = request.GET.get('inv_brand', '')
+        inv_period_filter = request.GET.get('inv_period', '')
+        inventory_sort = request.GET.get('sort', 'distributor')
+        if inventory_sort not in ('distributor', 'brand', 'item', 'item_code', 'quantity', 'period'):
+            inventory_sort = 'distributor'
+
+        has_any_snapshots = InventorySnapshot.objects.filter(
+            distributor__company=company
+        ).exists()
+
+        # Filter option choices (populated from existing snapshots)
+        inventory_distributor_choices = list(
+            Distributor.objects.filter(
+                company=company,
+                inventory_snapshots__isnull=False,
+            ).distinct().order_by('name')
+        )
+        inventory_brand_choices = list(
+            CatalogBrand.objects.filter(
+                company=company,
+                items__inventory_snapshots__isnull=False,
+            ).distinct().order_by('name')
+        )
+        period_values = (
+            InventorySnapshot.objects.filter(distributor__company=company)
+            .values_list('year', 'month')
+            .distinct()
+            .order_by('-year', '-month')
+        )
+        month_abbr = {i: calendar.month_abbr[i] for i in range(1, 13)}
+        inventory_period_choices = [
+            {
+                'value': f'{y}-{m:02d}',
+                'display': f'{month_abbr[m]} {y}',
+            }
+            for y, m in period_values
+        ]
+
+        # Base queryset with optional filters
+        snap_qs = InventorySnapshot.objects.filter(
+            distributor__company=company
+        ).select_related('distributor', 'item', 'item__brand')
+
+        if inv_distributor_filter:
+            snap_qs = snap_qs.filter(distributor_id=inv_distributor_filter)
+        if inv_brand_filter:
+            snap_qs = snap_qs.filter(item__brand_id=inv_brand_filter)
+
+        # Parse period filter (YYYY-MM)
+        inv_year = None
+        inv_month_val = None
+        if inv_period_filter:
+            parts = inv_period_filter.split('-')
+            if len(parts) == 2:
+                try:
+                    inv_year = int(parts[0])
+                    inv_month_val = int(parts[1])
+                except ValueError:
+                    inv_period_filter = ''
+
+        if inv_year and inv_month_val:
+            snapshots_list = list(
+                snap_qs.filter(year=inv_year, month=inv_month_val)
+            )
+        else:
+            # Most recent per (distributor, item) pair — iterate ordered by -year/-month
+            seen = set()
+            snapshots_list = []
+            for s in snap_qs.order_by('-year', '-month', 'distributor__name', 'item__brand__name', 'item__name'):
+                key = (s.distributor_id, s.item_id)
+                if key not in seen:
+                    seen.add(key)
+                    snapshots_list.append(s)
+
+        # Sort
+        if inventory_sort == 'brand':
+            snapshots_list.sort(key=lambda s: s.item.brand.name.lower())
+        elif inventory_sort == 'item':
+            snapshots_list.sort(key=lambda s: s.item.name.lower())
+        elif inventory_sort == 'item_code':
+            snapshots_list.sort(key=lambda s: s.item.item_code.lower())
+        elif inventory_sort == 'quantity':
+            snapshots_list.sort(key=lambda s: s.quantity_cases, reverse=True)
+        elif inventory_sort == 'period':
+            snapshots_list.sort(key=lambda s: (s.year, s.month), reverse=True)
+        else:
+            snapshots_list.sort(key=lambda s: (
+                s.distributor.name.lower(),
+                s.item.brand.name.lower(),
+                s.item.name.lower(),
+            ))
+
+        inventory_rows = [
+            {
+                'pk': s.pk,
+                'distributor_name': s.distributor.name,
+                'brand_name': s.item.brand.name,
+                'item_name': s.item.name,
+                'item_code': s.item.item_code,
+                'quantity_display': _format_quantity_cases(s.quantity_cases),
+                'period_display': f'{month_abbr[s.month]} {s.year}',
+                'uploaded': s.created_at,
+            }
+            for s in snapshots_list
+        ]
+
     return render(request, 'distribution/distributor_list.html', {
         'distributors': distributors,
         'search': search,
         'active_tab': active_tab,
         'can_manage_inventory': can_manage_inventory,
+        # Inventory tab
+        'inventory_rows': inventory_rows,
+        'has_any_snapshots': has_any_snapshots,
+        'inventory_distributor_choices': inventory_distributor_choices,
+        'inventory_brand_choices': inventory_brand_choices,
+        'inventory_period_choices': inventory_period_choices,
+        'inv_distributor_filter': inv_distributor_filter,
+        'inv_brand_filter': str(inv_brand_filter),
+        'inv_period_filter': inv_period_filter,
+        'inventory_sort': inventory_sort,
     })
 
+
+# ---------------------------------------------------------------------------
+# Distributor CRUD (unchanged)
+# ---------------------------------------------------------------------------
 
 @login_required
 def distributor_create(request):
@@ -204,13 +567,10 @@ def distributor_safety_stock_save(request, pk):
     warning_items = []
 
     for item in items:
-        # HTML checkboxes only post when checked; absence means unchecked (inactive).
         is_active = f'is_active_{item.pk}' in request.POST
         raw_ss = request.POST.get(f'safety_stock_{item.pk}', '').strip()
 
         if is_active:
-            # Path 1: Active + valid positive safety stock → create/update profile.
-            # Path 2: Active + blank/zero → delete profile (return to default state).
             if raw_ss and raw_ss != '0':
                 try:
                     value = int(raw_ss)
@@ -234,8 +594,6 @@ def distributor_safety_stock_save(request, pk):
                     distributor=distributor, item=item
                 ).delete()
         else:
-            # Path 3: Inactive → create/update profile with is_active=False, safety_stock_cases=None.
-            # Safety stock input value is ignored when inactive.
             profile, created = DistributorItemProfile.objects.get_or_create(
                 distributor=distributor,
                 item=item,
@@ -290,3 +648,242 @@ def distributor_toggle(request, pk):
     return render(request, 'distribution/distributor_toggle_confirm.html', {
         'distributor': distributor,
     })
+
+
+# ---------------------------------------------------------------------------
+# Inventory upload — Step 1
+# ---------------------------------------------------------------------------
+
+@login_required
+def inventory_upload(request):
+    denied = _require_inventory_permission(request)
+    if denied:
+        return denied
+
+    company = request.user.company
+    form = InventoryImportUploadForm()
+    import_errors = []
+
+    if request.method == 'POST':
+        form = InventoryImportUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            year = form.cleaned_data['year']
+            month = form.cleaned_data['month']
+            csv_file = form.cleaned_data['csv_file']
+
+            temp_path = _inv_save_temp_file(csv_file)
+
+            try:
+                rows, parse_errors = parse_inventory_csv(temp_path)
+                if parse_errors:
+                    _inv_cleanup_temp_file(temp_path)
+                    return render(request, 'distribution/inventory_upload.html', {
+                        'form': form,
+                        'import_errors': parse_errors,
+                    })
+
+                if not rows:
+                    _inv_cleanup_temp_file(temp_path)
+                    return render(request, 'distribution/inventory_upload.html', {
+                        'form': form,
+                        'import_errors': ['The CSV file contains no data rows.'],
+                    })
+
+                resolved_rows, val_errors = validate_inventory_import(rows, company, year, month)
+                if val_errors:
+                    _inv_cleanup_temp_file(temp_path)
+                    return render(request, 'distribution/inventory_upload.html', {
+                        'form': form,
+                        'import_errors': val_errors,
+                    })
+
+                # Build per-distributor preview summary
+                dist_summary = {}
+                for r in resolved_rows:
+                    name = r['distributor'].name
+                    if name not in dist_summary:
+                        dist_summary[name] = {'item_count': 0, 'total_cases': Decimal('0')}
+                    dist_summary[name]['item_count'] += 1
+                    dist_summary[name]['total_cases'] += r['quantity']
+
+                distributor_summaries = [
+                    {
+                        'name': name,
+                        'item_count': d['item_count'],
+                        'total_cases': str(d['total_cases']),
+                    }
+                    for name, d in sorted(dist_summary.items())
+                ]
+
+                request.session['pending_inventory_import'] = {
+                    'year': year,
+                    'month': month,
+                    'filename': csv_file.name,
+                    'temp_file_path': temp_path,
+                    'preview': {
+                        'total_rows': len(resolved_rows),
+                        'distributor_summaries': distributor_summaries,
+                    },
+                }
+                return redirect('inventory_preview')
+
+            except Exception as exc:
+                _inv_cleanup_temp_file(temp_path)
+                return render(request, 'distribution/inventory_upload.html', {
+                    'form': form,
+                    'import_errors': [f'Unexpected error reading file: {exc}'],
+                })
+
+    return render(request, 'distribution/inventory_upload.html', {
+        'form': form,
+        'import_errors': import_errors,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Inventory preview — Step 2
+# ---------------------------------------------------------------------------
+
+@login_required
+def inventory_preview(request):
+    denied = _require_inventory_permission(request)
+    if denied:
+        return denied
+
+    pending = request.session.get('pending_inventory_import')
+    if not pending:
+        messages.warning(request, 'No pending import found. Please start over.')
+        return redirect('inventory_upload')
+
+    if request.method == 'POST' and request.POST.get('action') == 'cancel':
+        _inv_cleanup_temp_file(pending.get('temp_file_path'))
+        del request.session['pending_inventory_import']
+        messages.info(request, 'Import cancelled.')
+        return redirect(reverse('distributor_list') + '?tab=inventory')
+
+    year = pending['year']
+    month = pending['month']
+    preview = pending['preview']
+
+    month_name = calendar.month_name[month]
+
+    # Format total_cases for display in the distributor summaries
+    summaries_display = []
+    for s in preview['distributor_summaries']:
+        qty = Decimal(s['total_cases'])
+        summaries_display.append({
+            'name': s['name'],
+            'item_count': s['item_count'],
+            'total_cases_display': _format_quantity_cases(qty),
+        })
+
+    return render(request, 'distribution/inventory_preview.html', {
+        'pending': pending,
+        'year': year,
+        'month': month,
+        'period_display': f'{month_name} {year}',
+        'filename': pending['filename'],
+        'total_rows': preview['total_rows'],
+        'distributor_summaries': summaries_display,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Inventory confirm — Step 3
+# ---------------------------------------------------------------------------
+
+@login_required
+def inventory_confirm(request):
+    denied = _require_inventory_permission(request)
+    if denied:
+        return denied
+
+    if request.method != 'POST':
+        return redirect('inventory_preview')
+
+    pending = request.session.get('pending_inventory_import')
+    if not pending:
+        messages.warning(request, 'No pending import found. Please start over.')
+        return redirect('inventory_upload')
+
+    company = request.user.company
+    year = pending['year']
+    month = pending['month']
+    filename = pending['filename']
+    filepath = pending.get('temp_file_path')
+
+    if not filepath or not os.path.exists(filepath):
+        messages.error(request, 'Upload file not found. Please start over.')
+        if 'pending_inventory_import' in request.session:
+            del request.session['pending_inventory_import']
+        return redirect('inventory_upload')
+
+    # Re-parse from temp file
+    rows, parse_errors = parse_inventory_csv(filepath)
+    if parse_errors:
+        for err in parse_errors:
+            messages.error(request, err)
+        return redirect('inventory_preview')
+
+    # Re-validate against fresh DB state
+    resolved_rows, val_errors = validate_inventory_import(rows, company, year, month)
+    if val_errors:
+        for err in val_errors:
+            messages.error(request, err)
+        return redirect('inventory_preview')
+
+    try:
+        with transaction.atomic():
+            distributor_ids = {r['distributor'].pk for r in resolved_rows}
+            distributor_count = len(distributor_ids)
+
+            batch = InventoryImportBatch.objects.create(
+                company=company,
+                year=year,
+                month=month,
+                uploaded_by=request.user,
+                filename=filename,
+                distributor_count=distributor_count,
+                snapshots_created=0,
+            )
+
+            snapshots_created = 0
+            for row in resolved_rows:
+                InventorySnapshot.objects.create(
+                    distributor=row['distributor'],
+                    item=row['item'],
+                    quantity_cases=row['quantity'],
+                    year=year,
+                    month=month,
+                    created_by=request.user,
+                    import_batch=batch,
+                )
+                snapshots_created += 1
+
+                # Auto-activate item in DistributorItemProfile
+                profile, created = DistributorItemProfile.objects.get_or_create(
+                    distributor=row['distributor'],
+                    item=row['item'],
+                    defaults={'is_active': True},
+                )
+                if not created and not profile.is_active:
+                    profile.is_active = True
+                    profile.save(update_fields=['is_active'])
+
+            batch.snapshots_created = snapshots_created
+            batch.save(update_fields=['snapshots_created'])
+
+    except Exception as exc:
+        messages.error(request, f'Import failed: {exc}')
+        return redirect('inventory_preview')
+
+    _inv_cleanup_temp_file(filepath)
+    del request.session['pending_inventory_import']
+
+    month_name = calendar.month_name[month]
+    messages.success(
+        request,
+        f'Successfully imported {snapshots_created} item(s) for '
+        f'{distributor_count} distributor(s) for {month_name} {year}.',
+    )
+    return redirect(reverse('distributor_list') + '?tab=inventory')

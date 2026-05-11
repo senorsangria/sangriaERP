@@ -1,7 +1,11 @@
 """
-Distribution models: Distributor, DistributorItemProfile, InventorySnapshot.
+Distribution models: Distributor, DistributorItemProfile, InventoryImportBatch, InventorySnapshot.
 """
+from decimal import Decimal
+
+from django.core.validators import MinValueValidator
 from django.db import models
+
 from apps.core.models import TimeStampedModel
 
 
@@ -95,11 +99,50 @@ class DistributorItemProfile(TimeStampedModel):
         )
 
 
+class InventoryImportBatch(TimeStampedModel):
+    """
+    Tracks a single inventory snapshot CSV upload event.
+
+    Uploads are atomic — either fully committed or fully rolled back.
+    No status field is needed since there are no partial states.
+    """
+
+    company = models.ForeignKey(
+        'core.Company',
+        on_delete=models.PROTECT,
+        related_name='inventory_import_batches',
+    )
+    year = models.IntegerField()
+    month = models.IntegerField()
+    uploaded_by = models.ForeignKey(
+        'core.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='inventory_uploads',
+    )
+    filename = models.CharField(max_length=500)
+    distributor_count = models.PositiveIntegerField()
+    snapshots_created = models.PositiveIntegerField()
+
+    class Meta:
+        verbose_name = 'Inventory Import Batch'
+        verbose_name_plural = 'Inventory Import Batches'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return (
+            f'Inventory upload {self.year}-{self.month:02d} '
+            f'({self.distributor_count} distributors, {self.snapshots_created} items)'
+        )
+
+
 class InventorySnapshot(TimeStampedModel):
     """
     On-hand inventory for a specific (distributor, item) as of a given month.
 
     quantity_cases may be zero — some snapshots legitimately record zero on hand.
+    Fractional values are supported for partial cases / loose bottles.
     year + month use the integer-pair convention established in Phase 2a.
     Unique per (distributor, item, year, month): one snapshot per SKU per month.
     """
@@ -114,7 +157,15 @@ class InventorySnapshot(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name='inventory_snapshots',
     )
-    quantity_cases = models.PositiveIntegerField()
+    quantity_cases = models.DecimalField(
+        max_digits=10,
+        decimal_places=6,
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text=(
+            'Quantity of this item on hand at the distributor, in cases. '
+            'Fractional values allowed (e.g., partial cases).'
+        ),
+    )
     year = models.IntegerField()
     month = models.IntegerField()
     created_by = models.ForeignKey(
@@ -123,6 +174,13 @@ class InventorySnapshot(TimeStampedModel):
         null=True,
         blank=True,
         related_name='inventory_snapshots_created',
+    )
+    import_batch = models.ForeignKey(
+        'distribution.InventoryImportBatch',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='snapshots',
     )
 
     class Meta:
