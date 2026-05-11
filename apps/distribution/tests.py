@@ -821,11 +821,11 @@ class DistributorListTabsTest(TestCase):
         self.assertEqual(resp.context['active_tab'], 'inventory')
         self.assertContains(resp, 'No inventory data yet')
 
-    def test_distributor_list_snapshots_tab_renders_with_permission(self):
-        resp = self.client.get(self.url + '?tab=snapshots')
+    def test_distributor_list_forecast_tab_renders_with_permission(self):
+        resp = self.client.get(self.url + '?tab=forecast')
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.context['active_tab'], 'snapshots')
-        self.assertContains(resp, 'No snapshots uploaded yet')
+        self.assertEqual(resp.context['active_tab'], 'forecast')
+        self.assertContains(resp, 'Forecast view coming soon')
 
     def test_distributor_list_invalid_tab_falls_back_to_distributors(self):
         resp = self.client.get(self.url + '?tab=garbage')
@@ -849,7 +849,7 @@ class DistributorListTabsTest(TestCase):
         resp = c.get(self.url)
         self.assertEqual(resp.status_code, 200)
         self.assertNotContains(resp, 'tab-inventory')
-        self.assertNotContains(resp, 'tab-snapshots')
+        self.assertNotContains(resp, 'tab-forecast')
         # tab-distributors is always visible
         self.assertContains(resp, 'tab-distributors')
 

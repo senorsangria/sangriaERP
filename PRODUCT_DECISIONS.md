@@ -434,10 +434,10 @@ Stores on-hand inventory for one (distributor, item) combination as of a given m
 
 - **Distributors tab** (default): existing distributor list, search, add button. Always visible
   with `can_manage_distributors`.
-- **Inventory tab**: empty state (Phase 2b will add upload). Requires
+- **Inventory tab**: upload and current-snapshot table (Phase 2b-1). Requires
   `can_manage_distributor_inventory`.
-- **Snapshots tab**: empty state (Phase 2b will add upload). Requires
-  `can_manage_distributor_inventory`.
+- **Forecast tab** (renamed from Snapshots): empty state pending Phase 4 forecast
+  view. Requires `can_manage_distributor_inventory`.
 
 Active tab controlled by `?tab=` query parameter (`distributors` default). Users without
 `can_manage_distributor_inventory` see only the Distributors tab; `?tab=inventory` and
@@ -499,9 +499,9 @@ distributors only (`is_active=True`).
 #### Item code matching
 
 Uses the existing `ItemMapping` table — same mechanism as Sales Import. Matches on
-`raw_item_name` (exact, case-sensitive). Codes with status `IGNORED` or `UNMAPPED`
-abort the upload with an error. The `apps/imports/` code is not modified; `ItemMapping`
-is imported read-only from the distribution views.
+`raw_item_name` (case-insensitive via `raw_item_name__iexact`). Codes with status
+`IGNORED` or `UNMAPPED` abort the upload with an error. The `apps/imports/` code is
+not modified; `ItemMapping` is imported read-only from the distribution views.
 
 #### Auto-activation
 

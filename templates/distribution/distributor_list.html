@@ -37,14 +37,14 @@
     </button>
   </li>
   <li class="nav-item" role="presentation">
-    <button class="nav-link {% if active_tab == 'snapshots' %}active{% endif %}"
-            id="tab-snapshots"
+    <button class="nav-link {% if active_tab == 'forecast' %}active{% endif %}"
+            id="tab-forecast"
             data-bs-toggle="tab"
-            data-bs-target="#pane-snapshots"
+            data-bs-target="#pane-forecast"
             type="button" role="tab"
-            aria-controls="pane-snapshots"
-            aria-selected="{% if active_tab == 'snapshots' %}true{% else %}false{% endif %}">
-      Snapshots
+            aria-controls="pane-forecast"
+            aria-selected="{% if active_tab == 'forecast' %}true{% else %}false{% endif %}">
+      Forecast
     </button>
   </li>
   {% endif %}
@@ -351,15 +351,15 @@
     {% endif %}{# has_any_snapshots #}
   </div>
 
-  <!-- TAB 3: Snapshots -->
-  <div class="tab-pane fade {% if active_tab == 'snapshots' %}show active{% endif %}"
-       id="pane-snapshots"
+  <!-- TAB 3: Forecast -->
+  <div class="tab-pane fade {% if active_tab == 'forecast' %}show active{% endif %}"
+       id="pane-forecast"
        role="tabpanel"
-       aria-labelledby="tab-snapshots">
+       aria-labelledby="tab-forecast">
     <div class="card border-0 shadow-sm">
       <div class="card-body text-center py-4 text-muted">
-        <i class="bi bi-clock-history fs-2 d-block mb-2"></i>
-        No snapshots uploaded yet.
+        <i class="bi bi-graph-up-arrow fs-2 d-block mb-2"></i>
+        Forecast view coming soon.
       </div>
     </div>
   </div>

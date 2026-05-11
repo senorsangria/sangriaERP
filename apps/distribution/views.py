@@ -165,7 +165,7 @@ def validate_inventory_import(rows, company, year, month):
 
     Steps:
       1. Resolve each distributor by name (case-insensitive, active only).
-      2. Resolve each item code via ItemMapping (exact match on raw_item_name).
+      2. Resolve each item code via ItemMapping (case-insensitive on raw_item_name).
       3. Check for period conflicts (snapshot already exists for that distributor/period).
 
     Any error in any step aborts the entire upload.
@@ -195,20 +195,13 @@ def validate_inventory_import(rows, company, year, month):
     item_map = {}  # {(csv_dist_name, item_code): Item}
     for dist_name, item_code in sorted(unique_pairs):
         dist = distributor_map[dist_name]
-        try:
-            mapping = ItemMapping.objects.get(
-                company=company,
-                distributor=dist,
-                raw_item_name=item_code,
-            )
-        except ItemMapping.DoesNotExist:
-            errors.append(
-                f"Item code '{item_code}' for distributor '{dist_name}' is not mapped. "
-                f"Add the mapping at /imports/item-mappings/ first."
-            )
-            continue
+        mapping = ItemMapping.objects.filter(
+            company=company,
+            distributor=dist,
+            raw_item_name__iexact=item_code,
+        ).first()
 
-        if mapping.status != ItemMapping.Status.MAPPED or mapping.mapped_item is None:
+        if mapping is None or mapping.status != ItemMapping.Status.MAPPED or mapping.mapped_item is None:
             errors.append(
                 f"Item code '{item_code}' for distributor '{dist_name}' is not mapped. "
                 f"Add the mapping at /imports/item-mappings/ first."
@@ -266,9 +259,9 @@ def distributor_list(request):
         distributors = distributors.filter(name__icontains=search)
 
     active_tab = request.GET.get('tab', 'distributors')
-    if active_tab not in ('distributors', 'inventory', 'snapshots'):
+    if active_tab not in ('distributors', 'inventory', 'forecast'):
         active_tab = 'distributors'
-    if active_tab in ('inventory', 'snapshots') and not can_manage_inventory:
+    if active_tab in ('inventory', 'forecast') and not can_manage_inventory:
         active_tab = 'distributors'
 
     # Inventory tab data

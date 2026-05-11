@@ -423,6 +423,17 @@ class ValidateInventoryImportTest(TestCase):
         self.assertEqual(resolved[0]['item'], self.item)
         self.assertEqual(resolved[0]['quantity'], Decimal('100'))
 
+    def test_validate_item_code_case_insensitive(self):
+        """Mapping stored as 'SPRITZwht' resolves when CSV has 'SPRITZWHT'."""
+        spritz_item = make_item(self.brand, name='Spritz White 750ml', item_code='SPRITZwht')
+        make_item_mapping(self.company, self.distributor, spritz_item, raw_item_name='SPRITZwht')
+        # CSV uses uppercase variant
+        rows = self._make_rows(item_code='SPRITZWHT')
+        resolved, errors = validate_inventory_import(rows, self.company, 2026, 4)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(resolved), 1)
+        self.assertEqual(resolved[0]['item'], spritz_item)
+
 
 # ---------------------------------------------------------------------------
 # 17–20. Upload view tests
