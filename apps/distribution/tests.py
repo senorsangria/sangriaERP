@@ -825,7 +825,7 @@ class DistributorListTabsTest(TestCase):
         resp = self.client.get(self.url + '?tab=forecast')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.context['active_tab'], 'forecast')
-        self.assertContains(resp, 'Forecast view coming soon')
+        self.assertContains(resp, 'pane-forecast')
 
     def test_distributor_list_invalid_tab_falls_back_to_distributors(self):
         resp = self.client.get(self.url + '?tab=garbage')

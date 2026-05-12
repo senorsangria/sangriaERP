@@ -16,6 +16,7 @@ from django.urls import reverse
 
 from apps.catalog.models import Brand as CatalogBrand, Item
 from apps.imports.models import ItemMapping
+from .forecast import compute_distributor_forecast
 from .forms import DistributorForm, InventoryImportUploadForm
 from .models import Distributor, DistributorItemProfile, InventoryImportBatch, InventorySnapshot
 
@@ -275,6 +276,11 @@ def distributor_list(request):
     inventory_sort = 'distributor'
     has_any_snapshots = False
 
+    # Forecast tab data
+    forecast_result = None
+    forecast_distributor = None
+    available_distributors = []
+
     if can_manage_inventory:
         inv_distributor_filter = request.GET.get('inv_distributor', '')
         inv_brand_filter = request.GET.get('inv_brand', '')
@@ -376,6 +382,21 @@ def distributor_list(request):
             for s in snapshots_list
         ]
 
+        # Forecast tab — compute eagerly so Bootstrap tab-switching shows data
+        available_distributors = list(Distributor.objects.filter(company=company).order_by('name'))
+        forecast_dist_pk = request.GET.get('forecast_distributor', '')
+        if forecast_dist_pk:
+            try:
+                forecast_distributor = Distributor.objects.get(
+                    pk=int(forecast_dist_pk), company=company
+                )
+            except (ValueError, Distributor.DoesNotExist):
+                forecast_distributor = None
+        if forecast_distributor is None and available_distributors:
+            forecast_distributor = available_distributors[0]
+        if forecast_distributor:
+            forecast_result = compute_distributor_forecast(forecast_distributor)
+
     return render(request, 'distribution/distributor_list.html', {
         'distributors': distributors,
         'search': search,
@@ -391,6 +412,10 @@ def distributor_list(request):
         'inv_brand_filter': str(inv_brand_filter),
         'inv_period_filter': inv_period_filter,
         'inventory_sort': inventory_sort,
+        # Forecast tab
+        'forecast_result': forecast_result,
+        'forecast_distributor': forecast_distributor,
+        'available_distributors': available_distributors,
     })
 
 

@@ -569,12 +569,78 @@ Permission: `can_manage_distributor_inventory` (supplier_admin only, unchanged).
   deleting snapshots orphans (not deletes) the batch. No inline edit — mistakes are fixed by
   delete + re-upload.
 
+---
+
+### Phase 4-step-1 — Forecast Tab (Complete)
+
+#### Logic module: `apps/distribution/forecast.py`
+
+Public function: `compute_distributor_forecast(distributor, today=None) → dict`
+
+**Horizon:** 12 months starting the month after the distributor's most recent snapshot date
+(across all items). If no snapshots exist for the distributor, returns an empty result with
+an explanatory message.
+
+**Depletion source (per cell):**
+- Month is fully ended `(year, month) < (current_year, current_month)`: actual
+  `SalesRecord` aggregate for that distributor × item × month. If no records exist for
+  that month, depletion = 0 (assume no movement).
+- Current calendar month and all future months: prior-year same-month
+  `SalesRecord` aggregate as projection. If no prior-year record exists, cell is
+  `no_data` (grey, tooltip explains why).
+- Negative depletion (net returns) is floored to 0 in both cases.
+
+**Cell status:**
+- `green` — inventory > 0 AND (above safety stock target OR no target set)
+- `yellow` — inventory > 0 AND below safety stock target
+- `red` — inventory ≤ 0
+- `no_data` — prior-year data missing for projection months, or item has neither snapshot
+  nor any sales history
+
+**Sales data:** One bulk query `SalesRecord.objects.filter(account__distributor=distributor)`
+grouped by `(item_id, sale_date__year, sale_date__month)`. Covers both actual
+(fully-ended) months and prior-year (projection) months. No N+1 queries.
+
+**Items:** Active company items (`Item.is_active=True`) excluding any
+`DistributorItemProfile.is_active=False` entries. Missing profile = implicitly active
+(Phase 2a rule preserved). Ordered by brand name → sort_order → item name.
+Brand name is **not** displayed in the forecast grid (items only).
+
+**Year spans:** Horizon months grouped by year for the two-row table header
+(`year_spans = [{'year': int, 'colspan': int}, ...]`).
+
+**Safety stock:** `DistributorItemProfile.safety_stock_cases`. Null means no target —
+cells are only green/red, never yellow.
+
+#### View integration
+
+Forecast data computed eagerly on every `distributor_list` page load (within
+`if can_manage_inventory:`) so Bootstrap tab-switching shows data without a URL change.
+Selected distributor read from `?forecast_distributor=<pk>`; defaults to the
+first distributor alphabetically when unset. Context keys: `forecast_result`,
+`forecast_distributor`, `available_distributors`.
+
+#### Template: `templates/distribution/distributor_list.html` — Forecast tab pane
+
+- Distributor selector `<select id="forecast-distributor-select">` — changing triggers
+  `window.location.href` navigation to `?tab=forecast&forecast_distributor=<pk>` via JS
+  in `{% block extra_js %}`.
+- Grid table with two header rows (year spans + month abbreviations), one row per item,
+  cells styled via `.forecast-green / .forecast-yellow / .forecast-red / .forecast-no_data`.
+- No-data cells show `—` with a `title` tooltip explaining the reason.
+- CSS in `{% block extra_css %}`.
+
+#### Phase 4-step-2 (Pending)
+
+System-generated projected POs: for each (distributor, item) where the 12-month forecast
+drops to/below safety stock, suggest a PO quantity using `order_quantity_value`,
+`order_quantity_unit`, and `cases_per_pallet`. Display alongside the forecast grid.
+
 #### Future Phases
 
 - **Phase 3:** PO entry — manual entry of purchase order lines (distributor, item, year,
   month, cases_ordered).
-- **Phase 4:** Forecast tool — projection and order-generation algorithm using safety stock
-  targets, historical sales velocity, cases_per_pallet, and order_quantity settings.
+- **Phase 4-step-2:** Projected POs — see above.
 
 ---
 

@@ -2,6 +2,19 @@
 
 {% block title %}Distributors{% endblock %}
 
+{% block extra_css %}
+{% if can_manage_inventory %}
+<style>
+.forecast-green  { background-color: #d4edda; }
+.forecast-yellow { background-color: #fff3cd; }
+.forecast-red    { background-color: #f8d7da; }
+.forecast-no_data { background-color: #f5f5f5; color: #aaa; }
+.forecast-table th, .forecast-table td { padding: 0.2rem 0.4rem; }
+.forecast-cell { white-space: nowrap; min-width: 42px; }
+</style>
+{% endif %}
+{% endblock %}
+
 {% block content %}
 
 <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
@@ -389,12 +402,88 @@
        id="pane-forecast"
        role="tabpanel"
        aria-labelledby="tab-forecast">
+
+    {% if not available_distributors %}
     <div class="card border-0 shadow-sm">
-      <div class="card-body text-center py-4 text-muted">
-        <i class="bi bi-graph-up-arrow fs-2 d-block mb-2"></i>
-        Forecast view coming soon.
+      <div class="card-body text-center py-5 text-muted">
+        <i class="bi bi-truck fs-1 d-block mb-3"></i>
+        <p>No distributors found. <a href="{% url 'distributor_create' %}">Add a distributor</a> to get started.</p>
       </div>
     </div>
+
+    {% else %}
+    <!-- Distributor selector header -->
+    <div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
+      <h4 class="mb-0 fw-semibold">Forecast for</h4>
+      <select id="forecast-distributor-select" class="form-select form-select-sm" style="max-width:260px;">
+        {% for dist in available_distributors %}
+        <option value="{{ dist.pk }}"
+          {% if forecast_distributor and dist.pk == forecast_distributor.pk %}selected{% endif %}>
+          {{ dist.name }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    {% if forecast_result %}
+      {% if forecast_result.message %}
+      <!-- No snapshots for selected distributor -->
+      <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-5 text-muted">
+          <i class="bi bi-inbox fs-1 d-block mb-3"></i>
+          <p>{{ forecast_result.message }}</p>
+          <a href="{% url 'inventory_upload' %}" class="btn btn-primary">
+            <i class="bi bi-cloud-upload me-1"></i>Upload Inventory
+          </a>
+        </div>
+      </div>
+
+      {% elif not forecast_result.rows %}
+      <!-- Snapshots exist but no active items -->
+      <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4 text-muted">
+          No active items configured for this distributor.
+        </div>
+      </div>
+
+      {% else %}
+      <!-- Forecast grid -->
+      <div class="card border-0 shadow-sm">
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered forecast-table mb-0">
+            <thead class="table-light">
+              <tr>
+                <th rowspan="2" class="align-middle small fw-semibold" style="min-width:130px;">Item</th>
+                {% for span in forecast_result.year_spans %}
+                <th colspan="{{ span.colspan }}" class="text-center small fw-semibold border-start">{{ span.year }}</th>
+                {% endfor %}
+              </tr>
+              <tr>
+                {% for h in forecast_result.horizon %}
+                <th class="text-center small border-start forecast-cell">{{ h.month_short }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in forecast_result.rows %}
+              <tr>
+                <td class="small fw-medium">{{ row.item.name }}</td>
+                {% for cell in row.monthly_data %}
+                <td class="text-center small forecast-cell forecast-{{ cell.status }}"
+                    {% if cell.reason %}title="{{ cell.reason }}"{% endif %}>
+                  {% if cell.status == 'no_data' %}—{% else %}{{ cell.inventory_display }}{% endif %}
+                </td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+    {% endif %}
+    {% endif %}
+
   </div>
 
   {% endif %}{# can_manage_inventory #}
@@ -458,6 +547,18 @@
       if (deleteForm) deleteForm.submit();
     });
   }
+})();
+
+// Forecast distributor selector
+(function () {
+  var sel = document.getElementById('forecast-distributor-select');
+  if (!sel) return;
+  sel.addEventListener('change', function () {
+    var url = new URL(window.location.href);
+    url.searchParams.set('tab', 'forecast');
+    url.searchParams.set('forecast_distributor', sel.value);
+    window.location.href = url.toString();
+  });
 })();
 </script>
 {% endif %}
