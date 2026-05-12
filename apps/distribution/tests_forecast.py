@@ -106,64 +106,70 @@ class ForecastComputeTest(TestCase):
         self.assertIn('No inventory snapshots', result['message'])
 
     # -----------------------------------------------------------------------
-    # 2. Horizon starts the month after the most recent snapshot
+    # 2. horizon[0] IS the snapshot month; horizon[1] is first projection
     # -----------------------------------------------------------------------
     def test_forecast_horizon_starts_after_most_recent_snapshot(self):
         self._snap(2026, 3)
         result = compute_distributor_forecast(self.distributor, today=date(2026, 5, 1))
+        # horizon[0] = snapshot anchor (Mar 2026)
         self.assertEqual(result['horizon'][0]['year'], 2026)
-        self.assertEqual(result['horizon'][0]['month'], 4)
+        self.assertEqual(result['horizon'][0]['month'], 3)
+        self.assertTrue(result['horizon'][0]['is_snapshot'])
+        # horizon[1] = first projection month (Apr 2026)
+        self.assertEqual(result['horizon'][1]['year'], 2026)
+        self.assertEqual(result['horizon'][1]['month'], 4)
+        self.assertFalse(result['horizon'][1]['is_snapshot'])
 
     # -----------------------------------------------------------------------
-    # 3. Horizon is exactly 12 months
+    # 3. Horizon is 13 months (1 snapshot + 12 projection)
     # -----------------------------------------------------------------------
     def test_forecast_horizon_is_12_months(self):
         self._snap(2026, 1)
         result = compute_distributor_forecast(self.distributor, today=date(2026, 5, 1))
-        self.assertEqual(len(result['horizon']), 12)
+        self.assertEqual(len(result['horizon']), 13)
         for row in result['rows']:
-            self.assertEqual(len(row['monthly_data']), 12)
+            self.assertEqual(len(row['monthly_data']), 13)
 
     # -----------------------------------------------------------------------
     # 4. Year spans correct when crossing year boundary
+    #    Snapshot Jun 2026 → anchor=Jun + projection Jul 2026..Jun 2027
+    #    2026: Jun(1) + Jul-Dec(6) = 7; 2027: Jan-Jun = 6
     # -----------------------------------------------------------------------
     def test_forecast_year_spans_correct_when_crossing_year_boundary(self):
-        # Snapshot Jun 2026 → horizon Jul 2026 … Jun 2027
         self._snap(2026, 6)
         result = compute_distributor_forecast(self.distributor, today=date(2026, 1, 1))
         spans = result['year_spans']
         self.assertEqual(len(spans), 2)
         self.assertEqual(spans[0]['year'], 2026)
-        self.assertEqual(spans[0]['colspan'], 6)   # Jul–Dec
+        self.assertEqual(spans[0]['colspan'], 7)   # Jun(anchor) + Jul–Dec
         self.assertEqual(spans[1]['year'], 2027)
         self.assertEqual(spans[1]['colspan'], 6)   # Jan–Jun
 
     # -----------------------------------------------------------------------
-    # 5. Simple depletion: 100 starting, 10/month → 50 after 5 months
+    # 5. Simple depletion: 100 starting, 10/month → 50 after 5 projection months
+    #    monthly_data[0] = snapshot (100), [1..5] = projections, [5] = 50
     # -----------------------------------------------------------------------
     def test_forecast_simple_depletion(self):
-        # Snapshot Jan 2026 = 100; prior-year data for every horizon month
         self._snap(2026, 1, qty=100)
-        # today = Jan 2026 → all horizon months (Feb 2026 on) use prior-year
-        for m in range(2, 14):  # Feb–Jan covers the full 12-month horizon
+        for m in range(2, 14):
             y = 2025 if m <= 12 else 2026
             mo = m if m <= 12 else m - 12
             self._sale(y, mo, 10)
         today = date(2026, 1, 20)
         result = compute_distributor_forecast(self.distributor, today=today)
         row = result['rows'][0]
-        # After 5 months of depletion (10 each), inventory = 50
-        self.assertEqual(row['monthly_data'][4]['inventory'], 50.0)
+        # After 5 projection months of depletion (10 each), inventory = 50
+        self.assertEqual(row['monthly_data'][5]['inventory'], 50.0)
 
     # -----------------------------------------------------------------------
-    # 6. Negative inventory shows red
+    # 6. Negative inventory shows red (projection month)
     # -----------------------------------------------------------------------
     def test_forecast_negative_inventory_shows_red(self):
         self._snap(2026, 1, qty=5)
-        # Prior-year depletion = 10, starting = 5 → ends at -5 after month 1
         self._sale(2025, 2, 10)
         result = compute_distributor_forecast(self.distributor, today=date(2026, 1, 20))
-        cell = result['rows'][0]['monthly_data'][0]
+        # [0] = snapshot, [1] = Feb 2026 projection (5 - 10 = -5)
+        cell = result['rows'][0]['monthly_data'][1]
         self.assertEqual(cell['status'], 'red')
         self.assertEqual(cell['inventory'], -5.0)
 
@@ -175,10 +181,9 @@ class ForecastComputeTest(TestCase):
         DistributorItemProfile.objects.create(
             distributor=self.distributor, item=self.item, safety_stock_cases=80
         )
-        # Deplete to 70 — below safety stock 80
         self._sale(2025, 2, 30)
         result = compute_distributor_forecast(self.distributor, today=date(2026, 1, 20))
-        cell = result['rows'][0]['monthly_data'][0]
+        cell = result['rows'][0]['monthly_data'][1]  # [0]=snapshot, [1]=Feb 2026
         self.assertEqual(cell['status'], 'yellow')
         self.assertEqual(cell['inventory'], 70.0)
 
@@ -190,9 +195,9 @@ class ForecastComputeTest(TestCase):
         DistributorItemProfile.objects.create(
             distributor=self.distributor, item=self.item, safety_stock_cases=50
         )
-        self._sale(2025, 2, 10)  # inventory → 90, above safety stock 50
+        self._sale(2025, 2, 10)
         result = compute_distributor_forecast(self.distributor, today=date(2026, 1, 20))
-        cell = result['rows'][0]['monthly_data'][0]
+        cell = result['rows'][0]['monthly_data'][1]  # [0]=snapshot, [1]=Feb 2026
         self.assertEqual(cell['status'], 'green')
 
     # -----------------------------------------------------------------------
@@ -200,26 +205,21 @@ class ForecastComputeTest(TestCase):
     # -----------------------------------------------------------------------
     def test_forecast_no_safety_stock_set_shows_green_only_above_zero(self):
         self._snap(2026, 1, qty=5)
-        self._sale(2025, 2, 3)   # inventory 2 → green
-        self._sale(2025, 3, 10)  # inventory → -8 → red
+        self._sale(2025, 2, 3)   # → inv 2, green
+        self._sale(2025, 3, 10)  # → inv -8, red
         result = compute_distributor_forecast(self.distributor, today=date(2026, 1, 20))
         row = result['rows'][0]
-        self.assertEqual(row['monthly_data'][0]['status'], 'green')
-        self.assertEqual(row['monthly_data'][1]['status'], 'red')
+        self.assertEqual(row['monthly_data'][1]['status'], 'green')   # Feb 2026
+        self.assertEqual(row['monthly_data'][2]['status'], 'red')     # Mar 2026
 
     # -----------------------------------------------------------------------
     # 10. Fully-ended months use actual sales; projection months use prior-year
     # -----------------------------------------------------------------------
     def test_forecast_uses_actual_sales_for_fully_ended_months(self):
-        # Snapshot Jan 2026 = 100; today = 2026-05-15
-        # Horizon: Feb–Jan 2027; past = Feb/Mar/Apr 2026, current = May
         self._snap(2026, 1, qty=100)
-        # Actual sales for past horizon months
-        self._sale(2026, 2, 10)   # Feb actual → 90
-        self._sale(2026, 3, 20)   # Mar actual → 70
-        # No actual for Apr 2026 → 0 depletion → 70
-        # Prior-year for May 2025 (projection)
-        self._sale(2025, 5, 5)    # May prior → 65
+        self._sale(2026, 2, 10)
+        self._sale(2026, 3, 20)
+        self._sale(2025, 5, 5)
 
         today = date(2026, 5, 15)
         result = compute_distributor_forecast(self.distributor, today=today)
@@ -236,18 +236,14 @@ class ForecastComputeTest(TestCase):
     # -----------------------------------------------------------------------
     def test_forecast_current_month_uses_prior_year_even_if_sales_exist(self):
         self._snap(2026, 1, qty=100)
-        # Actual May 2026 sales (should be IGNORED — current month)
-        self._sale(2026, 5, 50)
-        # Prior-year May 2025 sales (should be USED)
-        self._sale(2025, 5, 10)
-        # No past actual sales for Feb/Mar/Apr → 0 depletion each
+        self._sale(2026, 5, 50)   # actual — should be ignored (current month)
+        self._sale(2025, 5, 10)   # prior-year — should be used
 
         today = date(2026, 5, 15)
         result = compute_distributor_forecast(self.distributor, today=today)
         row = result['rows'][0]
         monthly = {(c['year'], c['month']): c for c in row['monthly_data']}
-        # If prior-year used: 100 - 0 - 0 - 0 - 10 = 90
-        # If actual used:     100 - 0 - 0 - 0 - 50 = 50
+        # prior-year path: 100 - 0(Feb) - 0(Mar) - 0(Apr) - 10(May) = 90
         self.assertEqual(monthly[(2026, 5)]['inventory'], 90.0)
 
     # -----------------------------------------------------------------------
@@ -255,73 +251,72 @@ class ForecastComputeTest(TestCase):
     # -----------------------------------------------------------------------
     def test_forecast_negative_actual_sales_floored_at_zero(self):
         self._snap(2026, 1, qty=50)
-        # Actual Feb 2026 = -5 (net return) → depletion = 0, inventory stays 50
         self._sale(2026, 2, -5)
 
         today = date(2026, 5, 1)
         result = compute_distributor_forecast(self.distributor, today=today)
         row = result['rows'][0]
         monthly = {(c['year'], c['month']): c for c in row['monthly_data']}
-        self.assertEqual(monthly[(2026, 2)]['inventory'], 50.0)  # no depletion
+        self.assertEqual(monthly[(2026, 2)]['inventory'], 50.0)
 
     # -----------------------------------------------------------------------
     # 13. Negative prior-year sales floored at 0 depletion
     # -----------------------------------------------------------------------
     def test_forecast_negative_prior_year_sales_floored_at_zero(self):
         self._snap(2026, 1, qty=50)
-        # Prior-year Feb 2025 = -5 → depletion = 0, inventory stays 50
         self._sale(2025, 2, -5)
 
         today = date(2026, 1, 20)
         result = compute_distributor_forecast(self.distributor, today=today)
         row = result['rows'][0]
-        self.assertEqual(row['monthly_data'][0]['inventory'], 50.0)
+        # [0]=snapshot(50), [1]=Feb 2026 projection (prior-year=-5 → depletion=0 → inv=50)
+        self.assertEqual(row['monthly_data'][1]['inventory'], 50.0)
 
     # -----------------------------------------------------------------------
     # 14. Missing prior-year shows no_data for projection months
     # -----------------------------------------------------------------------
     def test_forecast_missing_prior_year_shows_no_data_for_projection(self):
         self._snap(2026, 1, qty=100)
-        # No prior-year sales for Feb 2025 → Feb 2026 cell is no_data
         today = date(2026, 1, 20)
         result = compute_distributor_forecast(self.distributor, today=today)
         row = result['rows'][0]
-        cell = row['monthly_data'][0]
+        # [0]=snapshot, [1]=Feb 2026 projection (no prior-year Feb 2025 → no_data)
+        cell = row['monthly_data'][1]
         self.assertEqual(cell['status'], 'no_data')
         self.assertIn('No prior year data', cell['reason'])
 
     # -----------------------------------------------------------------------
-    # 15. Missing snapshot but has prior-year → starts at 0
+    # 15. Missing snapshot but has prior-year → starts at 0, projects normally
     # -----------------------------------------------------------------------
     def test_forecast_missing_snapshot_but_has_prior_year_starts_at_zero(self):
-        # No snapshot for this item; prior-year depletion = 10
-        # Also need SOME snapshot so the distributor has a horizon
         item2 = _make_item(self.brand, name='Item B', item_code='ITMB', sort_order=2)
         _make_snapshot(self.distributor, item2, 2026, 1, quantity=50)
-        self._sale(2025, 2, 10)  # prior-year for self.item, not item2
+        self._sale(2025, 2, 10)  # prior-year for self.item
 
         today = date(2026, 1, 20)
         result = compute_distributor_forecast(self.distributor, today=today)
         rows_by_item = {r['item'].pk: r for r in result['rows']}
         row = rows_by_item[self.item.pk]
-        # Starting at 0, prior-year depletion 10 → inventory -10 after month 1
-        self.assertEqual(row['monthly_data'][0]['inventory'], -10.0)
-        self.assertEqual(row['monthly_data'][0]['status'], 'red')
+        # [0]=anchor (no snapshot → no_data), [1]=Feb 2026 (0 - 10 = -10, red)
+        self.assertEqual(row['monthly_data'][0]['status'], 'no_data')
+        self.assertEqual(row['monthly_data'][1]['inventory'], -10.0)
+        self.assertEqual(row['monthly_data'][1]['status'], 'red')
 
     # -----------------------------------------------------------------------
-    # 16. Missing snapshot AND no prior-year → all cells no_data
+    # 16. Missing snapshot AND no prior-year → anchor=no_data, projections=no_data
     # -----------------------------------------------------------------------
     def test_forecast_missing_snapshot_and_no_prior_year_shows_no_data(self):
-        # Need another item's snapshot to give the distributor a horizon
         item2 = _make_item(self.brand, name='Item B', item_code='ITMB', sort_order=2)
         _make_snapshot(self.distributor, item2, 2026, 1, quantity=50)
-        # self.item has no snapshot and no sales
 
         today = date(2026, 1, 20)
         result = compute_distributor_forecast(self.distributor, today=today)
         rows_by_item = {r['item'].pk: r for r in result['rows']}
         row = rows_by_item[self.item.pk]
-        for cell in row['monthly_data']:
+        # Anchor cell: no snapshot for this item
+        self.assertEqual(row['monthly_data'][0]['status'], 'no_data')
+        # All 12 projection cells: no data (no starting inventory, no prior-year sales)
+        for cell in row['monthly_data'][1:]:
             self.assertEqual(cell['status'], 'no_data')
             self.assertIn('No starting inventory and no prior year data', cell['reason'])
 
@@ -358,12 +353,89 @@ class ForecastComputeTest(TestCase):
         item_b2 = _make_item(brand_b, name='A Item', item_code='AB2', sort_order=2)
         _make_snapshot(self.distributor, item_b1, 2026, 1, quantity=10)
         _make_snapshot(self.distributor, item_b2, 2026, 1, quantity=10)
-        # self.brand = 'Test Brand', brand_b = 'B Brand' → B Brand sorts first alphabetically
         result = compute_distributor_forecast(self.distributor, today=date(2026, 5, 1))
         item_names = [r['item'].name for r in result['rows']]
         self.assertEqual(item_names[0], 'Z Item')   # B Brand, sort_order=1
         self.assertEqual(item_names[1], 'A Item')   # B Brand, sort_order=2
         self.assertEqual(item_names[2], 'Item A')   # Test Brand
+
+    # -----------------------------------------------------------------------
+    # 20. Snapshot column: horizon has 13 entries; first is the snapshot month
+    # -----------------------------------------------------------------------
+    def test_forecast_includes_snapshot_month_as_first_column(self):
+        self._snap(2026, 4, qty=100)
+        result = compute_distributor_forecast(self.distributor, today=date(2026, 5, 1))
+        self.assertEqual(len(result['horizon']), 13)
+        self.assertEqual(result['horizon'][0]['year'], 2026)
+        self.assertEqual(result['horizon'][0]['month'], 4)
+        self.assertTrue(result['horizon'][0]['is_snapshot'])
+        # All subsequent entries are projection months
+        for h in result['horizon'][1:]:
+            self.assertFalse(h['is_snapshot'])
+
+    # -----------------------------------------------------------------------
+    # 21. Snapshot cell has the actual snapshot quantity
+    # -----------------------------------------------------------------------
+    def test_forecast_snapshot_cell_has_actual_value(self):
+        self._snap(2026, 4, qty=248)
+        result = compute_distributor_forecast(self.distributor, today=date(2026, 5, 1))
+        anchor = result['rows'][0]['monthly_data'][0]
+        self.assertEqual(anchor['inventory'], 248.0)
+        self.assertEqual(anchor['inventory_display'], '248')
+
+    # -----------------------------------------------------------------------
+    # 22. Snapshot cell has status='snapshot'
+    # -----------------------------------------------------------------------
+    def test_forecast_snapshot_cell_has_snapshot_status(self):
+        self._snap(2026, 4, qty=100)
+        result = compute_distributor_forecast(self.distributor, today=date(2026, 5, 1))
+        anchor = result['rows'][0]['monthly_data'][0]
+        self.assertEqual(anchor['status'], 'snapshot')
+        self.assertTrue(anchor['is_snapshot'])
+
+    # -----------------------------------------------------------------------
+    # 23. Projection months unaffected by snapshot column (regression)
+    # -----------------------------------------------------------------------
+    def test_forecast_subsequent_months_unaffected(self):
+        self._snap(2026, 1, qty=100)
+        self._sale(2025, 2, 20)  # prior-year → Feb 2026 depletion 20
+
+        today = date(2026, 1, 20)
+        result = compute_distributor_forecast(self.distributor, today=today)
+        row = result['rows'][0]
+        # [0]=snapshot(100), [1]=Feb 2026 (100-20=80)
+        self.assertEqual(row['monthly_data'][0]['status'], 'snapshot')
+        self.assertEqual(row['monthly_data'][0]['inventory'], 100.0)
+        self.assertEqual(row['monthly_data'][1]['inventory'], 80.0)
+        self.assertEqual(row['monthly_data'][1]['status'], 'green')
+
+    # -----------------------------------------------------------------------
+    # 24. Year spans include snapshot month in its year
+    # -----------------------------------------------------------------------
+    def test_forecast_year_spans_include_snapshot_month(self):
+        # Snapshot Apr 2026 → anchor=Apr, projection May 2026..Apr 2027
+        # 2026: Apr(1)+May-Dec(8) = 9; 2027: Jan-Apr = 4
+        self._snap(2026, 4)
+        result = compute_distributor_forecast(self.distributor, today=date(2026, 1, 1))
+        spans = result['year_spans']
+        self.assertEqual(len(spans), 2)
+        self.assertEqual(spans[0]['year'], 2026)
+        self.assertEqual(spans[0]['colspan'], 9)   # Apr(anchor)+May–Dec
+        self.assertEqual(spans[1]['year'], 2027)
+        self.assertEqual(spans[1]['colspan'], 4)   # Jan–Apr
+
+    # -----------------------------------------------------------------------
+    # 25. Regression: negative inventory cell correctly has status='red'
+    # -----------------------------------------------------------------------
+    def test_forecast_negative_inventory_cell_status_red(self):
+        self._snap(2026, 1, qty=10)
+        self._sale(2025, 2, 50)  # prior-year depletion > starting → negative
+
+        result = compute_distributor_forecast(self.distributor, today=date(2026, 1, 20))
+        row = result['rows'][0]
+        proj_cell = row['monthly_data'][1]  # Feb 2026 projection
+        self.assertEqual(proj_cell['status'], 'red')
+        self.assertLess(proj_cell['inventory'], 0)
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +455,7 @@ class ForecastViewTest(TestCase):
         self.url = reverse('distributor_list')
 
     # -----------------------------------------------------------------------
-    # 20. Forecast distributor dropdown renders with all distributors
+    # 26. Forecast distributor dropdown renders with all distributors
     # -----------------------------------------------------------------------
     def test_forecast_distributor_dropdown_renders(self):
         _make_snapshot(self.distributor, self.item, 2026, 1)
@@ -395,7 +467,7 @@ class ForecastViewTest(TestCase):
         self.assertContains(resp, dist2.name)
 
     # -----------------------------------------------------------------------
-    # 21. Forecast distributor selection via GET param
+    # 27. Forecast distributor selection via GET param
     # -----------------------------------------------------------------------
     def test_forecast_distributor_selection_via_get_param(self):
         dist2 = _make_distributor(self.company, name='Second Dist')
@@ -407,18 +479,17 @@ class ForecastViewTest(TestCase):
         self.assertEqual(resp.context['forecast_distributor'].pk, dist2.pk)
 
     # -----------------------------------------------------------------------
-    # 22. Forecast data loads eagerly even when active_tab != forecast
+    # 28. Forecast data loads eagerly even when active_tab != forecast
     # -----------------------------------------------------------------------
     def test_forecast_tab_data_loads_eagerly_with_permission(self):
         _make_snapshot(self.distributor, self.item, 2026, 1)
-        # Request with tab=distributors (not forecast)
         resp = self.client.get(self.url + '?tab=distributors')
         self.assertEqual(resp.status_code, 200)
         self.assertIsNotNone(resp.context['forecast_result'])
         self.assertIsNotNone(resp.context['forecast_distributor'])
 
     # -----------------------------------------------------------------------
-    # 23. Forecast tab hidden without can_manage_distributor_inventory
+    # 29. Forecast tab hidden without can_manage_distributor_inventory
     # -----------------------------------------------------------------------
     def test_forecast_tab_hidden_without_permission(self):
         role, _ = Role.objects.get_or_create(

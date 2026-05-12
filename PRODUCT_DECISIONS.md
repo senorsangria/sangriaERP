@@ -577,25 +577,36 @@ Permission: `can_manage_distributor_inventory` (supplier_admin only, unchanged).
 
 Public function: `compute_distributor_forecast(distributor, today=None) → dict`
 
-**Horizon:** 12 months starting the month after the distributor's most recent snapshot date
-(across all items). If no snapshots exist for the distributor, returns an empty result with
-an explanatory message.
+**Horizon:** 13 columns — snapshot anchor month (column 1, actual on-hand) + 12 projection
+months. The anchor is the distributor's most recent snapshot date across all items.
+If no snapshots exist, returns an empty result with an explanatory message.
 
-**Depletion source (per cell):**
-- Month is fully ended `(year, month) < (current_year, current_month)`: actual
+**Snapshot column (column 1):** Shows the item's actual recorded quantity from its most
+recent snapshot. Status is `'snapshot'` (light blue background). Header marked with `*`
+and a tooltip "Inventory snapshot — actual on-hand count". Not colored by safety stock.
+
+**Depletion source (projection columns 2–13):**
+- Fully-ended months `(year, month) < (current_year, current_month)`: actual
   `SalesRecord` aggregate for that distributor × item × month. If no records exist for
   that month, depletion = 0 (assume no movement).
 - Current calendar month and all future months: prior-year same-month
   `SalesRecord` aggregate as projection. If no prior-year record exists, cell is
   `no_data` (grey, tooltip explains why).
 - Negative depletion (net returns) is floored to 0 in both cases.
+- The 12th projection month (one year after the snapshot) is `no_data` when
+  the snapshot month has no prior-year sales data — this is expected since the snapshot
+  period itself is typically not a sales data period.
 
 **Cell status:**
+- `snapshot` — column 1 only; actual recorded on-hand inventory
 - `green` — inventory > 0 AND (above safety stock target OR no target set)
 - `yellow` — inventory > 0 AND below safety stock target
-- `red` — inventory ≤ 0
+- `red` — inventory ≤ 0; negative values displayed in bold
 - `no_data` — prior-year data missing for projection months, or item has neither snapshot
   nor any sales history
+
+**CSS specificity:** Status background colors use `.forecast-table tbody td.forecast-*`
+selectors with `!important` to override Bootstrap's table background variable.
 
 **Sales data:** One bulk query `SalesRecord.objects.filter(account__distributor=distributor)`
 grouped by `(item_id, sale_date__year, sale_date__month)`. Covers both actual

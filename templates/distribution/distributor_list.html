@@ -5,10 +5,12 @@
 {% block extra_css %}
 {% if can_manage_inventory %}
 <style>
-.forecast-green  { background-color: #d4edda; }
-.forecast-yellow { background-color: #fff3cd; }
-.forecast-red    { background-color: #f8d7da; }
-.forecast-no_data { background-color: #f5f5f5; color: #aaa; }
+/* Use high-specificity selectors + !important to override Bootstrap table styles */
+.forecast-table tbody td.forecast-green    { background-color: #d4edda !important; }
+.forecast-table tbody td.forecast-yellow   { background-color: #fff3cd !important; }
+.forecast-table tbody td.forecast-red      { background-color: #f8d7da !important; color: #842029; }
+.forecast-table tbody td.forecast-no_data  { background-color: #f5f5f5 !important; color: #aaa; }
+.forecast-table tbody td.forecast-snapshot { background-color: #cfe2ff !important; }
 .forecast-table th, .forecast-table td { padding: 0.2rem 0.4rem; }
 .forecast-cell { white-space: nowrap; min-width: 42px; }
 </style>
@@ -460,7 +462,10 @@
               </tr>
               <tr>
                 {% for h in forecast_result.horizon %}
-                <th class="text-center small border-start forecast-cell">{{ h.month_short }}</th>
+                <th class="text-center small border-start forecast-cell"
+                    {% if h.is_snapshot %}title="Inventory snapshot — actual on-hand count"{% endif %}>
+                  {{ h.month_short }}{% if h.is_snapshot %} *{% endif %}
+                </th>
                 {% endfor %}
               </tr>
             </thead>
@@ -471,7 +476,13 @@
                 {% for cell in row.monthly_data %}
                 <td class="text-center small forecast-cell forecast-{{ cell.status }}"
                     {% if cell.reason %}title="{{ cell.reason }}"{% endif %}>
-                  {% if cell.status == 'no_data' %}—{% else %}{{ cell.inventory_display }}{% endif %}
+                  {% if cell.status == 'no_data' %}
+                    —
+                  {% elif cell.inventory < 0 %}
+                    <strong>{{ cell.inventory_display }}</strong>
+                  {% else %}
+                    {{ cell.inventory_display }}
+                  {% endif %}
                 </td>
                 {% endfor %}
               </tr>

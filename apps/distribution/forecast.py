@@ -38,42 +38,43 @@ def _inv_status(inv, safety_stock):
 
 def compute_distributor_forecast(distributor, today=None):
     """
-    Compute a 12-month ending-inventory projection for one distributor.
+    Compute a 13-month ending-inventory forecast for one distributor.
 
-    Horizon starts the month after the distributor's most recent snapshot date.
-    Depletion source:
+    First column is the snapshot anchor month (actual on-hand, status='snapshot').
+    Columns 2-13 are 12 months of forward projection.
+
+    Depletion source for projection months:
       - Fully-ended months (year,month < current calendar year,month):
         actual SalesRecord aggregation; 0 if no records exist that month.
       - Current month and future months: prior-year same-month sales as
         projection; cell is 'no_data' when no prior-year record exists.
-      - Negative depletion (net returns) is floored to 0.
       - Negative depletion (net returns) is floored to 0 in both cases.
 
     Returns a dict:
     {
         'distributor': distributor,
-        'message': str,         # non-empty when rows is empty / unusable
-        'horizon': [            # 12-element list of month descriptors
-            {'year': int, 'month': int, 'month_short': str},
+        'message': str,
+        'horizon': [            # 13-element list (anchor + 12 projection months)
+            {'year': int, 'month': int, 'month_short': str, 'is_snapshot': bool},
             ...
         ],
-        'year_spans': [         # for the two-row table header
+        'year_spans': [
             {'year': int, 'colspan': int},
             ...
         ],
-        'rows': [               # one entry per active item
+        'rows': [
             {
                 'item': Item,
                 'monthly_data': [
                     {
-                        'year': int,
-                        'month': int,
+                        'year': int, 'month': int,
                         'inventory': float | None,
                         'inventory_display': str,
-                        'status': 'green' | 'yellow' | 'red' | 'no_data',
-                        'reason': str,   # '' unless no_data
+                        'status': 'snapshot'|'green'|'yellow'|'red'|'no_data',
+                        'reason': str,
+                        'is_snapshot': bool,
                     },
-                    ...  # 12 entries
+                    ...  # 13 entries
                 ],
             },
             ...
@@ -105,14 +106,26 @@ def compute_distributor_forecast(distributor, today=None):
         _empty['message'] = 'No inventory snapshots uploaded yet for this distributor.'
         return _empty
 
-    # Step 2 — 12-month horizon starting the month after max_snap
-    start_year, start_month = _month_add(max_snap.year, max_snap.month, 1)
-    horizon = []
+    # Step 2 — horizon: anchor (snapshot month) + 12 projection months = 13 total
+    anchor_year, anchor_month = max_snap.year, max_snap.month
+    horizon = [
+        {
+            'year': anchor_year,
+            'month': anchor_month,
+            'month_short': MONTH_SHORT[anchor_month - 1],
+            'is_snapshot': True,
+        }
+    ]
+    start_year, start_month = _month_add(anchor_year, anchor_month, 1)
     for i in range(12):
         y, m = _month_add(start_year, start_month, i)
-        horizon.append({'year': y, 'month': m, 'month_short': MONTH_SHORT[m - 1]})
+        horizon.append({
+            'year': y, 'month': m,
+            'month_short': MONTH_SHORT[m - 1],
+            'is_snapshot': False,
+        })
 
-    # Step 3 — year spans for two-row table header
+    # Step 3 — year spans for two-row table header (covers all 13 columns)
     year_spans = []
     for h in horizon:
         if not year_spans or year_spans[-1]['year'] != h['year']:
@@ -167,22 +180,33 @@ def compute_distributor_forecast(distributor, today=None):
         running = float(snap.quantity_cases) if snap else 0.0
         safety_stock = safety_stock_map.get(item_id)
 
-        # No snapshot AND no sales data at all → every cell is no_data
+        # Anchor cell — actual snapshot quantity (or no_data if item has no snapshot)
+        anchor_cell = {
+            'year': anchor_year, 'month': anchor_month,
+            'inventory': float(snap.quantity_cases) if snap else None,
+            'inventory_display': _fmt_inv(float(snap.quantity_cases)) if snap else '',
+            'status': 'snapshot' if snap else 'no_data',
+            'reason': '' if snap else 'No inventory snapshot for this item',
+            'is_snapshot': True,
+        }
+
+        # No snapshot AND no sales data at all → every projection cell is no_data
         if not has_snapshot and item_id not in items_with_any_sales:
-            monthly_data = [
+            monthly_data = [anchor_cell] + [
                 {
                     'year': h['year'], 'month': h['month'],
                     'inventory': None, 'inventory_display': '',
                     'status': 'no_data',
                     'reason': 'No starting inventory and no prior year data',
+                    'is_snapshot': False,
                 }
-                for h in horizon
+                for h in horizon[1:]
             ]
             rows.append({'item': item, 'monthly_data': monthly_data})
             continue
 
-        monthly_data = []
-        for h in horizon:
+        monthly_data = [anchor_cell]
+        for h in horizon[1:]:  # skip anchor month; projection months only
             year, month = h['year'], h['month']
             is_past = (year, month) < (current_year, current_month)
 
@@ -196,6 +220,7 @@ def compute_distributor_forecast(distributor, today=None):
                     'year': year, 'month': month,
                     'inventory': inv, 'inventory_display': _fmt_inv(inv),
                     'status': _inv_status(inv, safety_stock), 'reason': '',
+                    'is_snapshot': False,
                 })
             else:
                 # Prior-year projection
@@ -207,6 +232,7 @@ def compute_distributor_forecast(distributor, today=None):
                         'inventory': None, 'inventory_display': '',
                         'status': 'no_data',
                         'reason': 'No prior year data to project depletion',
+                        'is_snapshot': False,
                     })
                 else:
                     depletion = max(0, prior_qty)
@@ -216,6 +242,7 @@ def compute_distributor_forecast(distributor, today=None):
                         'year': year, 'month': month,
                         'inventory': inv, 'inventory_display': _fmt_inv(inv),
                         'status': _inv_status(inv, safety_stock), 'reason': '',
+                        'is_snapshot': False,
                     })
 
         rows.append({'item': item, 'monthly_data': monthly_data})
