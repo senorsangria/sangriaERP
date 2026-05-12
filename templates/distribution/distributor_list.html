@@ -13,6 +13,8 @@
 .forecast-table tbody td.forecast-snapshot { background-color: #cfe2ff !important; }
 .forecast-table th, .forecast-table td { padding: 0.2rem 0.4rem; }
 .forecast-cell { white-space: nowrap; min-width: 42px; }
+/* Orders row */
+.forecast-orders-row td { background-color: #e8f4f8 !important; border-top: 2px solid #b8d4e0 !important; border-bottom: 2px solid #b8d4e0 !important; }
 </style>
 {% endif %}
 {% endblock %}
@@ -450,6 +452,26 @@
 
       {% else %}
       <!-- Forecast grid -->
+
+      {% if orders_result and orders_result.skipped_items %}
+      <div class="alert alert-warning small mb-3" id="forecast-skipped-banner">
+        <strong>⚠ Some items were excluded from order projections:</strong>
+        <ul class="mb-0 mt-1">
+          {% for skipped in orders_result.skipped_items %}
+          <li>
+            <strong>{{ skipped.item.name }}</strong> ({{ skipped.item.item_code }}):
+            {% if skipped.reason == 'no_cases_per_pallet' %}
+              Missing "cases per pallet" — set this on the
+              <a href="{% url 'item_edit' skipped.item.brand.pk skipped.item.pk %}">item edit page</a>.
+            {% elif skipped.reason == 'no_depletion_data' %}
+              No prior year sales data available to project depletion.
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
       <div class="card border-0 shadow-sm">
         <div class="table-responsive">
           <table class="table table-sm table-bordered forecast-table mb-0">
@@ -470,6 +492,33 @@
               </tr>
             </thead>
             <tbody>
+              <!-- Orders row -->
+              {% if orders_result %}
+              <tr class="forecast-orders-row">
+                <td class="small fw-semibold">Orders</td>
+                {% if not orders_result.has_order_profile %}
+                  <td colspan="13" class="text-center small text-warning">
+                    ⚠ No order profile configured —
+                    <a href="{% url 'distributor_edit' forecast_distributor.pk %}?tab=order-profile">configure order quantity</a>.
+                  </td>
+                {% else %}
+                  {% for slot in orders_result.orders_per_horizon %}
+                    {% if slot.is_snapshot %}
+                      <td class="text-center small text-muted">—</td>
+                    {% else %}
+                      <td class="text-center small">
+                        {% if slot.order_count > 0 %}
+                          <span class="badge bg-info text-dark">{{ slot.order_count }}</span>
+                        {% else %}
+                          —
+                        {% endif %}
+                      </td>
+                    {% endif %}
+                  {% endfor %}
+                {% endif %}
+              </tr>
+              {% endif %}
+              <!-- Item rows -->
               {% for row in forecast_result.rows %}
               <tr>
                 <td class="small fw-medium">{{ row.item.name }}</td>

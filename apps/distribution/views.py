@@ -18,6 +18,7 @@ from apps.catalog.models import Brand as CatalogBrand, Item
 from apps.imports.models import ItemMapping
 from .forecast import compute_distributor_forecast
 from .forms import DistributorForm, InventoryImportUploadForm
+from .order_generation import generate_projected_orders
 from .models import Distributor, DistributorItemProfile, InventoryImportBatch, InventorySnapshot
 
 
@@ -278,6 +279,7 @@ def distributor_list(request):
 
     # Forecast tab data
     forecast_result = None
+    orders_result = None
     forecast_distributor = None
     available_distributors = []
 
@@ -396,6 +398,7 @@ def distributor_list(request):
             forecast_distributor = available_distributors[0]
         if forecast_distributor:
             forecast_result = compute_distributor_forecast(forecast_distributor)
+            orders_result = generate_projected_orders(forecast_distributor, forecast_result)
 
     return render(request, 'distribution/distributor_list.html', {
         'distributors': distributors,
@@ -414,6 +417,7 @@ def distributor_list(request):
         'inventory_sort': inventory_sort,
         # Forecast tab
         'forecast_result': forecast_result,
+        'orders_result': orders_result,
         'forecast_distributor': forecast_distributor,
         'available_distributors': available_distributors,
     })

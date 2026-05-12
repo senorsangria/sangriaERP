@@ -62,6 +62,7 @@ def compute_distributor_forecast(distributor, today=None):
             {'year': int, 'colspan': int},
             ...
         ],
+        'safety_stock_map': {item_id: int},   # items with a safety stock target set
         'rows': [
             {
                 'item': Item,
@@ -70,6 +71,7 @@ def compute_distributor_forecast(distributor, today=None):
                         'year': int, 'month': int,
                         'inventory': float | None,
                         'inventory_display': str,
+                        'depletion': float | None,  # cases consumed; None when unknown
                         'status': 'snapshot'|'green'|'yellow'|'red'|'no_data',
                         'reason': str,
                         'is_snapshot': bool,
@@ -92,6 +94,7 @@ def compute_distributor_forecast(distributor, today=None):
         'message': '',
         'horizon': [],
         'year_spans': [],
+        'safety_stock_map': {},
         'rows': [],
     }
 
@@ -185,6 +188,7 @@ def compute_distributor_forecast(distributor, today=None):
             'year': anchor_year, 'month': anchor_month,
             'inventory': float(snap.quantity_cases) if snap else None,
             'inventory_display': _fmt_inv(float(snap.quantity_cases)) if snap else '',
+            'depletion': None,  # not applicable for snapshot month
             'status': 'snapshot' if snap else 'no_data',
             'reason': '' if snap else 'No inventory snapshot for this item',
             'is_snapshot': True,
@@ -196,6 +200,7 @@ def compute_distributor_forecast(distributor, today=None):
                 {
                     'year': h['year'], 'month': h['month'],
                     'inventory': None, 'inventory_display': '',
+                    'depletion': None,
                     'status': 'no_data',
                     'reason': 'No starting inventory and no prior year data',
                     'is_snapshot': False,
@@ -219,6 +224,7 @@ def compute_distributor_forecast(distributor, today=None):
                 monthly_data.append({
                     'year': year, 'month': month,
                     'inventory': inv, 'inventory_display': _fmt_inv(inv),
+                    'depletion': depletion,
                     'status': _inv_status(inv, safety_stock), 'reason': '',
                     'is_snapshot': False,
                 })
@@ -230,6 +236,7 @@ def compute_distributor_forecast(distributor, today=None):
                     monthly_data.append({
                         'year': year, 'month': month,
                         'inventory': None, 'inventory_display': '',
+                        'depletion': None,
                         'status': 'no_data',
                         'reason': 'No prior year data to project depletion',
                         'is_snapshot': False,
@@ -241,6 +248,7 @@ def compute_distributor_forecast(distributor, today=None):
                     monthly_data.append({
                         'year': year, 'month': month,
                         'inventory': inv, 'inventory_display': _fmt_inv(inv),
+                        'depletion': depletion,
                         'status': _inv_status(inv, safety_stock), 'reason': '',
                         'is_snapshot': False,
                     })
@@ -252,5 +260,6 @@ def compute_distributor_forecast(distributor, today=None):
         'message': '',
         'horizon': horizon,
         'year_spans': year_spans,
+        'safety_stock_map': safety_stock_map,
         'rows': rows,
     }

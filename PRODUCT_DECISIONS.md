@@ -641,17 +641,74 @@ first distributor alphabetically when unset. Context keys: `forecast_result`,
 - No-data cells show `—` with a `title` tooltip explaining the reason.
 - CSS in `{% block extra_css %}`.
 
-#### Phase 4-step-2 (Pending)
+---
 
-System-generated projected POs: for each (distributor, item) where the 12-month forecast
-drops to/below safety stock, suggest a PO quantity using `order_quantity_value`,
-`order_quantity_unit`, and `cases_per_pallet`. Display alongside the forecast grid.
+### Phase 4-step-2a — Projected Order Generation Algorithm + Orders Row (Complete)
+
+#### New models: `DistributorPO` and `DistributorPOLine`
+
+`DistributorPO` — a projected or actual purchase order for a distributor in a given month.
+Fields: `distributor` (FK→Distributor, PROTECT), `year`, `month`, `status` (PROJECTED/ACTUAL),
+`external_po_number` (required when status=ACTUAL, enforced via `clean()`),
+`generated_by_algorithm` (BooleanField), `notes`, `created_by` (FK→User, SET_NULL).
+No `unique_together` on (distributor, year, month) — multiple POs per month are allowed.
+
+`DistributorPOLine` — one line item within a PO.
+Fields: `po` (FK→DistributorPO, CASCADE), `item` (FK→Item, PROTECT),
+`quantity_cases` (DecimalField, same precision as InventorySnapshot).
+`unique_together = [['po', 'item']]`. Quantities always stored in cases; pallet display
+is derived at render time from `distributor.order_quantity_unit`.
+
+Migration: `0010_distributorpo_distributorpoline.py`
+
+#### Order generation: `apps/distribution/order_generation.py`
+
+Public function: `generate_projected_orders(distributor, forecast_result)`. Does NOT
+save to the database — Phase 4-step-2a is read-only display.
+
+**Algorithm:**
+
+1. Check `Distributor.order_quantity_value` and `.order_quantity_unit` are both set.
+   If not, return `has_order_profile=False` with no orders.
+2. Pre-process items from `forecast_result.rows`:
+   - Items with no depletion data in any projection cell → skipped (`no_depletion_data`)
+   - Items missing `cases_per_pallet` when distributor is pallet-based → skipped (`no_cases_per_pallet`)
+3. Build virtual inventory per item per month (starts at forecast values; adjusted as orders placed).
+4. Walk projection months in order:
+   - Find items where virtual inventory < safety stock (or < 0 if no target).
+   - Generate up to **5 orders per trigger month** (cap prevents runaway loops).
+   - Each order: **Step 1** allocates to triggering items (most critical/negative first);
+     **Step 2** fills remaining capacity with next-month items sorted by smallest safety margin.
+   - Each order is recorded in the **prior month** (order placed one month before it's needed).
+   - Apply order cases to virtual inventory for all months from the trigger month onward.
+5. Return `orders_per_horizon`: 13-entry list aligned with `forecast_result.horizon`,
+   each entry holding the order count and order details for that month.
+
+**Forecast changes (Phase 4-step-2a):**
+- Each cell in `monthly_data` now exposes `'depletion': float | None` (was internal-only).
+- `forecast_result` now includes `'safety_stock_map': {item_id: int}` for use by the algorithm.
+
+#### UI changes
+
+- **Orders row**: First row in the forecast grid `<tbody>`, styled with a blue-grey
+  background. Shows a badge (`bg-info`) with the order count per month, or `—` for zero.
+  Snapshot column always shows `—`. "No order profile" condition shows a colspan warning.
+- **Skipped items banner**: Warning above the forecast grid when items were excluded
+  from order projections. Links to item edit page for `no_cases_per_pallet`, plain text
+  for `no_depletion_data`.
+
+#### Phase 4-step-2b (Pending)
+
+Modal UI for reviewing, editing, and saving projected POs as `DistributorPO` rows.
+Status change from PROJECTED → ACTUAL requires an external PO number.
+Saved POs feed back into the forecast via the `po_additions` parameter (designed
+into `compute_distributor_forecast` in 4-step-2b).
 
 #### Future Phases
 
 - **Phase 3:** PO entry — manual entry of purchase order lines (distributor, item, year,
   month, cases_ordered).
-- **Phase 4-step-2:** Projected POs — see above.
+- **Phase 4-step-2b:** Save/edit projected POs — see above.
 
 ---
 
