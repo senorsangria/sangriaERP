@@ -8,6 +8,7 @@ urlpatterns = [
     path('distributors/inventory/upload/', views.inventory_upload, name='inventory_upload'),
     path('distributors/inventory/preview/', views.inventory_preview, name='inventory_preview'),
     path('distributors/inventory/confirm/', views.inventory_confirm, name='inventory_confirm'),
+    path('distributors/inventory/delete/', views.inventory_bulk_delete, name='inventory_bulk_delete'),
     # Distributor CRUD
     path('distributors/<int:pk>/', views.distributor_detail, name='distributor_detail'),
     path('distributors/<int:pk>/edit/', views.distributor_edit, name='distributor_edit'),

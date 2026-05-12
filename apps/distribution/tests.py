@@ -24,7 +24,7 @@ from django.db.models import ProtectedError
 from apps.catalog.models import Brand, Item
 from apps.core.models import Company, User
 from apps.core.rbac import Permission, Role
-from apps.distribution.models import Distributor, DistributorItemProfile, InventorySnapshot
+from apps.distribution.models import Distributor, DistributorItemProfile, InventoryImportBatch, InventorySnapshot
 
 
 # ---------------------------------------------------------------------------
@@ -921,3 +921,168 @@ class SafetyStockActiveColumnUITest(TestCase):
         self.assertGreater(cb_idx, -1)
         snippet = content[cb_idx:cb_idx + 200]
         self.assertNotIn('checked', snippet)
+
+
+# ===========================================================================
+# PHASE 2b-2 TESTS — Bulk delete on Inventory tab
+# ===========================================================================
+
+def _make_snapshot(distributor, item, year=2025, month=1, quantity=100):
+    return InventorySnapshot.objects.create(
+        distributor=distributor,
+        item=item,
+        quantity_cases=quantity,
+        year=year,
+        month=month,
+    )
+
+
+def _make_limited_role(codename, name):
+    role, _ = Role.objects.get_or_create(codename=codename, defaults={'name': name})
+    perm = Permission.objects.get(codename='can_manage_distributors')
+    role.permissions.set([perm])
+    return role
+
+
+class InventoryTabPhase2b2RenderingTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.distributor = make_distributor(self.company)
+        self.brand = make_brand(self.company)
+        self.item = make_item(self.brand)
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+        self.url = reverse('distributor_list') + '?tab=inventory'
+
+    def test_inventory_tab_shows_all_periods(self):
+        _make_snapshot(self.distributor, self.item, year=2025, month=1)
+        _make_snapshot(self.distributor, self.item, year=2025, month=2)
+        _make_snapshot(self.distributor, self.item, year=2024, month=12)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.context['inventory_rows']), 3)
+
+    def test_inventory_tab_has_checkboxes_per_row(self):
+        s1 = _make_snapshot(self.distributor, self.item, year=2025, month=1)
+        s2 = _make_snapshot(self.distributor, self.item, year=2025, month=2)
+        resp = self.client.get(self.url)
+        content = resp.content.decode()
+        self.assertIn(f'name="snapshot_ids" value="{s1.pk}"', content)
+        self.assertIn(f'name="snapshot_ids" value="{s2.pk}"', content)
+
+    def test_inventory_tab_has_delete_button(self):
+        _make_snapshot(self.distributor, self.item, year=2025, month=1)
+        resp = self.client.get(self.url)
+        self.assertContains(resp, 'Delete Selected')
+
+    def test_inventory_tab_period_filter(self):
+        _make_snapshot(self.distributor, self.item, year=2025, month=1)
+        _make_snapshot(self.distributor, self.item, year=2025, month=2)
+        resp = self.client.get(self.url + '&inv_period=2025-01')
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.context['inventory_rows']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['period_display'], 'Jan 2025')
+
+    def test_delete_button_hidden_without_permission(self):
+        _make_snapshot(self.distributor, self.item, year=2025, month=1)
+        role = _make_limited_role('test_2b2_no_inv', 'Test 2b2 No Inventory')
+        limited = User.objects.create_user(
+            username='no_inv_user', password='testpass123', company=self.company,
+        )
+        limited.roles.set([role])
+        c = Client()
+        c.login(username='no_inv_user', password='testpass123')
+        resp = c.get(self.url)
+        self.assertNotContains(resp, 'Delete Selected')
+
+
+class InventoryBulkDeleteEndpointTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.distributor = make_distributor(self.company)
+        self.brand = make_brand(self.company)
+        self.item = make_item(self.brand)
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+        self.url = reverse('inventory_bulk_delete')
+
+    def _post_delete(self, ids):
+        data = {'snapshot_ids': [str(i) for i in ids]}
+        return self.client.post(self.url, data)
+
+    def test_bulk_delete_removes_selected_snapshots(self):
+        snaps = [_make_snapshot(self.distributor, self.item, year=2025, month=m) for m in range(1, 6)]
+        ids_to_delete = [snaps[0].pk, snaps[1].pk, snaps[2].pk]
+        resp = self._post_delete(ids_to_delete)
+        self.assertRedirects(resp, reverse('distributor_list') + '?tab=inventory', fetch_redirect_response=False)
+        self.assertEqual(InventorySnapshot.objects.count(), 2)
+        remaining_pks = set(InventorySnapshot.objects.values_list('pk', flat=True))
+        self.assertIn(snaps[3].pk, remaining_pks)
+        self.assertIn(snaps[4].pk, remaining_pks)
+
+    def test_bulk_delete_requires_permission(self):
+        snap = _make_snapshot(self.distributor, self.item, year=2025, month=1)
+        role = _make_limited_role('test_2b2_no_inv2', 'Test 2b2 No Inventory 2')
+        limited = User.objects.create_user(
+            username='no_inv_user2', password='testpass123', company=self.company,
+        )
+        limited.roles.set([role])
+        c = Client()
+        c.login(username='no_inv_user2', password='testpass123')
+        resp = c.post(self.url, {'snapshot_ids': [str(snap.pk)]})
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(InventorySnapshot.objects.filter(pk=snap.pk).exists())
+
+    def test_bulk_delete_scoped_to_company(self):
+        company_b = make_company('Company B')
+        admin_b = make_supplier_admin(company_b, username='admin_b')
+        dist_b = make_distributor(company_b, name='Dist B')
+        brand_b = make_brand(company_b, name='Brand B')
+        item_b = make_item(brand_b, name='Item B', item_code='B001')
+
+        snap_a = _make_snapshot(self.distributor, self.item, year=2025, month=1)
+        snap_b = _make_snapshot(dist_b, item_b, year=2025, month=1)
+
+        resp = self._post_delete([snap_a.pk, snap_b.pk])
+        self.assertRedirects(resp, reverse('distributor_list') + '?tab=inventory', fetch_redirect_response=False)
+        self.assertFalse(InventorySnapshot.objects.filter(pk=snap_a.pk).exists())
+        self.assertTrue(InventorySnapshot.objects.filter(pk=snap_b.pk).exists())
+
+    def test_bulk_delete_empty_post_does_nothing(self):
+        snap = _make_snapshot(self.distributor, self.item, year=2025, month=1)
+        resp = self.client.post(self.url, {})
+        self.assertRedirects(resp, reverse('distributor_list') + '?tab=inventory', fetch_redirect_response=False)
+        self.assertTrue(InventorySnapshot.objects.filter(pk=snap.pk).exists())
+
+    def test_bulk_delete_invalid_ids_handled(self):
+        snap = _make_snapshot(self.distributor, self.item, year=2025, month=1)
+        resp = self.client.post(self.url, {'snapshot_ids': ['abc', '999999999', '']})
+        self.assertRedirects(resp, reverse('distributor_list') + '?tab=inventory', fetch_redirect_response=False)
+        self.assertTrue(InventorySnapshot.objects.filter(pk=snap.pk).exists())
+
+    def test_bulk_delete_does_not_affect_import_batches(self):
+        batch = InventoryImportBatch.objects.create(
+            company=self.company,
+            year=2025,
+            month=1,
+            uploaded_by=self.admin,
+            filename='test.csv',
+            distributor_count=1,
+            snapshots_created=1,
+        )
+        snap = InventorySnapshot.objects.create(
+            distributor=self.distributor,
+            item=self.item,
+            quantity_cases=50,
+            year=2025,
+            month=1,
+            import_batch=batch,
+        )
+        self._post_delete([snap.pk])
+        self.assertFalse(InventorySnapshot.objects.filter(pk=snap.pk).exists())
+        self.assertTrue(InventoryImportBatch.objects.filter(pk=batch.pk).exists())

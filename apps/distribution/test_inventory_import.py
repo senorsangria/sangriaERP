@@ -662,7 +662,7 @@ class InventoryTabTest(TestCase):
         self.assertContains(response, self.item.item_code)
         self.assertContains(response, '100')
 
-    def test_inventory_tab_shows_most_recent_snapshot_per_pair(self):
+    def test_inventory_tab_shows_all_periods_for_pair(self):
         # Jan snapshot
         InventorySnapshot.objects.create(
             distributor=self.distributor,
@@ -682,10 +682,11 @@ class InventoryTabTest(TestCase):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         rows = response.context['inventory_rows']
-        # Should show only one row (most recent = Feb)
-        self.assertEqual(len(rows), 1)
-        self.assertIn('Feb', rows[0]['period_display'])
-        self.assertEqual(rows[0]['quantity_display'], '75')
+        # Phase 2b-2: all periods shown, not just most recent
+        self.assertEqual(len(rows), 2)
+        period_displays = [r['period_display'] for r in rows]
+        self.assertIn('Jan 2026', period_displays)
+        self.assertIn('Feb 2026', period_displays)
 
     def test_inventory_tab_upload_button_hidden_without_permission(self):
         limited = make_user_no_inventory_perm(self.company)

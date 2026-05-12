@@ -541,10 +541,33 @@ The Inventory tab at `/distributors/?tab=inventory` now shows:
 
 Permission: `can_manage_distributor_inventory` (supplier_admin only, unchanged).
 
-#### Phase 2b-2 (Pending)
+#### Phase 2b-2 — Bulk Delete on Inventory Tab (Complete)
 
-Snapshot management UI: list import batches, delete batches (cascades snapshots to
-null import_batch), delete individual snapshots, edit snapshot metadata.
+- **Inventory tab now shows all snapshots across all periods** (previously showed only
+  the most-recent snapshot per (distributor, item) pair). Default view (no period filter)
+  displays every period; rows ordered by distributor name, brand name, item name, then
+  year+month descending.
+- **Period filter** ("All Periods" default, plus individual month options) alongside the
+  existing distributor and brand filters. Selecting a period shows only that month's rows.
+- **Checkbox column**: each data row has a checkbox (`name="snapshot_ids" value=<pk>`).
+  Header row has a "select all visible" checkbox that toggles all visible rows (with
+  indeterminate state). The whole table is inside a `<form>` POSTing to the delete endpoint.
+- **Delete Selected button**: disabled until at least one row is checked. Counter shows
+  current selection count. Clicking the button shows a Bootstrap confirmation modal:
+  "Delete N inventory record(s)? This cannot be undone." Two actions: Cancel, Confirm Delete.
+  Confirm submits the form programmatically via JS. Selection state is client-side only —
+  changing a filter loses the selection.
+- **Bulk delete endpoint** `POST /distributors/inventory/delete/`
+  (`name='inventory_bulk_delete'`). Permission: `can_manage_distributor_inventory` (returns
+  403 without it). IDs are validated as integers; non-integer or non-existent IDs silently
+  ignored. Delete is scoped to `distributor__company=request.user.company` — users cannot
+  delete another company's snapshots even if they know the PKs. Executes inside
+  `transaction.atomic()`. Redirects to `/distributors/?tab=inventory` with success message
+  "Deleted N inventory record(s)."
+- **`InventoryImportBatch` records are preserved** even after all their snapshots are deleted.
+  Batches serve as upload history. `InventorySnapshot.import_batch` is `SET_NULL`, so
+  deleting snapshots orphans (not deletes) the batch. No inline edit — mistakes are fixed by
+  delete + re-upload.
 
 #### Future Phases
 

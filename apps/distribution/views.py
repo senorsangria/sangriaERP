@@ -338,18 +338,11 @@ def distributor_list(request):
                     inv_period_filter = ''
 
         if inv_year and inv_month_val:
-            snapshots_list = list(
-                snap_qs.filter(year=inv_year, month=inv_month_val)
-            )
-        else:
-            # Most recent per (distributor, item) pair — iterate ordered by -year/-month
-            seen = set()
-            snapshots_list = []
-            for s in snap_qs.order_by('-year', '-month', 'distributor__name', 'item__brand__name', 'item__name'):
-                key = (s.distributor_id, s.item_id)
-                if key not in seen:
-                    seen.add(key)
-                    snapshots_list.append(s)
+            snap_qs = snap_qs.filter(year=inv_year, month=inv_month_val)
+
+        snapshots_list = list(
+            snap_qs.order_by('distributor__name', 'item__brand__name', 'item__name', '-year', '-month')
+        )
 
         # Sort
         if inventory_sort == 'brand':
@@ -879,4 +872,43 @@ def inventory_confirm(request):
         f'Successfully imported {snapshots_created} item(s) for '
         f'{distributor_count} distributor(s) for {month_name} {year}.',
     )
+    return redirect(reverse('distributor_list') + '?tab=inventory')
+
+
+# ---------------------------------------------------------------------------
+# Inventory bulk delete (Phase 2b-2)
+# ---------------------------------------------------------------------------
+
+@login_required
+def inventory_bulk_delete(request):
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return render(request, '403.html', status=403)
+
+    if request.method != 'POST':
+        return redirect(reverse('distributor_list') + '?tab=inventory')
+
+    company = request.user.company
+    raw_ids = request.POST.getlist('snapshot_ids')
+
+    if not raw_ids:
+        messages.info(request, 'No inventory records selected.')
+        return redirect(reverse('distributor_list') + '?tab=inventory')
+
+    ids = []
+    for raw_id in raw_ids:
+        try:
+            ids.append(int(raw_id))
+        except (ValueError, TypeError):
+            pass
+
+    if not ids:
+        messages.info(request, 'No valid inventory records selected.')
+        return redirect(reverse('distributor_list') + '?tab=inventory')
+
+    with transaction.atomic():
+        qs = InventorySnapshot.objects.filter(pk__in=ids, distributor__company=company)
+        count = qs.count()
+        qs.delete()
+
+    messages.success(request, f'Deleted {count} inventory record(s).')
     return redirect(reverse('distributor_list') + '?tab=inventory')
