@@ -9,6 +9,13 @@ urlpatterns = [
     path('distributors/inventory/preview/', views.inventory_preview, name='inventory_preview'),
     path('distributors/inventory/confirm/', views.inventory_confirm, name='inventory_confirm'),
     path('distributors/inventory/delete/', views.inventory_bulk_delete, name='inventory_bulk_delete'),
+    # PO modal endpoints (Phase 4-step-2b) — static sub-paths before <int:pk>
+    path('distributors/<int:dist_pk>/po/<int:year>/<int:month>/',
+         views.distributor_po_modal_data, name='distributor_po_modal_data'),
+    path('distributors/<int:dist_pk>/po/save/',
+         views.distributor_po_save, name='distributor_po_save'),
+    path('distributors/<int:dist_pk>/po/<int:po_pk>/delete/',
+         views.distributor_po_delete, name='distributor_po_delete'),
     # Distributor CRUD
     path('distributors/<int:pk>/', views.distributor_detail, name='distributor_detail'),
     path('distributors/<int:pk>/edit/', views.distributor_edit, name='distributor_edit'),

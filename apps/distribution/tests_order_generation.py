@@ -407,7 +407,8 @@ class OrderGenerationViewTest(TestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'forecast-orders-row')
-        self.assertNotContains(resp, 'bg-info')  # no badge = no orders
+        self.assertContains(resp, 'forecast-order-btn')  # buttons always render
+        self.assertContains(resp, 'bg-info')             # 0-order cells use bg-info badge
 
 
 # ---------------------------------------------------------------------------

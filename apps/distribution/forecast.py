@@ -36,7 +36,7 @@ def _inv_status(inv, safety_stock):
     return 'green'
 
 
-def compute_distributor_forecast(distributor, today=None):
+def compute_distributor_forecast(distributor, today=None, po_additions=None):
     """
     Compute a 13-month ending-inventory forecast for one distributor.
 
@@ -219,6 +219,8 @@ def compute_distributor_forecast(distributor, today=None):
                 # Actual sales; 0 if no data (assume no movement that month)
                 actual = sales_data.get((item_id, year, month), 0)
                 depletion = max(0, actual)
+                if po_additions:
+                    running += po_additions.get((item_id, year, month), 0.0)
                 running -= depletion
                 inv = round(running, 2)
                 monthly_data.append({
@@ -232,7 +234,10 @@ def compute_distributor_forecast(distributor, today=None):
                 # Prior-year projection
                 prior_qty = sales_data.get((item_id, year - 1, month))
                 if prior_qty is None:
-                    # Running inventory carries forward unchanged through no_data cells
+                    # Running inventory carries forward unchanged through no_data cells.
+                    # Still apply any PO addition so downstream months see it.
+                    if po_additions:
+                        running += po_additions.get((item_id, year, month), 0.0)
                     monthly_data.append({
                         'year': year, 'month': month,
                         'inventory': None, 'inventory_display': '',
@@ -243,6 +248,8 @@ def compute_distributor_forecast(distributor, today=None):
                     })
                 else:
                     depletion = max(0, prior_qty)
+                    if po_additions:
+                        running += po_additions.get((item_id, year, month), 0.0)
                     running -= depletion
                     inv = round(running, 2)
                     monthly_data.append({

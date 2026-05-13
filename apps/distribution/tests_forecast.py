@@ -437,6 +437,46 @@ class ForecastComputeTest(TestCase):
         self.assertEqual(proj_cell['status'], 'red')
         self.assertLess(proj_cell['inventory'], 0)
 
+    # -----------------------------------------------------------------------
+    # 26. po_additions increases projected inventory
+    # -----------------------------------------------------------------------
+    def test_forecast_with_po_additions_increases_inventory(self):
+        self._snap(2026, 1, qty=100)
+        self._sale(2025, 2, 50)  # prior-year → Feb 2026 depletion
+
+        today = date(2026, 1, 20)
+        # Without PO: 100 - 50 = 50
+        result_no_po = compute_distributor_forecast(self.distributor, today=today)
+        self.assertEqual(result_no_po['rows'][0]['monthly_data'][1]['inventory'], 50.0)
+
+        # With PO addition of 24 cases in Feb 2026: 100 + 24 - 50 = 74
+        result_with_po = compute_distributor_forecast(
+            self.distributor, today=today,
+            po_additions={(self.item.pk, 2026, 2): 24.0},
+        )
+        self.assertEqual(result_with_po['rows'][0]['monthly_data'][1]['inventory'], 74.0)
+
+    # -----------------------------------------------------------------------
+    # 27. po_additions applied at start of month (before depletion)
+    # -----------------------------------------------------------------------
+    def test_forecast_po_additions_applied_at_start_of_month(self):
+        self._snap(2026, 1, qty=10)
+        self._sale(2025, 2, 15)  # prior-year: 15 cases depletion for Feb 2026
+
+        today = date(2026, 1, 20)
+        # Without PO: 10 - 15 = -5 (goes negative, red)
+        result_no_po = compute_distributor_forecast(self.distributor, today=today)
+        self.assertEqual(result_no_po['rows'][0]['monthly_data'][1]['inventory'], -5.0)
+        self.assertEqual(result_no_po['rows'][0]['monthly_data'][1]['status'], 'red')
+
+        # With PO of 20 cases: 10 + 20 - 15 = 15 (green)
+        result_with_po = compute_distributor_forecast(
+            self.distributor, today=today,
+            po_additions={(self.item.pk, 2026, 2): 20.0},
+        )
+        self.assertEqual(result_with_po['rows'][0]['monthly_data'][1]['inventory'], 15.0)
+        self.assertEqual(result_with_po['rows'][0]['monthly_data'][1]['status'], 'green')
+
 
 # ---------------------------------------------------------------------------
 # View integration tests
