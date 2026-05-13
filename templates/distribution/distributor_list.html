@@ -743,7 +743,8 @@
 
         if (data.saved_orders.length > 0) {
           data.saved_orders.forEach(function (po) { addOrderTab(po, null); });
-        } else if (data.suggested_orders.length > 0) {
+        }
+        if (data.suggested_orders.length > 0) {
           data.suggested_orders.forEach(function (s) { addOrderTab(null, s); });
         }
 

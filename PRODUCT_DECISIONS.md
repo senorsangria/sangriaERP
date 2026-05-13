@@ -697,12 +697,14 @@ save to the database — Phase 4-step-2a is read-only display.
   from order projections. Links to item edit page for `no_cases_per_pallet`, plain text
   for `no_depletion_data`.
 
-#### Phase 4-step-2b (Pending)
+#### Phase 4-step-2b (Complete)
 
 Modal UI for reviewing, editing, and saving projected POs as `DistributorPO` rows.
 Status change from PROJECTED → ACTUAL requires an external PO number.
 Saved POs feed back into the forecast via the `po_additions` parameter (designed
 into `compute_distributor_forecast` in 4-step-2b).
+
+**Known behavior:** The order generation algorithm sizes individual orders assuming the full chain of orders for a horizon will be placed together. If a user saves only one order from a multi-order chain (e.g., the May order suggested when clicking the May cell), the algorithm may continue to suggest additional orders for the same month because the saved order alone doesn't cover the entire downstream gap. To be revisited after real-world usage.
 
 #### Future Phases
 
