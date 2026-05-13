@@ -1,18 +1,20 @@
 """
-Distributor Inventory Order Generation — Phase 4-step-2a.
+Distributor Inventory Order Generation — Phase 4-step-2a (revised).
 
 Public API: generate_projected_orders(distributor, forecast_result, today=None)
 
-Consumes a ForecastResult dict from compute_distributor_forecast() and returns
-a structured ProjectedOrdersResult dict. Does NOT write to the database.
-Database saving is Phase 4-step-2b.
+Each month M is covered independently: if any items drop below safety stock in M,
+one order is placed in M-1 sized to bring those items to safety stock. Remaining
+capacity is filled with items that will trigger in M+1, M+2, … using the same
+formula. Multiple orders per prior month are generated when a single item's need
+exceeds order_quantity capacity (cap: 5 per prior month).
 """
 import math
 
 from apps.reports.utils import _month_add
 
 
-# Maximum orders generated per trigger month to prevent runaway loops.
+# Maximum orders generated per prior month to prevent runaway loops.
 _MAX_ORDERS_PER_TRIGGER_MONTH = 5
 
 
@@ -20,8 +22,14 @@ def generate_projected_orders(distributor, forecast_result, today=None):
     """
     Walk the forecast horizon and generate projected purchase orders.
 
-    An order is triggered the month before any item's projected ending inventory
-    would fall below its safety stock target (or below 0 if no target is set).
+    For each projection month M, if any items' projected ending inventory is
+    below safety stock (or below 0 when no target is set), generate one order
+    placed in month M-1. The order is sized so each item reaches its safety
+    stock level. Remaining order capacity is filled with items that would
+    trigger in subsequent months (M+1, M+2, …).
+
+    Each generated order is applied to the virtual inventory before checking
+    the next month, so subsequent trigger checks reflect prior orders.
 
     Returns a dict:
     {
@@ -51,7 +59,6 @@ def generate_projected_orders(distributor, forecast_result, today=None):
     rows = forecast_result.get('rows', [])
     safety_stock_map = forecast_result.get('safety_stock_map', {})
 
-    # Default result: empty slots aligned with horizon
     def _empty_slots():
         return [
             {
@@ -85,7 +92,6 @@ def generate_projected_orders(distributor, forecast_result, today=None):
     for row in rows:
         item = row['item']
 
-        # Skip items with no depletion data in any projection cell
         has_depletion = any(
             cell.get('depletion') is not None
             for cell in row['monthly_data']
@@ -95,7 +101,6 @@ def generate_projected_orders(distributor, forecast_result, today=None):
             skipped_items.append({'item': item, 'reason': 'no_depletion_data'})
             continue
 
-        # Skip items missing cases_per_pallet when distributor is pallet-based
         if is_pallets and not item.cases_per_pallet:
             skipped_items.append({'item': item, 'reason': 'no_cases_per_pallet'})
             continue
@@ -113,7 +118,7 @@ def generate_projected_orders(distributor, forecast_result, today=None):
     eligible_items = [r['item'] for r in eligible_rows]
 
     # Virtual inventory: item_id → {(year, month): float | None}
-    # Starts as the forecast values; adjusted as orders are placed.
+    # Starts as forecast values; adjusted as orders are placed.
     virtual_inv = {}
     for row in eligible_rows:
         item_id = row['item'].pk
@@ -132,17 +137,15 @@ def generate_projected_orders(distributor, forecast_result, today=None):
     orders_by_month = {}
 
     for month_idx, (trig_year, trig_month) in enumerate(projection_months):
-        orders_this_trigger = 0
+        orders_this_prior = 0
 
-        while orders_this_trigger < _MAX_ORDERS_PER_TRIGGER_MONTH:
-            # Find items that trigger in this month under current virtual inventory
+        while orders_this_prior < _MAX_ORDERS_PER_TRIGGER_MONTH:
             triggering = _find_triggers(
                 eligible_items, virtual_inv, trig_year, trig_month, safety_stock_map
             )
             if not triggering:
                 break
 
-            # Build one order's line items
             order_lines = _build_order(
                 is_pallets, order_qty,
                 triggering, eligible_items,
@@ -152,7 +155,7 @@ def generate_projected_orders(distributor, forecast_result, today=None):
             if not order_lines:
                 break
 
-            # Apply the order's cases to virtual inventory from trigger month onward
+            # Apply order cases to virtual inventory from trigger month onward
             for line in order_lines:
                 item_id = line['item'].pk
                 for ym in projection_months[month_idx:]:
@@ -160,7 +163,7 @@ def generate_projected_orders(distributor, forecast_result, today=None):
                     if cur is not None:
                         virtual_inv[item_id][ym] = round(cur + line['cases'], 2)
 
-            # Record order in the PRIOR month (order_placement = one month before trigger)
+            # Record order in the prior month
             order_year, order_month = _month_add(trig_year, trig_month, -1)
             order_key = (order_year, order_month)
             total_cases = sum(l['cases'] for l in order_lines)
@@ -171,7 +174,7 @@ def generate_projected_orders(distributor, forecast_result, today=None):
                 'lines': order_lines,
                 'total_cases': total_cases,
             })
-            orders_this_trigger += 1
+            orders_this_prior += 1
 
     # Build output list aligned with forecast_result.horizon
     orders_per_horizon = []
@@ -219,64 +222,76 @@ def _build_order(is_pallets, order_qty, triggering_items, eligible_items,
     """
     Allocate one order's capacity across items.
 
-    Step 1: Fill triggering items (most critical first).
-    Step 2: Fill remaining capacity with next month's closest-to-safety items.
+    Sizing formula: required_cases = max(0, safety_stock - virtual_inv[month])
+    This brings ending inventory exactly to safety stock; pallet rounding adds
+    a natural buffer for pallet-based distributors.
+
+    Step 1: Cover triggering items (most critical first).
+    Step 2: Fill remaining capacity with items that would trigger in subsequent
+            months (M+1, M+2, …), scanning forward until capacity is exhausted.
     """
-    capacity = order_qty  # in pallets or cases
-    lines = {}  # {item_id: {'item', 'cases', 'pallets'}}
+    capacity = order_qty
+    lines = {}
 
     # Step 1 — triggering items
     for item, inv, ss in triggering_items:
         if capacity <= 0:
             break
         ss_val = ss or 0
-        cases_needed = max(0.0, ss_val - inv) + 1.0  # +1 to just clear the threshold
+        required_cases = max(0.0, ss_val - inv)
+        if required_cases == 0.0:
+            required_cases = 1.0  # inv exactly at ss; add a minimum unit
 
         if is_pallets:
             cpp = item.cases_per_pallet
-            pallets_needed = math.ceil(cases_needed / cpp)
+            pallets_needed = math.ceil(required_cases / cpp)
             pallets_alloc = min(pallets_needed, capacity)
             cases_added = float(pallets_alloc * cpp)
             capacity -= pallets_alloc
             _add_line(lines, item, cases_added, pallets_alloc)
         else:
-            cases_alloc = min(int(math.ceil(cases_needed)), capacity)
+            cases_alloc = min(int(math.ceil(required_cases)), int(capacity))
             capacity -= cases_alloc
             _add_line(lines, item, float(cases_alloc), None)
 
-    # Step 2 — fill remaining capacity from the next projection month
-    if capacity > 0 and trigger_month_idx + 1 < len(projection_months):
-        next_ym = projection_months[trigger_month_idx + 1]
-
-        candidates = []
-        for item in eligible_items:
-            next_inv = virtual_inv[item.pk].get(next_ym)
-            if next_inv is None:
-                continue
-            ss_val = safety_stock_map.get(item.pk) or 0
-            margin = next_inv - ss_val
-            candidates.append((item, next_inv, ss_val, margin))
-        candidates.sort(key=lambda x: x[3])  # smallest margin first (most at risk)
-
-        for item, next_inv, ss_val, margin in candidates:
+    # Step 2 — fill remaining capacity by scanning subsequent months
+    if capacity > 0:
+        for look_idx in range(trigger_month_idx + 1, len(projection_months)):
             if capacity <= 0:
                 break
-            # Cases to bring this item to safety + 1 buffer (or at least 1 unit)
-            cases_needed = max(0.0, ss_val - next_inv) + 1.0
+            look_ym = projection_months[look_idx]
 
-            if is_pallets:
-                cpp = item.cases_per_pallet
-                if not cpp:
+            # Items that would trigger in this look-ahead month, most critical first
+            candidates = []
+            for item in eligible_items:
+                inv = virtual_inv[item.pk].get(look_ym)
+                if inv is None:
                     continue
-                pallets_needed = max(1, math.ceil(cases_needed / cpp))
-                pallets_alloc = min(pallets_needed, capacity)
-                cases_added = float(pallets_alloc * cpp)
-                capacity -= pallets_alloc
-                _add_line(lines, item, cases_added, pallets_alloc)
-            else:
-                cases_alloc = min(max(1, int(math.ceil(cases_needed))), capacity)
-                capacity -= cases_alloc
-                _add_line(lines, item, float(cases_alloc), None)
+                ss_val = safety_stock_map.get(item.pk) or 0
+                if inv < ss_val:
+                    candidates.append((item, inv, ss_val, inv - ss_val))
+            candidates.sort(key=lambda x: x[3])  # most critical first
+
+            for item, inv, ss_val, _ in candidates:
+                if capacity <= 0:
+                    break
+                required_cases = max(0.0, ss_val - inv)
+                if required_cases == 0.0:
+                    continue
+
+                if is_pallets:
+                    cpp = item.cases_per_pallet
+                    if not cpp:
+                        continue
+                    pallets_needed = math.ceil(required_cases / cpp)
+                    pallets_alloc = min(pallets_needed, capacity)
+                    cases_added = float(pallets_alloc * cpp)
+                    capacity -= pallets_alloc
+                    _add_line(lines, item, cases_added, pallets_alloc)
+                else:
+                    cases_alloc = min(int(math.ceil(required_cases)), int(capacity))
+                    capacity -= cases_alloc
+                    _add_line(lines, item, float(cases_alloc), None)
 
     return list(lines.values())
 

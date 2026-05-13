@@ -302,6 +302,169 @@ class OrderGenerationTest(TestCase):
         }
         self.assertNotIn(item_inactive.pk, all_line_items)
 
+    # -----------------------------------------------------------------------
+    # 13. Consecutive triggers — one order per prior month, no pile-up
+    # -----------------------------------------------------------------------
+    def test_each_month_gets_own_order_when_consecutive_triggers(self):
+        # Item depletes 100/month from 500-case starting inventory.
+        # Triggers begin in Jul 2026 (500 - 100*6 = -100).
+        # Order capacity = 100 cases = exactly one month's depletion.
+        # Each trigger should generate ONE order in its prior month.
+        dist = _make_distributor_with_profile(
+            self.company, order_value=100, order_unit='cases'
+        )
+        item = _make_item(self.brand, 'Item A', 'A001')
+        self._snap(dist, item, 2026, 1, qty=500)
+        for m in range(2, 14):
+            y, mo = (2025, m) if m <= 12 else (2026, m - 12)
+            self._sale(dist, item, y, mo, 100)
+        result, _ = self._run(dist)
+
+        slots = {(s['year'], s['month']): s for s in result['orders_per_horizon']}
+        # Jun, Jul, Aug each placed orders one month prior
+        self.assertEqual(slots[(2026, 6)]['order_count'], 1)  # for Jul trigger
+        self.assertEqual(slots[(2026, 7)]['order_count'], 1)  # for Aug trigger
+        self.assertEqual(slots[(2026, 8)]['order_count'], 1)  # for Sep trigger
+        # No month should have more than one order (capacity exactly covers one month)
+        for slot in result['orders_per_horizon']:
+            self.assertLessEqual(slot['order_count'], 1)
+
+    # -----------------------------------------------------------------------
+    # 14. Order sized to cover depletion + safety stock gap exactly
+    # -----------------------------------------------------------------------
+    def test_order_sized_to_cover_one_month_plus_safety(self):
+        # Item: starting_inventory=0, depletion=100, safety=50.
+        # Feb trigger: virtual_inv = -100. required_cases = 50 - (-100) = 150.
+        # order_qty=150 exactly exhausts capacity in Step 1 (no filler).
+        dist = _make_distributor_with_profile(
+            self.company, order_value=150, order_unit='cases'
+        )
+        item = _make_item(self.brand, 'Item A', 'A001')
+        DistributorItemProfile.objects.create(
+            distributor=dist, item=item, safety_stock_cases=50
+        )
+        self._snap(dist, item, 2026, 1, qty=0)
+        for m in range(2, 14):
+            y, mo = (2025, m) if m <= 12 else (2026, m - 12)
+            self._sale(dist, item, y, mo, 100)
+        result, _ = self._run(dist)
+        all_orders = [o for slot in result['orders_per_horizon'] for o in slot['orders']]
+        self.assertGreater(len(all_orders), 0)
+        first_line = all_orders[0]['lines'][0]
+        self.assertEqual(first_line['item'].pk, item.pk)
+        self.assertEqual(first_line['cases'], 150.0)
+
+    # -----------------------------------------------------------------------
+    # 15. Zero safety stock — order sized to end at zero, no extra buffer
+    # -----------------------------------------------------------------------
+    def test_zero_safety_stock_zero_buffer(self):
+        # No safety stock profile → ss treated as 0.
+        # Start=5, dep=20/month → Feb: -15. required_cases = 0-(-15) = 15.
+        # order_qty=15 exactly exhausts capacity in Step 1 (no filler).
+        dist = _make_distributor_with_profile(
+            self.company, order_value=15, order_unit='cases'
+        )
+        item = _make_item(self.brand, 'Item A', 'A001')
+        # No DistributorItemProfile → safety_stock effectively 0
+        self._snap(dist, item, 2026, 1, qty=5)
+        for m in range(2, 14):
+            y, mo = (2025, m) if m <= 12 else (2026, m - 12)
+            self._sale(dist, item, y, mo, 20)
+        result, _ = self._run(dist)
+        all_orders = [o for slot in result['orders_per_horizon'] for o in slot['orders']]
+        self.assertGreater(len(all_orders), 0)
+        # First order for first trigger should allocate exactly 15 cases
+        first_line = all_orders[0]['lines'][0]
+        self.assertEqual(first_line['cases'], 15.0)
+
+    # -----------------------------------------------------------------------
+    # 16. Filler items sized with same formula as triggering items
+    # -----------------------------------------------------------------------
+    def test_filler_items_sized_with_same_formula(self):
+        # Item A triggers in Feb (required 10 cases), leaving 90 capacity.
+        # Item B is safe in Feb but triggers in Mar (required 20 cases).
+        # B should appear as filler using required_cases = ss - virtual_inv[Mar].
+        dist = _make_distributor_with_profile(
+            self.company, order_value=100, order_unit='cases'
+        )
+        item_a = _make_item(self.brand, 'Item A', 'A001', sort_order=1)
+        item_b = _make_item(self.brand, 'Item B', 'B001', sort_order=2)
+        # A: snap=10, dep=20 → Feb=-10 (trigger)
+        self._snap(dist, item_a, 2026, 1, qty=10)
+        for m in range(2, 14):
+            y, mo = (2025, m) if m <= 12 else (2026, m - 12)
+            self._sale(dist, item_a, y, mo, 20)
+        # B: snap=30, dep=25 → Feb=5 (safe), Mar=-20 (filler trigger)
+        self._snap(dist, item_b, 2026, 1, qty=30)
+        for m in range(2, 14):
+            y, mo = (2025, m) if m <= 12 else (2026, m - 12)
+            self._sale(dist, item_b, y, mo, 25)
+        result, _ = self._run(dist)
+        all_orders = [o for slot in result['orders_per_horizon'] for o in slot['orders']]
+        self.assertGreater(len(all_orders), 0)
+        # B must appear in some order as filler
+        b_lines = [
+            l for o in all_orders for l in o['lines'] if l['item'].pk == item_b.pk
+        ]
+        self.assertTrue(b_lines, 'Item B should appear as a filler in at least one order')
+        # B's allocation in the first order containing it: sized by formula
+        first_b_line = b_lines[0]
+        # required_cases for B = max(0, 0 - (-20)) = 20 (B's Mar virtual_inv = -20)
+        self.assertEqual(first_b_line['cases'], 20.0)
+
+    # -----------------------------------------------------------------------
+    # 17. Multiple orders when single item's need exceeds order capacity
+    # -----------------------------------------------------------------------
+    def test_multiple_orders_per_month_when_single_item_exceeds_capacity(self):
+        # Item needs 50 pallets, distributor orders 20 pallets at a time → 3 orders.
+        # cpp=12: 50 pallets = 600 cases. Snap=5, dep=600/month.
+        # Feb trigger: virtual_inv=-595. pallets_needed=ceil(595/12)=50.
+        # Orders: 20 pallet (240 cases), 20 pallet (240 cases), 10 pallet (120 cases).
+        dist = _make_distributor_with_profile(
+            self.company, order_value=20, order_unit='pallets'
+        )
+        item = _make_item(self.brand, 'Item A', 'A001')
+        item.cases_per_pallet = 12
+        item.save()
+        self._snap(dist, item, 2026, 1, qty=5)
+        for m in range(2, 14):
+            y, mo = (2025, m) if m <= 12 else (2026, m - 12)
+            self._sale(dist, item, y, mo, 600)
+        result, _ = self._run(dist)
+        # Jan slot (prior of Feb) should have 3 orders (20+20+remaining pallets)
+        jan_slot = next(
+            s for s in result['orders_per_horizon']
+            if s['year'] == 2026 and s['month'] == 1
+        )
+        self.assertEqual(jan_slot['order_count'], 3)
+        # Each order is capped at 20 pallets = 240 cases; item A must appear in all
+        for o in jan_slot['orders']:
+            line_items = {l['item'].pk for l in o['lines']}
+            self.assertIn(item.pk, line_items)
+            self.assertLessEqual(o['total_cases'], 240.0)
+
+    # -----------------------------------------------------------------------
+    # 18. Orders distribute across months, no pile-up in a single month
+    # -----------------------------------------------------------------------
+    def test_orders_distribute_across_months_no_pile_up(self):
+        # Steady 100/month depletion, 500-case start, order_qty=100 cases.
+        # Triggers begin in Jul 2026. Each subsequent month should get its own
+        # order (one per prior month), never multiple orders for the same month.
+        dist = _make_distributor_with_profile(
+            self.company, order_value=100, order_unit='cases'
+        )
+        item = _make_item(self.brand, 'Item A', 'A001')
+        self._snap(dist, item, 2026, 1, qty=500)
+        for m in range(2, 14):
+            y, mo = (2025, m) if m <= 12 else (2026, m - 12)
+            self._sale(dist, item, y, mo, 100)
+        result, _ = self._run(dist)
+        # No prior month should accumulate more than one order
+        for slot in result['orders_per_horizon']:
+            self.assertLessEqual(slot['order_count'], 1)
+        # At least three orders generated (one each for several trigger months)
+        self.assertGreaterEqual(result['total_orders_count'], 3)
+
 
 # ---------------------------------------------------------------------------
 # View integration tests

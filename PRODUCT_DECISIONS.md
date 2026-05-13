@@ -666,7 +666,19 @@ Migration: `0010_distributorpo_distributorpoline.py`
 Public function: `generate_projected_orders(distributor, forecast_result)`. Does NOT
 save to the database — Phase 4-step-2a is read-only display.
 
-**Algorithm:**
+**Algorithm (revised — per-month standalone sizing):**
+
+Order generation algorithm (revised): Walks the forecast horizon forward. For each month M,
+if any items would drop below safety stock, generates an order in month M-1 sized to cover
+M's depletion plus the item's safety stock buffer (zero buffer for items with no safety stock
+set). Order capacity follows the distributor's `order_quantity_value` and `order_quantity_unit`
+strictly. Remaining capacity is filled with items that would trigger in subsequent months
+(M+1, M+2, …), using the same sizing formula. If a single item's need exceeds `order_quantity`,
+multiple orders are generated for the prior month (up to 5 per month). Each generated order is
+applied to the running forecast before checking the next month, so subsequent triggers see the
+post-order inventory. This eliminates the chain-order dependency: each month's needs are covered
+by the immediately prior month's orders, not by a sequence of orders sized assuming the whole
+chain is placed together.
 
 1. Check `Distributor.order_quantity_value` and `.order_quantity_unit` are both set.
    If not, return `has_order_profile=False` with no orders.
@@ -676,9 +688,11 @@ save to the database — Phase 4-step-2a is read-only display.
 3. Build virtual inventory per item per month (starts at forecast values; adjusted as orders placed).
 4. Walk projection months in order:
    - Find items where virtual inventory < safety stock (or < 0 if no target).
-   - Generate up to **5 orders per trigger month** (cap prevents runaway loops).
-   - Each order: **Step 1** allocates to triggering items (most critical/negative first);
-     **Step 2** fills remaining capacity with next-month items sorted by smallest safety margin.
+   - Sizing formula: `required_cases = max(0, safety_stock − virtual_inv[M])`. Pallet rounding
+     via `math.ceil` adds a natural buffer for pallet-based distributors.
+   - Generate up to **5 orders per prior month** (cap prevents runaway loops).
+   - Each order: **Step 1** covers triggering items (most critical first);
+     **Step 2** fills remaining capacity with items that would trigger in M+1, M+2, … (same formula).
    - Each order is recorded in the **prior month** (order placed one month before it's needed).
    - Apply order cases to virtual inventory for all months from the trigger month onward.
 5. Return `orders_per_horizon`: 13-entry list aligned with `forecast_result.horizon`,
@@ -703,8 +717,6 @@ Modal UI for reviewing, editing, and saving projected POs as `DistributorPO` row
 Status change from PROJECTED → ACTUAL requires an external PO number.
 Saved POs feed back into the forecast via the `po_additions` parameter (designed
 into `compute_distributor_forecast` in 4-step-2b).
-
-**Known behavior:** The order generation algorithm sizes individual orders assuming the full chain of orders for a horizon will be placed together. If a user saves only one order from a multi-order chain (e.g., the May order suggested when clicking the May cell), the algorithm may continue to suggest additional orders for the same month because the saved order alone doesn't cover the entire downstream gap. To be revisited after real-world usage.
 
 #### Future Phases
 
