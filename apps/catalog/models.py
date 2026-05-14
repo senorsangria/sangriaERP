@@ -1,8 +1,35 @@
 """
-Catalog models: Brand and Item (SKU).
+Catalog models: Brand, Item (SKU), and CoPacker.
 """
 from django.db import models
 from apps.core.models import TimeStampedModel
+
+
+class CoPacker(TimeStampedModel):
+    """
+    A co-packer (contract manufacturer) that produces items on behalf of a company.
+
+    Scoped to a Company (tenant). A co-packer is a production attribute — it lives
+    in catalog to avoid a circular migration dependency with apps.production.
+    """
+
+    company = models.ForeignKey(
+        'core.Company',
+        on_delete=models.PROTECT,
+        related_name='co_packers',
+    )
+    name = models.CharField(max_length=255)
+    notes = models.TextField(blank=True, default='')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = 'Co-Packer'
+        verbose_name_plural = 'Co-Packers'
+        unique_together = [['company', 'name']]
+        ordering = ['name']
+
+    def __str__(self):
+        return f'{self.name} ({self.company.name})'
 
 
 class Brand(TimeStampedModel):
@@ -63,6 +90,24 @@ class Item(TimeStampedModel):
         null=True,
         blank=True,
         help_text='Number of cases that fit on one pallet for this item. Used by the distributor inventory and forecasting tools.',
+    )
+    co_packer = models.ForeignKey(
+        'catalog.CoPacker',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='items',
+        help_text='The co-packer that produces this item.',
+    )
+    cases_per_batch = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Number of cases produced in one batch. Used by production projections.',
+    )
+    production_safety_stock_cases = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Minimum on-hand inventory to trigger production. Used by production projections.',
     )
 
     class Meta:

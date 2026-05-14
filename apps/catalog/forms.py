@@ -2,7 +2,7 @@
 Forms for catalog: Brand and Item CRUD.
 """
 from django import forms
-from .models import Brand, Item
+from .models import Brand, CoPacker, Item
 
 
 class BrandForm(forms.ModelForm):
@@ -50,7 +50,10 @@ class BrandForm(forms.ModelForm):
 class ItemForm(forms.ModelForm):
     class Meta:
         model = Item
-        fields = ['name', 'item_code', 'sku_number', 'cases_per_pallet', 'description', 'is_active']
+        fields = [
+            'name', 'item_code', 'sku_number', 'cases_per_pallet', 'description', 'is_active',
+            'co_packer', 'cases_per_batch', 'production_safety_stock_cases',
+        ]
         widgets = {
             'name': forms.TextInput(attrs={'class': 'form-control'}),
             'item_code': forms.TextInput(attrs={'class': 'form-control'}),
@@ -58,12 +61,18 @@ class ItemForm(forms.ModelForm):
             'cases_per_pallet': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
             'description': forms.Textarea(attrs={'class': 'form-control', 'rows': 3}),
             'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'co_packer': forms.Select(attrs={'class': 'form-select'}),
+            'cases_per_batch': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Optional', 'min': 1}),
+            'production_safety_stock_cases': forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Optional', 'min': 0}),
         }
         labels = {
             'item_code': 'Item Code',
             'sku_number': 'SKU Number',
             'cases_per_pallet': 'Cases per Pallet',
             'is_active': 'Active',
+            'co_packer': 'Co-Packer',
+            'cases_per_batch': 'Cases per Batch',
+            'production_safety_stock_cases': 'Production Safety Stock (cases)',
         }
 
     def __init__(self, *args, brand=None, **kwargs):
@@ -75,6 +84,13 @@ class ItemForm(forms.ModelForm):
         self.fields['cases_per_pallet'].required = False
         self.fields['description'].required = False
         self.fields['is_active'].initial = True
+        self.fields['co_packer'].required = False
+        self.fields['cases_per_batch'].required = False
+        self.fields['production_safety_stock_cases'].required = False
+        if self.brand is not None:
+            self.fields['co_packer'].queryset = CoPacker.objects.filter(
+                company=self.brand.company, is_active=True
+            ).order_by('name')
 
     def clean_item_code(self):
         item_code = self.cleaned_data.get('item_code', '').strip()

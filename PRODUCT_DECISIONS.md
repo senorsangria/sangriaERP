@@ -3913,3 +3913,57 @@ Account Sales by Year, Item Sales by Year, and Account Distribution by Volume no
 HTML + CSV view pairs with significant code duplication totalling ~750 lines. Extract
 shared aggregation utilities into `apps/reports/aggregation.py` and refactor all six
 views to use them. This should be the next reports task before adding more reports.
+
+---
+
+## Production Management
+
+### Phase A — Foundation Models (Complete)
+
+#### CoPacker model
+
+`CoPacker` lives in `apps/catalog/` (not `apps/production/`) to avoid a circular migration dependency. `catalog.Item.co_packer` is a FK → `catalog.CoPacker`, and `production.ProductionPOLine.item` is a FK → `catalog.Item`. Placing CoPacker in production would create catalog→production and production→catalog cross-app cycles. In catalog, both FKs are unidirectional: production → catalog only.
+
+Fields: `company` (FK → core.Company, PROTECT), `name` (CharField), `notes` (TextField, blank), `is_active` (BooleanField, default=True). `unique_together = [['company', 'name']]`. Ordering by name.
+
+**Seeded records:** Brotherhood Winery and Nidra Packaging created for Drink Up Life via data migration `catalog.0006_seed_co_packers`. Silently skips if company doesn't exist (safe on dev DBs). Reverse migration deletes these two rows.
+
+#### New apps/production/ app
+
+Three models:
+
+**`ProductionPO`** — mirrors `DistributorPO` structurally. Scoped by `(company, co_packer, year, month)`. Multiple POs per month allowed. Fields: `company` (FK PROTECT), `co_packer` (FK → catalog.CoPacker, PROTECT), `year`, `month`, `status` (TextChoices: PROJECTED/ACTUAL, default PROJECTED), `external_po_number` (blank, default ''), `generated_by_algorithm` (BooleanField, default True), `notes`, `created_by` (SET_NULL). `clean()` enforces `external_po_number` required when status=ACTUAL. No `unique_together` — multiple POs per (co_packer, month) allowed.
+
+**`ProductionPOLine`** — mirrors `DistributorPOLine`. FK to `ProductionPO` via CASCADE (lines deleted with PO). FK to `catalog.Item` via PROTECT. Fields: `batch_count` (PositiveIntegerField — whole batches), `quantity_cases` (DecimalField max_digits=10, decimal_places=6 — total cases). `unique_together = [['po', 'item']]`. Ordering by brand/sort_order/name.
+
+**`OwnInventorySnapshot`** — mirrors `InventorySnapshot` but scoped by company (not distributor). No import batch (entered manually via UI in Phase B). `quantity_cases` has `MinValueValidator(0)`. `unique_together = [['company', 'item', 'year', 'month']]`. Ordering: `-year, -month, item__brand__name, item__name`.
+
+#### Item model additions (in catalog)
+
+Three new nullable fields on `catalog.Item`:
+- `co_packer`: FK → catalog.CoPacker, PROTECT, null=True, blank=True. Dropdown on Item form, filtered to the item's brand's company's co-packers.
+- `cases_per_batch`: PositiveIntegerField, null=True, blank=True. Used by production projections.
+- `production_safety_stock_cases`: PositiveIntegerField, null=True, blank=True. Minimum on-hand to trigger production order.
+
+All three shown on the Item form. `co_packer` dropdown excludes inactive co-packers.
+
+#### Permission
+
+`can_manage_production` — granted to `supplier_admin` only. Core migration `0014_production_permission`.
+
+#### Navigation
+
+"Production" nav item added in `apps/core/nav.py` as a flat sibling to "Distributors" in the `main` section. Gated by `can_manage_production`. Icon: `bi-clipboard2-check`. URL name: `production_home`. Active match: `'production'`.
+
+The nav system has no submenu/child-item concept — flat list only.
+
+#### Phase A page
+
+`/production/` renders an empty placeholder. Returns 403 without `can_manage_production`.
+
+#### Upcoming phases
+
+- **Phase B** — OwnInventorySnapshot entry UI (manual input grid)
+- **Phase C** — Production grid view (own inventory vs. distributor demand vs. safety stock)
+- **Phase D** — Manual ProductionPO entry
+- **Phase E** — Production algorithm (project batches needed from demand and safety stock)

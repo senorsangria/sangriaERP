@@ -40,6 +40,14 @@ NAV_ITEMS = [
         'section': 'main',
         'active_match': 'distributor',
     },
+    {
+        'label': 'Production',
+        'url_name': 'production_home',
+        'icon': 'bi-clipboard2-check',
+        'permission': 'can_manage_production',
+        'section': 'main',
+        'active_match': 'production',
+    },
 
     # ---- Reports section ----
     {
