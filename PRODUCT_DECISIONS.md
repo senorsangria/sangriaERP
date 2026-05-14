@@ -3977,8 +3977,22 @@ The nav system has no submenu/child-item concept — flat list only.
 - `_format_quantity_cases` helper copied from distribution views (not imported) to avoid cross-app view dependency.
 - `input_values` dict in the entry view is keyed by integer item PK; template uses `input_values|get_item:item.pk` via existing `get_item` template filter.
 
+### Phase C — Forecast Grid View and Demand Breakdown (Complete)
+
+- Production home page restructured as a 2-tab interface: **Forecast** (default) and **Inventory** (snapshot management embedded).
+- New `apps/production/forecast.py` with `compute_production_forecast(company, today=None)`. Returns a 13-column grid: anchor month (most recent snapshot company-wide) + 12 projection months.
+- **Algorithm:** For each active item, find its most recent `OwnInventorySnapshot`. If that snapshot is older than the anchor month, demand from gap months is walked forward to estimate the current running value. Projection months subtract distributor PO demand (sum of `DistributorPOLine.quantity_cases` across all distributors for the company, both projected and actual POs). No prior-year sales fallback needed — missing demand means zero depletion.
+- **Anchor cell display:** shows actual quantity only when item has a snapshot for the anchor month specifically; items with earlier-month snapshots show "—" in the anchor column. Running value is still the most recent snapshot regardless.
+- **Cell status:** `red` when inventory ≤ 0, `yellow` when below `Item.production_safety_stock_cases` (strictly less than), `green` otherwise. `no_data` for items with neither snapshot nor demand.
+- **Demand row:** one row at the top of the grid showing total distributor PO cases per month. Each cell is a clickable button opening a demand breakdown modal.
+- **Demand breakdown modal:** AJAX call to `/production/demand/<year>/<month>/` returns JSON with per-(item, distributor) pivot table. Rendered in a modal dialog, read-only.
+- `production_inventory_snapshots` view converted to a redirect stub → `/production/?tab=inventory`. The standalone `/production/inventory/snapshots/` URL still resolves but redirects.
+- `inventory_snapshots.html` template deleted; content embedded in the Inventory tab of `production_home.html`.
+- Phase B tweaks bundled: snapshot list sorted by period DESC → brand → item sort_order → name; Item Name and Entered by columns removed; Item Code column kept.
+- `production_inventory_upload` and `production_inventory_bulk_delete` success redirects updated to `/production/?tab=inventory`.
+- `production → distribution` import dependency established (production/forecast.py imports `DistributorPOLine`). Direction is clean; distribution does not import from production.
+
 #### Remaining phases
 
-- **Phase C** — Production grid view (own inventory vs. distributor demand vs. safety stock)
 - **Phase D** — Manual ProductionPO entry
 - **Phase E** — Production algorithm (project batches needed from demand and safety stock)

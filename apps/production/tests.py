@@ -430,12 +430,15 @@ class ProductionInventoryUploadPostTest(TestCase):
         data.update(overrides)
         return self._post(data)
 
+    def _inventory_tab_url(self):
+        return reverse('production_home') + '?tab=inventory'
+
     def test_post_creates_snapshots(self):
         resp = self._base_post(**{
             f'qty_{self.item_a.pk}': '100',
             f'qty_{self.item_b.pk}': '50',
         })
-        self.assertRedirects(resp, reverse('production_inventory_snapshots'))
+        self.assertRedirects(resp, self._inventory_tab_url())
         self.assertEqual(OwnInventorySnapshot.objects.filter(company=self.company).count(), 2)
 
     def test_post_with_blank_inputs_skips(self):
@@ -443,14 +446,14 @@ class ProductionInventoryUploadPostTest(TestCase):
             f'qty_{self.item_a.pk}': '100',
             f'qty_{self.item_b.pk}': '',
         })
-        self.assertRedirects(resp, reverse('production_inventory_snapshots'))
+        self.assertRedirects(resp, self._inventory_tab_url())
         self.assertEqual(OwnInventorySnapshot.objects.filter(company=self.company).count(), 1)
         snap = OwnInventorySnapshot.objects.get(company=self.company)
         self.assertEqual(snap.item, self.item_a)
 
     def test_post_with_zero_creates_snapshot_with_zero(self):
         resp = self._base_post(**{f'qty_{self.item_a.pk}': '0'})
-        self.assertRedirects(resp, reverse('production_inventory_snapshots'))
+        self.assertRedirects(resp, self._inventory_tab_url())
         snap = OwnInventorySnapshot.objects.get(company=self.company, item=self.item_a)
         self.assertEqual(snap.quantity_cases, Decimal('0'))
 
@@ -508,7 +511,7 @@ class ProductionInventoryUploadPostTest(TestCase):
 # ---------------------------------------------------------------------------
 
 class ProductionInventorySnapshotsViewTest(TestCase):
-    """GET /production/inventory/snapshots/"""
+    """Inventory tab on /production/?tab=inventory (formerly standalone snapshots page)."""
 
     def setUp(self):
         self.company = make_company()
@@ -518,16 +521,17 @@ class ProductionInventorySnapshotsViewTest(TestCase):
         self.item_b = make_item(self.brand, 'Item B', 'B001')
         self.client = Client()
         self.client.login(username='admin', password='testpass123')
+        self.url = reverse('production_home') + '?tab=inventory'
 
     def test_snapshots_list_renders_with_data(self):
         make_snapshot(self.company, self.item_a, year=2026, month=5, qty='120')
-        resp = self.client.get(reverse('production_inventory_snapshots'))
+        resp = self.client.get(self.url)
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'Item A')
+        self.assertContains(resp, 'A001')  # item code shown in inventory tab
         self.assertContains(resp, '120')
 
     def test_snapshots_list_empty_state(self):
-        resp = self.client.get(reverse('production_inventory_snapshots'))
+        resp = self.client.get(self.url)
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'No inventory snapshots yet')
 
@@ -535,18 +539,24 @@ class ProductionInventorySnapshotsViewTest(TestCase):
         make_user_with_role(self.company, 'sales_manager', username='sm')
         c = Client()
         c.login(username='sm', password='testpass123')
-        resp = c.get(reverse('production_inventory_snapshots'))
+        resp = c.get(self.url)
         self.assertEqual(resp.status_code, 403)
+
+    def test_snapshots_list_old_url_redirects_to_inventory_tab(self):
+        resp = self.client.get(reverse('production_inventory_snapshots'))
+        self.assertRedirects(resp, self.url)
 
     def test_snapshots_list_filters_by_period(self):
         make_snapshot(self.company, self.item_a, year=2026, month=5, qty='100')
         make_snapshot(self.company, self.item_b, year=2026, month=6, qty='200')
         resp = self.client.get(
-            reverse('production_inventory_snapshots'),
-            {'filter_period': '2026-06'},
+            reverse('production_home'),
+            {'tab': 'inventory', 'filter_period': '2026-06'},
         )
-        self.assertContains(resp, 'Item B')
-        self.assertNotContains(resp, 'Item A')
+        # Check context snapshots list, not raw HTML (forecast tab also renders item codes)
+        snap_codes = [s['item_code'] for s in resp.context['snapshots']]
+        self.assertIn('B001', snap_codes)
+        self.assertNotIn('A001', snap_codes)
 
     def test_snapshots_list_filters_by_brand(self):
         brand2 = make_brand(self.company, 'Brand Two')
@@ -554,20 +564,20 @@ class ProductionInventorySnapshotsViewTest(TestCase):
         make_snapshot(self.company, self.item_a, year=2026, month=5, qty='100')
         make_snapshot(self.company, item_c, year=2026, month=6, qty='50')
         resp = self.client.get(
-            reverse('production_inventory_snapshots'),
-            {'filter_brand': str(brand2.pk)},
+            reverse('production_home'),
+            {'tab': 'inventory', 'filter_brand': str(brand2.pk)},
         )
-        self.assertContains(resp, 'Item C')
-        self.assertNotContains(resp, 'Item A')
+        snap_codes = [s['item_code'] for s in resp.context['snapshots']]
+        self.assertIn('C001', snap_codes)
+        self.assertNotIn('A001', snap_codes)
 
     def test_snapshots_list_scoped_to_company(self):
         other_co = make_company('Other Co')
         other_brand = make_brand(other_co, 'Other Brand')
         other_item = make_item(other_brand, 'Other Item', 'OTH')
         make_snapshot(other_co, other_item, year=2026, month=5, qty='99')
-        # Admin for self.company should not see other company's snapshot
-        resp = self.client.get(reverse('production_inventory_snapshots'))
-        self.assertNotContains(resp, 'Other Item')
+        resp = self.client.get(self.url)
+        self.assertNotContains(resp, 'OTH')
 
 
 # ---------------------------------------------------------------------------
@@ -586,6 +596,9 @@ class ProductionInventoryBulkDeleteTest(TestCase):
         self.client = Client()
         self.client.login(username='admin', password='testpass123')
 
+    def _inventory_tab_url(self):
+        return reverse('production_home') + '?tab=inventory'
+
     def test_bulk_delete_removes_selected(self):
         s1 = make_snapshot(self.company, self.item_a, year=2026, month=5)
         s2 = make_snapshot(self.company, self.item_b, year=2026, month=5)
@@ -593,7 +606,7 @@ class ProductionInventoryBulkDeleteTest(TestCase):
             reverse('production_inventory_bulk_delete'),
             {'snapshot_ids': [str(s1.pk)]},
         )
-        self.assertRedirects(resp, reverse('production_inventory_snapshots'))
+        self.assertRedirects(resp, self._inventory_tab_url())
         self.assertFalse(OwnInventorySnapshot.objects.filter(pk=s1.pk).exists())
         self.assertTrue(OwnInventorySnapshot.objects.filter(pk=s2.pk).exists())
 
@@ -624,7 +637,7 @@ class ProductionInventoryBulkDeleteTest(TestCase):
 
     def test_bulk_delete_no_ids_shows_info_message(self):
         resp = self.client.post(reverse('production_inventory_bulk_delete'), {})
-        self.assertRedirects(resp, reverse('production_inventory_snapshots'))
+        self.assertRedirects(resp, self._inventory_tab_url())
         msgs = list(resp.wsgi_request._messages)
         self.assertTrue(any('No snapshots' in str(m) for m in msgs))
 
@@ -633,4 +646,154 @@ class ProductionInventoryBulkDeleteTest(TestCase):
             reverse('production_inventory_bulk_delete'),
             {'snapshot_ids': ['abc', 'xyz']},
         )
-        self.assertRedirects(resp, reverse('production_inventory_snapshots'))
+        self.assertRedirects(resp, self._inventory_tab_url())
+
+
+# ---------------------------------------------------------------------------
+# Phase C — Production home tab structure and forecast view tests
+# ---------------------------------------------------------------------------
+
+class ProductionHomeTabTest(TestCase):
+    """Tests for the tabbed production home view."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.brand = make_brand(self.company)
+        self.item = make_item(self.brand, 'Item A', 'A001')
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_default_tab_is_forecast(self):
+        resp = self.client.get(reverse('production_home'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_tab'], 'forecast')
+
+    def test_tab_inventory_renders_inventory_pane(self):
+        resp = self.client.get(reverse('production_home'), {'tab': 'inventory'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_tab'], 'inventory')
+        self.assertContains(resp, 'Inventory Snapshots')
+
+    def test_invalid_tab_falls_back_to_forecast(self):
+        resp = self.client.get(reverse('production_home'), {'tab': 'bad_value'})
+        self.assertEqual(resp.context['active_tab'], 'forecast')
+
+    def test_forecast_empty_state_when_no_snapshots(self):
+        resp = self.client.get(reverse('production_home'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context['forecast_result']['message'])
+
+    def test_forecast_grid_renders_with_snapshot_data(self):
+        make_snapshot(self.company, self.item, year=2026, month=4, qty='500')
+        resp = self.client.get(reverse('production_home'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context['forecast_result']['message'])
+        self.assertContains(resp, 'Item A')
+
+    def test_forecast_tab_requires_permission(self):
+        make_user_with_role(self.company, 'sales_manager', username='sm')
+        c = Client()
+        c.login(username='sm', password='testpass123')
+        resp = c.get(reverse('production_home'))
+        self.assertEqual(resp.status_code, 403)
+
+    def test_inventory_tab_shows_item_code_not_name_column(self):
+        make_snapshot(self.company, self.item, year=2026, month=5, qty='100')
+        resp = self.client.get(reverse('production_home'), {'tab': 'inventory'})
+        self.assertContains(resp, 'A001')
+        self.assertContains(resp, 'Item Code')
+        self.assertNotContains(resp, 'Entered by')
+
+    def test_inventory_tab_enter_inventory_button_present(self):
+        resp = self.client.get(reverse('production_home'), {'tab': 'inventory'})
+        self.assertContains(resp, reverse('production_inventory_upload'))
+
+    def test_upload_success_redirects_to_inventory_tab(self):
+        resp = self.client.post(
+            reverse('production_inventory_upload'),
+            {'year': '2026', 'month': '5', f'qty_{self.item.pk}': '100'},
+        )
+        self.assertRedirects(resp, reverse('production_home') + '?tab=inventory')
+
+    def test_bulk_delete_redirects_to_inventory_tab(self):
+        snap = make_snapshot(self.company, self.item, year=2026, month=5)
+        resp = self.client.post(
+            reverse('production_inventory_bulk_delete'),
+            {'snapshot_ids': [str(snap.pk)]},
+        )
+        self.assertRedirects(resp, reverse('production_home') + '?tab=inventory')
+
+
+# ---------------------------------------------------------------------------
+# Phase C — Demand modal endpoint tests
+# ---------------------------------------------------------------------------
+
+class ProductionDemandModalTest(TestCase):
+    """Tests for GET /production/demand/<year>/<month>/"""
+
+    def setUp(self):
+        from apps.distribution.models import Distributor, DistributorPO, DistributorPOLine
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.brand = make_brand(self.company)
+        self.item = make_item(self.brand, 'Item A', 'A001')
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+        self.distributor = Distributor.objects.create(company=self.company, name='Dist One')
+        self.po = DistributorPO.objects.create(
+            distributor=self.distributor, year=2026, month=6, status='projected',
+        )
+        DistributorPOLine.objects.create(
+            po=self.po, item=self.item, quantity_cases=Decimal('120'),
+        )
+
+    def test_demand_modal_returns_json(self):
+        resp = self.client.get(
+            reverse('production_demand_modal', kwargs={'year': 2026, 'month': 6}),
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['period'], 'June 2026')
+        self.assertEqual(len(data['items']), 1)
+        self.assertEqual(len(data['distributors']), 1)
+        self.assertEqual(data['grand_total'], 120.0)
+
+    def test_demand_modal_no_demand_returns_empty(self):
+        resp = self.client.get(
+            reverse('production_demand_modal', kwargs={'year': 2026, 'month': 3}),
+        )
+        data = resp.json()
+        self.assertEqual(data['cells'], [])
+        self.assertEqual(data['grand_total'], 0.0)
+
+    def test_demand_modal_requires_permission(self):
+        make_user_with_role(self.company, 'sales_manager', username='sm')
+        c = Client()
+        c.login(username='sm', password='testpass123')
+        resp = c.get(
+            reverse('production_demand_modal', kwargs={'year': 2026, 'month': 6}),
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_demand_modal_scoped_to_company(self):
+        from apps.distribution.models import Distributor, DistributorPO, DistributorPOLine
+        other_co = make_company('Other Co')
+        other_brand = make_brand(other_co, 'Other Brand')
+        other_item = make_item(other_brand, 'Other Item', 'OTH')
+        other_dist = Distributor.objects.create(company=other_co, name='Other Dist')
+        other_po = DistributorPO.objects.create(
+            distributor=other_dist, year=2026, month=6, status='projected',
+        )
+        DistributorPOLine.objects.create(
+            po=other_po, item=other_item, quantity_cases=Decimal('999'),
+        )
+        resp = self.client.get(
+            reverse('production_demand_modal', kwargs={'year': 2026, 'month': 6}),
+        )
+        data = resp.json()
+        item_ids = [i['id'] for i in data['items']]
+        self.assertIn(self.item.pk, item_ids)
+        self.assertNotIn(other_item.pk, item_ids)
+        self.assertEqual(data['grand_total'], 120.0)

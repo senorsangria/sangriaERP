@@ -2,18 +2,27 @@
 Production views. Gated by can_manage_production permission.
 Phase A: production_home placeholder.
 Phase B: snapshot entry and management.
+Phase C: tabbed home (Forecast + Inventory), demand breakdown modal.
 """
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
-from django.http import HttpResponseForbidden
+from django.db.models import Sum
+from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 
 from apps.catalog.models import Brand, Item
+from apps.distribution.models import DistributorPOLine
+from .forecast import compute_production_forecast, MONTH_SHORT
 from .forms import MONTH_CHOICES, OwnInventorySnapshotPeriodForm
 from .models import OwnInventorySnapshot
+
+
+# Month names list for views (full names, indexed 0-based)
+MONTH_NAMES = [m for _, m in MONTH_CHOICES]
 
 
 def _format_quantity_cases(qty):
@@ -31,8 +40,25 @@ def _require_production_permission(request):
     return None
 
 
+def _build_snapshot_rows(snap_qs):
+    """Convert OwnInventorySnapshot queryset into display dicts for the Inventory tab."""
+    return [
+        {
+            'pk': s.pk,
+            'year': s.year,
+            'month': s.month,
+            'period_display': f'{MONTH_NAMES[s.month - 1]} {s.year}',
+            'brand_name': s.item.brand.name,
+            'item_code': s.item.item_code,
+            'quantity_display': _format_quantity_cases(s.quantity_cases),
+            'created_at': s.created_at,
+        }
+        for s in snap_qs
+    ]
+
+
 # ---------------------------------------------------------------------------
-# Production home
+# Production home (tabbed: Forecast + Inventory)
 # ---------------------------------------------------------------------------
 
 @login_required
@@ -40,8 +66,83 @@ def production_home(request):
     denied = _require_production_permission(request)
     if denied:
         return denied
+
+    company = request.user.company
+
+    active_tab = request.GET.get('tab', 'forecast')
+    if active_tab not in ('forecast', 'inventory'):
+        active_tab = 'forecast'
+
+    # Forecast tab — always computed eagerly so JS tab-switching works without reload
+    forecast_result = compute_production_forecast(company)
+
+    # Inventory tab — snapshot list with optional filters
+    snap_qs = OwnInventorySnapshot.objects.filter(company=company).select_related(
+        'item', 'item__brand',
+    )
+
+    filter_period = request.GET.get('filter_period', '').strip()
+    filter_brand = request.GET.get('filter_brand', '').strip()
+
+    filter_year = None
+    filter_month_val = None
+    if filter_period:
+        parts = filter_period.split('-')
+        if len(parts) == 2:
+            try:
+                filter_year = int(parts[0])
+                filter_month_val = int(parts[1])
+                snap_qs = snap_qs.filter(year=filter_year, month=filter_month_val)
+            except (ValueError, TypeError):
+                filter_period = ''
+
+    if filter_brand:
+        try:
+            snap_qs = snap_qs.filter(item__brand_id=int(filter_brand))
+        except (ValueError, TypeError):
+            filter_brand = ''
+
+    # Phase B tweaks: sort by period DESC, then brand name, then item sort_order/name
+    snap_qs = snap_qs.order_by(
+        '-year', '-month', 'item__brand__name', 'item__sort_order', 'item__name'
+    )
+
+    snapshots = _build_snapshot_rows(snap_qs)
+
+    # Filter dropdown choices (populated from existing data)
+    all_periods = (
+        OwnInventorySnapshot.objects.filter(company=company)
+        .values('year', 'month')
+        .distinct()
+        .order_by('-year', '-month')
+    )
+    period_choices = [
+        {
+            'value': f"{p['year']}-{p['month']:02d}",
+            'display': f"{MONTH_NAMES[p['month'] - 1]} {p['year']}",
+        }
+        for p in all_periods
+    ]
+
+    all_brands = Brand.objects.filter(
+        company=company,
+        items__own_inventory_snapshots__isnull=False,
+    ).distinct().order_by('name')
+
+    has_any_snapshots = OwnInventorySnapshot.objects.filter(company=company).exists()
+
     return render(request, 'production/production_home.html', {
-        'company': request.user.company,
+        'company': company,
+        'active_tab': active_tab,
+        # Forecast tab
+        'forecast_result': forecast_result,
+        # Inventory tab
+        'snapshots': snapshots,
+        'period_choices': period_choices,
+        'all_brands': all_brands,
+        'filter_period': filter_period,
+        'filter_brand': filter_brand,
+        'has_any_snapshots': has_any_snapshots,
     })
 
 
@@ -65,7 +166,6 @@ def production_inventory_upload(request):
     if request.method == 'POST':
         period_form = OwnInventorySnapshotPeriodForm(request.POST)
 
-        # Rebuild input_values keyed by item PK (int) for template re-render
         input_values = {}
         for key, val in request.POST.items():
             if key.startswith('qty_'):
@@ -88,9 +188,8 @@ def production_inventory_upload(request):
         year = period_form.cleaned_data['year']
         month = period_form.cleaned_data['month']
 
-        # Period conflict check
         if OwnInventorySnapshot.objects.filter(company=company, year=year, month=month).exists():
-            month_label = dict(MONTH_CHOICES)[month]
+            month_label = MONTH_NAMES[month - 1]
             return render(request, 'production/inventory_upload.html', {
                 'company': company,
                 'items': items,
@@ -99,13 +198,12 @@ def production_inventory_upload(request):
                 'item_errors': {},
                 'general_error': (
                     f'A snapshot for {month_label} {year} already exists. '
-                    'Delete it from the Manage Snapshots page first.'
+                    'Return to Production and use the Inventory tab to delete it first.'
                 ),
             })
 
-        # Pre-validation pass — collect all errors before writing anything
-        parsed_values = {}   # item_pk (int) → Decimal
-        item_errors = {}     # item_pk (int) → error string
+        parsed_values = {}
+        item_errors = {}
         any_input = False
 
         for item in items:
@@ -144,7 +242,6 @@ def production_inventory_upload(request):
                 'general_error': 'Please fix the errors below.',
             })
 
-        # Save pass — all-or-nothing transaction
         item_map = {i.pk: i for i in items}
         with transaction.atomic():
             for item_pk, qty in parsed_values.items():
@@ -157,14 +254,13 @@ def production_inventory_upload(request):
                     created_by=request.user,
                 )
 
-        month_label = dict(MONTH_CHOICES)[month]
+        month_label = MONTH_NAMES[month - 1]
         messages.success(
             request,
             f'Saved {len(parsed_values)} snapshot(s) for {month_label} {year}.',
         )
-        return redirect('production_inventory_snapshots')
+        return redirect(reverse('production_home') + '?tab=inventory')
 
-    # GET — fresh form
     period_form = OwnInventorySnapshotPeriodForm()
     return render(request, 'production/inventory_upload.html', {
         'company': company,
@@ -177,87 +273,12 @@ def production_inventory_upload(request):
 
 
 # ---------------------------------------------------------------------------
-# Inventory snapshots list
+# Inventory snapshots list — redirect stub (content moved to production_home tab)
 # ---------------------------------------------------------------------------
 
 @login_required
 def production_inventory_snapshots(request):
-    denied = _require_production_permission(request)
-    if denied:
-        return denied
-
-    company = request.user.company
-    snap_qs = OwnInventorySnapshot.objects.filter(company=company).select_related(
-        'item', 'item__brand', 'created_by',
-    )
-
-    # Optional filters
-    filter_period = request.GET.get('filter_period', '').strip()
-    filter_brand = request.GET.get('filter_brand', '').strip()
-
-    filter_year = None
-    filter_month = None
-    if filter_period:
-        parts = filter_period.split('-')
-        if len(parts) == 2:
-            try:
-                filter_year = int(parts[0])
-                filter_month = int(parts[1])
-                snap_qs = snap_qs.filter(year=filter_year, month=filter_month)
-            except (ValueError, TypeError):
-                filter_period = ''
-
-    if filter_brand:
-        try:
-            snap_qs = snap_qs.filter(item__brand_id=int(filter_brand))
-        except (ValueError, TypeError):
-            filter_brand = ''
-
-    snapshots = [
-        {
-            'pk': s.pk,
-            'period_display': f'{dict(MONTH_CHOICES)[s.month]} {s.year}',
-            'brand_name': s.item.brand.name,
-            'item_name': s.item.name,
-            'item_code': s.item.item_code,
-            'quantity_display': _format_quantity_cases(s.quantity_cases),
-            'created_by': s.created_by,
-            'created_at': s.created_at,
-        }
-        for s in snap_qs
-    ]
-
-    # Filter option choices (populated from existing data)
-    all_periods = (
-        OwnInventorySnapshot.objects.filter(company=company)
-        .values('year', 'month')
-        .distinct()
-        .order_by('-year', '-month')
-    )
-    period_choices = [
-        {
-            'value': f'{p["year"]}-{p["month"]:02d}',
-            'display': f'{dict(MONTH_CHOICES)[p["month"]]} {p["year"]}',
-        }
-        for p in all_periods
-    ]
-
-    all_brands = Brand.objects.filter(
-        company=company,
-        items__own_inventory_snapshots__isnull=False,
-    ).distinct().order_by('name')
-
-    has_any_snapshots = OwnInventorySnapshot.objects.filter(company=company).exists()
-
-    return render(request, 'production/inventory_snapshots.html', {
-        'company': company,
-        'snapshots': snapshots,
-        'period_choices': period_choices,
-        'all_brands': all_brands,
-        'filter_period': filter_period,
-        'filter_brand': filter_brand,
-        'has_any_snapshots': has_any_snapshots,
-    })
+    return redirect(reverse('production_home') + '?tab=inventory')
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +292,7 @@ def production_inventory_bulk_delete(request):
         return denied
 
     if request.method != 'POST':
-        return redirect('production_inventory_snapshots')
+        return redirect(reverse('production_home') + '?tab=inventory')
 
     company = request.user.company
     raw_ids = request.POST.getlist('snapshot_ids')
@@ -285,7 +306,7 @@ def production_inventory_bulk_delete(request):
 
     if not ids:
         messages.info(request, 'No snapshots were selected for deletion.')
-        return redirect('production_inventory_snapshots')
+        return redirect(reverse('production_home') + '?tab=inventory')
 
     with transaction.atomic():
         qs = OwnInventorySnapshot.objects.filter(pk__in=ids, company=company)
@@ -296,4 +317,79 @@ def production_inventory_bulk_delete(request):
         request,
         f'Deleted {count} inventory snapshot{"s" if count != 1 else ""}.',
     )
-    return redirect('production_inventory_snapshots')
+    return redirect(reverse('production_home') + '?tab=inventory')
+
+
+# ---------------------------------------------------------------------------
+# Demand breakdown modal endpoint
+# ---------------------------------------------------------------------------
+
+@login_required
+def production_demand_modal(request, year, month):
+    denied = _require_production_permission(request)
+    if denied:
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    company = request.user.company
+
+    rows = (
+        DistributorPOLine.objects
+        .filter(
+            po__distributor__company=company,
+            po__year=year,
+            po__month=month,
+        )
+        .values(
+            'item_id',
+            'item__name',
+            'item__item_code',
+            'item__brand__name',
+            'item__sort_order',
+            'po__distributor_id',
+            'po__distributor__name',
+        )
+        .annotate(total_cases=Sum('quantity_cases'))
+        .order_by(
+            'item__brand__name', 'item__sort_order', 'item__name',
+            'po__distributor__name',
+        )
+    )
+
+    items_seen = {}
+    distributors_seen = {}
+    cells = []
+    item_totals = {}
+    distributor_totals = {}
+    grand_total = 0.0
+
+    for r in rows:
+        iid = r['item_id']
+        did = r['po__distributor_id']
+        cases = round(float(r['total_cases']), 2)
+
+        if iid not in items_seen:
+            items_seen[iid] = {
+                'id': iid,
+                'name': r['item__name'],
+                'item_code': r['item__item_code'],
+            }
+        if did not in distributors_seen:
+            distributors_seen[did] = {
+                'id': did,
+                'name': r['po__distributor__name'],
+            }
+
+        cells.append({'item_id': iid, 'distributor_id': did, 'cases': cases})
+        item_totals[str(iid)] = round(item_totals.get(str(iid), 0.0) + cases, 2)
+        distributor_totals[str(did)] = round(distributor_totals.get(str(did), 0.0) + cases, 2)
+        grand_total = round(grand_total + cases, 2)
+
+    return JsonResponse({
+        'period': f'{MONTH_NAMES[month - 1]} {year}',
+        'items': list(items_seen.values()),
+        'distributors': list(distributors_seen.values()),
+        'cells': cells,
+        'item_totals': item_totals,
+        'distributor_totals': distributor_totals,
+        'grand_total': grand_total,
+    })

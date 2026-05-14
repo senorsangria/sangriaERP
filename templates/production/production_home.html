@@ -1,41 +1,448 @@
 {% extends "base.html" %}
+{% load rbac %}
 
 {% block title %}Production{% endblock %}
 
+{% block extra_css %}
+<style>
+.forecast-grid th, .forecast-grid td { padding: 0.25rem 0.4rem; }
+.forecast-cell { white-space: nowrap; min-width: 48px; }
+.forecast-grid tbody td.status-snapshot  { background-color: #cfe2ff !important; font-weight: 600; }
+.forecast-grid tbody td.status-green     { background-color: #d4edda !important; }
+.forecast-grid tbody td.status-yellow    { background-color: #fff3cd !important; }
+.forecast-grid tbody td.status-red       { background-color: #f8d7da !important; color: #842029; }
+.forecast-grid tbody td.status-no_data   { color: #aaa; }
+.forecast-demand-row td                  { background-color: #e8f4f8 !important; border-top: 2px solid #b8d4e0 !important; border-bottom: 2px solid #b8d4e0 !important; }
+.demand-btn { font-size: .8rem; line-height: 1; text-decoration: none; }
+.demand-btn:hover { background-color: rgba(0,0,0,.05); }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-start mb-4">
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
   <div>
     <h1 class="h2 fw-bold mb-1">Production</h1>
     <p class="text-muted mb-0">Production planning for {{ company.name }}</p>
   </div>
 </div>
 
-<div class="row g-3 mb-4">
-  <div class="col-md-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <i class="bi bi-clipboard-plus fs-2 text-primary mb-2 d-block"></i>
-        <h5 class="fw-semibold">Enter Inventory Snapshot</h5>
-        <p class="text-muted small mb-3">Record on-hand cases for a specific month.</p>
+<!-- Tab nav -->
+<ul class="nav nav-tabs mb-4" id="productionTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'forecast' %}active{% endif %}"
+            id="tab-forecast" data-bs-toggle="tab" data-bs-target="#pane-forecast"
+            type="button" role="tab"
+            aria-controls="pane-forecast"
+            aria-selected="{% if active_tab == 'forecast' %}true{% else %}false{% endif %}">
+      Forecast
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'inventory' %}active{% endif %}"
+            id="tab-inventory" data-bs-toggle="tab" data-bs-target="#pane-inventory"
+            type="button" role="tab"
+            aria-controls="pane-inventory"
+            aria-selected="{% if active_tab == 'inventory' %}true{% else %}false{% endif %}">
+      Inventory
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content" id="productionTabContent">
+
+  <!-- ============================================================ -->
+  <!-- FORECAST TAB -->
+  <!-- ============================================================ -->
+  <div class="tab-pane fade {% if active_tab == 'forecast' %}show active{% endif %}"
+       id="pane-forecast" role="tabpanel" aria-labelledby="tab-forecast">
+
+    {% if forecast_result.message %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center py-5 text-muted">
+        <i class="bi bi-graph-up fs-1 d-block mb-3"></i>
+        <h5 class="fw-semibold">No Forecast Data Yet</h5>
+        <p class="mb-3">{{ forecast_result.message }}</p>
         <a href="{% url 'production_inventory_upload' %}" class="btn btn-primary btn-sm">
-          <i class="bi bi-plus-lg me-1"></i>Enter Snapshot
+          <i class="bi bi-plus-lg me-1"></i>Enter Inventory Snapshot
         </a>
       </div>
     </div>
+    {% else %}
+
+    <div class="card border-0 shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-sm table-bordered forecast-grid mb-0">
+          <thead class="table-light">
+            <tr>
+              <th rowspan="2" class="align-middle" style="min-width: 130px;">Item</th>
+              {% for span in forecast_result.year_spans %}
+              <th colspan="{{ span.colspan }}" class="text-center fw-semibold border-start">{{ span.year }}</th>
+              {% endfor %}
+            </tr>
+            <tr>
+              {% for cell in forecast_result.horizon %}
+              <th class="text-center small border-start forecast-cell"
+                  {% if cell.is_snapshot %}title="Snapshot month — actual on-hand"{% endif %}>
+                {{ cell.month_short }}{% if cell.is_snapshot %} *{% endif %}
+              </th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Demand row -->
+            <tr class="forecast-demand-row">
+              <td class="fw-semibold small">Demand</td>
+              {% for cell in forecast_result.horizon %}
+              {% with key=cell.year|stringformat:"d" %}
+              {% with mkey=cell.month|stringformat:"02d" %}
+              {% with fullkey=key|add:"-"|add:mkey %}
+              <td class="text-center small border-start forecast-cell p-0">
+                {% with demand=forecast_result.demand_by_month|get_item:fullkey %}
+                {% if demand and demand > 0 %}
+                <button type="button"
+                        class="btn btn-link btn-sm p-1 w-100 demand-btn"
+                        data-year="{{ cell.year }}"
+                        data-month="{{ cell.month }}"
+                        data-url="{% url 'production_demand_modal' year=cell.year month=cell.month %}">
+                  {{ demand|floatformat:"-2" }}
+                </button>
+                {% else %}
+                <span class="text-muted px-1">—</span>
+                {% endif %}
+                {% endwith %}
+              </td>
+              {% endwith %}{% endwith %}{% endwith %}
+              {% endfor %}
+            </tr>
+
+            <!-- Item rows -->
+            {% for row in forecast_result.rows %}
+            {% ifchanged row.item.brand.name %}
+            <tr class="table-secondary">
+              <td colspan="{{ forecast_result.horizon|length|add:1 }}" class="ps-3 py-1">
+                <span class="small text-uppercase text-muted fw-semibold">{{ row.item.brand.name }}</span>
+              </td>
+            </tr>
+            {% endifchanged %}
+            <tr>
+              <td class="small">
+                <div class="fw-medium">{{ row.item.name }}</div>
+                <div class="text-muted" style="font-size:0.75rem;">{{ row.item.item_code }}</div>
+              </td>
+              {% for cell in row.monthly_data %}
+              <td class="text-center small border-start forecast-cell status-{{ cell.status }}">
+                {{ cell.inventory_display }}
+              </td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <p class="small text-muted mt-2">
+      <i class="bi bi-info-circle me-1"></i>
+      * = snapshot month (actual on-hand). Cells show projected ending inventory.
+      Demand row totals distributor PO cases; click a cell to see the breakdown.
+    </p>
+    {% endif %}
   </div>
-  <div class="col-md-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body">
-        <i class="bi bi-list-check fs-2 text-secondary mb-2 d-block"></i>
-        <h5 class="fw-semibold">Manage Snapshots</h5>
-        <p class="text-muted small mb-3">View and delete saved inventory snapshots.</p>
-        <a href="{% url 'production_inventory_snapshots' %}" class="btn btn-outline-secondary btn-sm">
-          <i class="bi bi-list me-1"></i>View Snapshots
+
+  <!-- ============================================================ -->
+  <!-- INVENTORY TAB -->
+  <!-- ============================================================ -->
+  <div class="tab-pane fade {% if active_tab == 'inventory' %}show active{% endif %}"
+       id="pane-inventory" role="tabpanel" aria-labelledby="tab-inventory">
+
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <h2 class="h5 fw-bold mb-0">Inventory Snapshots</h2>
+      <a href="{% url 'production_inventory_upload' %}" class="btn btn-primary btn-sm">
+        <i class="bi bi-plus-lg me-1"></i>Enter Inventory
+      </a>
+    </div>
+
+    {% if not has_any_snapshots %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center py-5 text-muted">
+        <i class="bi bi-clipboard-x fs-1 d-block mb-3"></i>
+        <h5 class="fw-semibold">No inventory snapshots yet</h5>
+        <p class="mb-3">Record your on-hand case counts to get started.</p>
+        <a href="{% url 'production_inventory_upload' %}" class="btn btn-primary btn-sm">
+          <i class="bi bi-plus-lg me-1"></i>Enter Inventory
         </a>
+      </div>
+    </div>
+
+    {% else %}
+
+    <!-- Filters -->
+    <form method="get" class="card border-0 shadow-sm mb-3">
+      <div class="card-body py-2">
+        <input type="hidden" name="tab" value="inventory">
+        <div class="row g-2 align-items-end">
+          {% if period_choices %}
+          <div class="col-12 col-sm-auto">
+            <label class="form-label small text-muted mb-1">Period</label>
+            <select name="filter_period" class="form-select form-select-sm">
+              <option value="">All Periods</option>
+              {% for p in period_choices %}
+              <option value="{{ p.value }}" {% if filter_period == p.value %}selected{% endif %}>{{ p.display }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          {% if all_brands %}
+          <div class="col-12 col-sm-auto">
+            <label class="form-label small text-muted mb-1">Brand</label>
+            <select name="filter_brand" class="form-select form-select-sm">
+              <option value="">All Brands</option>
+              {% for b in all_brands %}
+              <option value="{{ b.pk }}" {% if filter_brand == b.pk|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          <div class="col-auto">
+            <button type="submit" class="btn btn-outline-primary btn-sm">Filter</button>
+            <a href="{% url 'production_home' %}?tab=inventory" class="btn btn-outline-secondary btn-sm ms-1">Clear</a>
+          </div>
+        </div>
+      </div>
+    </form>
+
+    <!-- Delete button -->
+    <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+      <span class="text-muted small">{{ snapshots|length }} record{{ snapshots|length|pluralize }} shown</span>
+      <button type="button" class="btn btn-danger btn-sm" id="snapshot-delete-btn" disabled>
+        Delete Selected (<span id="snapshot-selected-count">0</span>)
+      </button>
+    </div>
+
+    {% if snapshots %}
+    <form id="snapshot-delete-form" method="post" action="{% url 'production_inventory_bulk_delete' %}">
+      {% csrf_token %}
+      <div class="card border-0 shadow-sm">
+        <div class="table-responsive">
+          <table class="table table-hover table-sm mb-0 align-middle">
+            <thead class="table-light">
+              <tr>
+                <th style="width:2rem;">
+                  <input type="checkbox" class="form-check-input" id="select-all-snapshots">
+                </th>
+                <th>Period</th>
+                <th>Brand</th>
+                <th>Item Code</th>
+                <th class="text-end">Quantity (cases)</th>
+                <th>Entered</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for snap in snapshots %}
+              <tr>
+                <td>
+                  <input type="checkbox" class="form-check-input snapshot-row-check"
+                         name="snapshot_ids" value="{{ snap.pk }}">
+                </td>
+                <td class="small fw-medium">{{ snap.period_display }}</td>
+                <td class="small text-muted">{{ snap.brand_name }}</td>
+                <td><code class="small">{{ snap.item_code }}</code></td>
+                <td class="text-end fw-medium">{{ snap.quantity_display }}</td>
+                <td class="small text-muted">{{ snap.created_at|date:"M j, Y" }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </form>
+    {% else %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center text-muted py-4">
+        <i class="bi bi-funnel fs-4 d-block mb-2"></i>
+        No snapshots match the selected filters.
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Delete confirmation modal -->
+    <div class="modal fade" id="snapshotDeleteModal" tabindex="-1"
+         aria-labelledby="snapshotDeleteModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="snapshotDeleteModalLabel">Confirm Delete</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            Delete <strong><span id="snapshot-modal-count">0</span> snapshot(s)</strong>?
+            This cannot be undone.
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" class="btn btn-danger" id="snapshot-confirm-delete-btn">Confirm Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% endif %}{# has_any_snapshots #}
+  </div>
+
+</div>{# tab-content #}
+
+<!-- Demand breakdown modal -->
+<div class="modal fade" id="demandModal" tabindex="-1"
+     aria-labelledby="demandModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="demandModalLabel">Demand Breakdown</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="demand-modal-body">
+        <div class="text-center py-3 text-muted">Loading…</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
   </div>
 </div>
+{% endblock %}
 
-<p class="small text-muted">Production grid view and order generation coming in a future phase.</p>
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+
+  // ----------------------------------------------------------------
+  // Demand modal IIFE
+  // ----------------------------------------------------------------
+  var demandModalEl = document.getElementById('demandModal');
+  var demandModal   = demandModalEl ? new bootstrap.Modal(demandModalEl) : null;
+  var demandBody    = document.getElementById('demand-modal-body');
+  var demandLabel   = document.getElementById('demandModalLabel');
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.demand-btn');
+    if (!btn || !demandModal) return;
+    e.preventDefault();
+
+    var url = btn.dataset.url;
+    demandBody.innerHTML = '<div class="text-center py-3 text-muted">Loading…</div>';
+    if (demandLabel) demandLabel.textContent = 'Demand Breakdown';
+    demandModal.show();
+
+    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        if (demandLabel) demandLabel.textContent = 'Demand Breakdown — ' + data.period;
+
+        if (!data.cells || data.cells.length === 0) {
+          demandBody.innerHTML = '<p class="text-muted text-center py-3">No distributor PO demand for this period.</p>';
+          return;
+        }
+
+        // Build lookup from cells
+        var cellMap = {};
+        data.cells.forEach(function (c) {
+          cellMap[c.item_id + '-' + c.distributor_id] = c.cases;
+        });
+
+        var html = '<div class="table-responsive"><table class="table table-sm align-middle">';
+        html += '<thead class="table-light"><tr><th>Item</th>';
+        data.distributors.forEach(function (d) {
+          html += '<th class="text-end">' + _esc(d.name) + '</th>';
+        });
+        html += '<th class="text-end fw-bold">Total</th></tr></thead><tbody>';
+
+        data.items.forEach(function (item) {
+          html += '<tr><td><div class="fw-medium small">' + _esc(item.name) + '</div>';
+          html += '<div class="text-muted" style="font-size:.75rem;">' + _esc(item.item_code) + '</div></td>';
+          data.distributors.forEach(function (d) {
+            var cases = cellMap[item.id + '-' + d.id];
+            html += '<td class="text-end small">' + (cases != null ? cases : '—') + '</td>';
+          });
+          html += '<td class="text-end small fw-bold">' + (data.item_totals[item.id] || 0) + '</td>';
+          html += '</tr>';
+        });
+
+        // Totals row
+        html += '<tr class="table-light fw-bold"><td>Total</td>';
+        data.distributors.forEach(function (d) {
+          html += '<td class="text-end">' + (data.distributor_totals[d.id] || 0) + '</td>';
+        });
+        html += '<td class="text-end">' + data.grand_total + '</td></tr>';
+        html += '</tbody></table></div>';
+        demandBody.innerHTML = html;
+      })
+      .catch(function () {
+        demandBody.innerHTML = '<div class="alert alert-danger">Failed to load demand data.</div>';
+      });
+  });
+
+  function _esc(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // ----------------------------------------------------------------
+  // Snapshot bulk delete IIFE
+  // ----------------------------------------------------------------
+  var selectAll  = document.getElementById('select-all-snapshots');
+  var deleteBtn  = document.getElementById('snapshot-delete-btn');
+  var countSpan  = document.getElementById('snapshot-selected-count');
+  var modalCount = document.getElementById('snapshot-modal-count');
+  var deleteForm = document.getElementById('snapshot-delete-form');
+  var confirmBtn = document.getElementById('snapshot-confirm-delete-btn');
+  var snapModalEl = document.getElementById('snapshotDeleteModal');
+  var snapModal   = snapModalEl ? new bootstrap.Modal(snapModalEl) : null;
+
+  function getRowChecks() {
+    return document.querySelectorAll('.snapshot-row-check');
+  }
+
+  function updateCount() {
+    var checks = getRowChecks();
+    var checked = 0;
+    checks.forEach(function (c) { if (c.checked) checked++; });
+    if (countSpan) countSpan.textContent = checked;
+    if (deleteBtn) deleteBtn.disabled = checked === 0;
+    if (selectAll) {
+      var total = checks.length;
+      selectAll.indeterminate = checked > 0 && checked < total;
+      selectAll.checked = total > 0 && checked === total;
+    }
+  }
+
+  getRowChecks().forEach(function (c) { c.addEventListener('change', updateCount); });
+
+  if (selectAll) {
+    selectAll.addEventListener('change', function () {
+      getRowChecks().forEach(function (c) { c.checked = selectAll.checked; });
+      updateCount();
+    });
+  }
+
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', function () {
+      var checked = 0;
+      getRowChecks().forEach(function (c) { if (c.checked) checked++; });
+      if (modalCount) modalCount.textContent = checked;
+      if (snapModal) snapModal.show();
+    });
+  }
+
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', function () {
+      if (deleteForm) deleteForm.submit();
+    });
+  }
+})();
+</script>
 {% endblock %}
