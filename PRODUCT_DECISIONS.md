@@ -3926,7 +3926,7 @@ views to use them. This should be the next reports task before adding more repor
 
 Fields: `company` (FK → core.Company, PROTECT), `name` (CharField), `notes` (TextField, blank), `is_active` (BooleanField, default=True). `unique_together = [['company', 'name']]`. Ordering by name.
 
-**Seeded records:** Brotherhood Winery and Nidra Packaging created for Drink Up Life via data migration `catalog.0006_seed_co_packers`. Silently skips if company doesn't exist (safe on dev DBs). Reverse migration deletes these two rows.
+**Seeded records:** Brotherhood Winery and Nidra Packaging are seeded for every Company in the system via data migration `catalog.0007_seed_co_packers_all_companies`. Idempotent via `get_or_create` — safe to re-apply. (`0006` filtered for a specific company name and was superseded by `0007`.)
 
 #### New apps/production/ app
 
