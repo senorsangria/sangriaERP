@@ -3961,9 +3961,24 @@ The nav system has no submenu/child-item concept — flat list only.
 
 `/production/` renders an empty placeholder. Returns 403 without `can_manage_production`.
 
-#### Upcoming phases
+### Phase B — Snapshot Entry and Management (Complete)
 
-- **Phase B** — OwnInventorySnapshot entry UI (manual input grid)
+- Production home page redesigned with two action cards: "Enter Inventory Snapshot" and "Manage Snapshots". Placeholder text retained below as a hint for upcoming Phase C.
+- New entry page at `/production/inventory/upload/` — user picks year + month from dropdowns, then enters case quantities per item in a brand-grouped table. Leave blank to skip an item; enter 0 to record zero on hand.
+- Entry validation rules (all-or-nothing; pre-validate before any writes):
+  - Blank input → skip (no row created)
+  - "0" → creates snapshot with `quantity_cases=0` (semantically: "zero on hand, deliberately recorded")
+  - Negative or non-numeric → rejects entire submission, re-renders form with per-item error messages and preserved input values
+  - All-blank submission → `messages.info`, no rows saved
+- Period conflict: if any `OwnInventorySnapshot` exists for `(company, year, month)`, entire submission is rejected with an error message linking to the snapshots page. User must delete existing rows and re-enter from scratch. No partial-period overlay allowed.
+- Save wrapped in `transaction.atomic()` — all rows written or none.
+- New snapshots listing page at `/production/inventory/snapshots/` — shows all company snapshots in a sortable table (Period, Brand, Item, Item Code, Quantity, Entered by, Entered). Period and brand filter dropdowns populated from existing data.
+- Bulk delete: checkbox per row + "Delete Selected" button + Bootstrap confirmation modal. Scoped by `company` FK directly (simpler than distributor inventory which scopes via `distributor__company`). Mirrors `inventory_bulk_delete` pattern exactly.
+- `_format_quantity_cases` helper copied from distribution views (not imported) to avoid cross-app view dependency.
+- `input_values` dict in the entry view is keyed by integer item PK; template uses `input_values|get_item:item.pk` via existing `get_item` template filter.
+
+#### Remaining phases
+
 - **Phase C** — Production grid view (own inventory vs. distributor demand vs. safety stock)
 - **Phase D** — Manual ProductionPO entry
 - **Phase E** — Production algorithm (project batches needed from demand and safety stock)

@@ -339,3 +339,298 @@ class CoPackerSeedingTest(TestCase):
         if company is None:
             pass  # migration forwards() would return early — correct
         self.assertEqual(CoPacker.objects.count(), initial_count)
+
+
+# ---------------------------------------------------------------------------
+# Phase B — Inventory upload (entry) view tests
+# ---------------------------------------------------------------------------
+
+def make_snapshot(company, item, year=2026, month=5, qty='100', user=None):
+    return OwnInventorySnapshot.objects.create(
+        company=company, item=item, year=year, month=month,
+        quantity_cases=Decimal(qty), created_by=user,
+    )
+
+
+class ProductionInventoryUploadGetTest(TestCase):
+    """GET /production/inventory/upload/"""
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.brand = make_brand(self.company)
+        self.item = make_item(self.brand, 'Item A', 'A001')
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_upload_get_renders_form_with_items(self):
+        resp = self.client.get(reverse('production_inventory_upload'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Item A')
+        self.assertContains(resp, 'A001')
+
+    def test_upload_get_groups_items_by_brand(self):
+        brand2 = make_brand(self.company, 'Brand Z')
+        make_item(brand2, 'Item Z', 'Z001')
+        resp = self.client.get(reverse('production_inventory_upload'))
+        self.assertContains(resp, self.brand.name)
+        self.assertContains(resp, 'Brand Z')
+
+    def test_upload_get_excludes_inactive_items(self):
+        inactive = make_item(self.brand, 'Inactive Item', 'INACT')
+        inactive.is_active = False
+        inactive.save()
+        resp = self.client.get(reverse('production_inventory_upload'))
+        self.assertNotContains(resp, 'Inactive Item')
+
+    def test_upload_get_excludes_items_from_other_companies(self):
+        other_co = make_company('Other Co')
+        other_brand = make_brand(other_co, 'Other Brand')
+        make_item(other_brand, 'Other Item', 'OTH001')
+        resp = self.client.get(reverse('production_inventory_upload'))
+        self.assertNotContains(resp, 'Other Item')
+
+    def test_upload_get_requires_permission(self):
+        no_perm = make_user_with_role(self.company, 'sales_manager', username='sm')
+        c = Client()
+        c.login(username='sm', password='testpass123')
+        resp = c.get(reverse('production_inventory_upload'))
+        self.assertEqual(resp.status_code, 403)
+
+    def test_upload_get_requires_login(self):
+        c = Client()
+        resp = c.get(reverse('production_inventory_upload'))
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('login', resp['Location'])
+
+    def test_upload_get_empty_state_when_no_items(self):
+        self.item.is_active = False
+        self.item.save()
+        resp = self.client.get(reverse('production_inventory_upload'))
+        self.assertContains(resp, 'No active items found')
+
+
+class ProductionInventoryUploadPostTest(TestCase):
+    """POST /production/inventory/upload/"""
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.brand = make_brand(self.company)
+        self.item_a = make_item(self.brand, 'Item A', 'A001')
+        self.item_b = make_item(self.brand, 'Item B', 'B001')
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def _post(self, data):
+        return self.client.post(reverse('production_inventory_upload'), data)
+
+    def _base_post(self, **overrides):
+        data = {'year': '2026', 'month': '5'}
+        data.update(overrides)
+        return self._post(data)
+
+    def test_post_creates_snapshots(self):
+        resp = self._base_post(**{
+            f'qty_{self.item_a.pk}': '100',
+            f'qty_{self.item_b.pk}': '50',
+        })
+        self.assertRedirects(resp, reverse('production_inventory_snapshots'))
+        self.assertEqual(OwnInventorySnapshot.objects.filter(company=self.company).count(), 2)
+
+    def test_post_with_blank_inputs_skips(self):
+        resp = self._base_post(**{
+            f'qty_{self.item_a.pk}': '100',
+            f'qty_{self.item_b.pk}': '',
+        })
+        self.assertRedirects(resp, reverse('production_inventory_snapshots'))
+        self.assertEqual(OwnInventorySnapshot.objects.filter(company=self.company).count(), 1)
+        snap = OwnInventorySnapshot.objects.get(company=self.company)
+        self.assertEqual(snap.item, self.item_a)
+
+    def test_post_with_zero_creates_snapshot_with_zero(self):
+        resp = self._base_post(**{f'qty_{self.item_a.pk}': '0'})
+        self.assertRedirects(resp, reverse('production_inventory_snapshots'))
+        snap = OwnInventorySnapshot.objects.get(company=self.company, item=self.item_a)
+        self.assertEqual(snap.quantity_cases, Decimal('0'))
+
+    def test_post_with_negative_rejects_save(self):
+        resp = self._base_post(**{f'qty_{self.item_a.pk}': '-5'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(OwnInventorySnapshot.objects.count(), 0)
+        self.assertContains(resp, 'Cannot be negative')
+
+    def test_post_with_non_numeric_rejects_save(self):
+        resp = self._base_post(**{f'qty_{self.item_a.pk}': 'abc'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(OwnInventorySnapshot.objects.count(), 0)
+        self.assertContains(resp, 'Invalid number')
+
+    def test_post_with_period_conflict_rejects(self):
+        make_snapshot(self.company, self.item_a, year=2026, month=5)
+        resp = self._base_post(**{f'qty_{self.item_b.pk}': '50'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'already exists')
+        # No new snapshots created (only the original one)
+        self.assertEqual(OwnInventorySnapshot.objects.filter(company=self.company).count(), 1)
+
+    def test_post_all_blank_shows_info_message(self):
+        resp = self._base_post()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(OwnInventorySnapshot.objects.count(), 0)
+        self.assertContains(resp, 'Nothing to save')
+
+    def test_post_atomic_no_rows_saved_on_error(self):
+        # Negative value alongside a valid value — neither should be saved
+        resp = self._base_post(**{
+            f'qty_{self.item_a.pk}': '100',
+            f'qty_{self.item_b.pk}': '-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(OwnInventorySnapshot.objects.count(), 0)
+
+    def test_post_sets_created_by(self):
+        resp = self._base_post(**{f'qty_{self.item_a.pk}': '75'})
+        snap = OwnInventorySnapshot.objects.get(company=self.company)
+        self.assertEqual(snap.created_by, self.admin)
+
+    def test_post_rerenders_with_input_preserved_on_error(self):
+        resp = self._base_post(**{
+            f'qty_{self.item_a.pk}': '100',
+            f'qty_{self.item_b.pk}': 'bad',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, '100')
+
+
+# ---------------------------------------------------------------------------
+# Phase B — Snapshots listing view tests
+# ---------------------------------------------------------------------------
+
+class ProductionInventorySnapshotsViewTest(TestCase):
+    """GET /production/inventory/snapshots/"""
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.brand = make_brand(self.company)
+        self.item_a = make_item(self.brand, 'Item A', 'A001')
+        self.item_b = make_item(self.brand, 'Item B', 'B001')
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_snapshots_list_renders_with_data(self):
+        make_snapshot(self.company, self.item_a, year=2026, month=5, qty='120')
+        resp = self.client.get(reverse('production_inventory_snapshots'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Item A')
+        self.assertContains(resp, '120')
+
+    def test_snapshots_list_empty_state(self):
+        resp = self.client.get(reverse('production_inventory_snapshots'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'No inventory snapshots yet')
+
+    def test_snapshots_list_requires_permission(self):
+        make_user_with_role(self.company, 'sales_manager', username='sm')
+        c = Client()
+        c.login(username='sm', password='testpass123')
+        resp = c.get(reverse('production_inventory_snapshots'))
+        self.assertEqual(resp.status_code, 403)
+
+    def test_snapshots_list_filters_by_period(self):
+        make_snapshot(self.company, self.item_a, year=2026, month=5, qty='100')
+        make_snapshot(self.company, self.item_b, year=2026, month=6, qty='200')
+        resp = self.client.get(
+            reverse('production_inventory_snapshots'),
+            {'filter_period': '2026-06'},
+        )
+        self.assertContains(resp, 'Item B')
+        self.assertNotContains(resp, 'Item A')
+
+    def test_snapshots_list_filters_by_brand(self):
+        brand2 = make_brand(self.company, 'Brand Two')
+        item_c = make_item(brand2, 'Item C', 'C001')
+        make_snapshot(self.company, self.item_a, year=2026, month=5, qty='100')
+        make_snapshot(self.company, item_c, year=2026, month=6, qty='50')
+        resp = self.client.get(
+            reverse('production_inventory_snapshots'),
+            {'filter_brand': str(brand2.pk)},
+        )
+        self.assertContains(resp, 'Item C')
+        self.assertNotContains(resp, 'Item A')
+
+    def test_snapshots_list_scoped_to_company(self):
+        other_co = make_company('Other Co')
+        other_brand = make_brand(other_co, 'Other Brand')
+        other_item = make_item(other_brand, 'Other Item', 'OTH')
+        make_snapshot(other_co, other_item, year=2026, month=5, qty='99')
+        # Admin for self.company should not see other company's snapshot
+        resp = self.client.get(reverse('production_inventory_snapshots'))
+        self.assertNotContains(resp, 'Other Item')
+
+
+# ---------------------------------------------------------------------------
+# Phase B — Bulk delete view tests
+# ---------------------------------------------------------------------------
+
+class ProductionInventoryBulkDeleteTest(TestCase):
+    """POST /production/inventory/delete/"""
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.brand = make_brand(self.company)
+        self.item_a = make_item(self.brand, 'Item A', 'A001')
+        self.item_b = make_item(self.brand, 'Item B', 'B001')
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_bulk_delete_removes_selected(self):
+        s1 = make_snapshot(self.company, self.item_a, year=2026, month=5)
+        s2 = make_snapshot(self.company, self.item_b, year=2026, month=5)
+        resp = self.client.post(
+            reverse('production_inventory_bulk_delete'),
+            {'snapshot_ids': [str(s1.pk)]},
+        )
+        self.assertRedirects(resp, reverse('production_inventory_snapshots'))
+        self.assertFalse(OwnInventorySnapshot.objects.filter(pk=s1.pk).exists())
+        self.assertTrue(OwnInventorySnapshot.objects.filter(pk=s2.pk).exists())
+
+    def test_bulk_delete_scoped_to_company(self):
+        other_co = make_company('Other Co')
+        other_brand = make_brand(other_co, 'Other Brand')
+        other_item = make_item(other_brand, 'Other Item', 'OTH')
+        other_snap = make_snapshot(other_co, other_item, year=2026, month=5)
+        # Admin from self.company tries to delete other company's snapshot by PK
+        self.client.post(
+            reverse('production_inventory_bulk_delete'),
+            {'snapshot_ids': [str(other_snap.pk)]},
+        )
+        # Other company's snapshot must still exist
+        self.assertTrue(OwnInventorySnapshot.objects.filter(pk=other_snap.pk).exists())
+
+    def test_bulk_delete_requires_permission(self):
+        snap = make_snapshot(self.company, self.item_a)
+        make_user_with_role(self.company, 'sales_manager', username='sm')
+        c = Client()
+        c.login(username='sm', password='testpass123')
+        resp = c.post(
+            reverse('production_inventory_bulk_delete'),
+            {'snapshot_ids': [str(snap.pk)]},
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(OwnInventorySnapshot.objects.filter(pk=snap.pk).exists())
+
+    def test_bulk_delete_no_ids_shows_info_message(self):
+        resp = self.client.post(reverse('production_inventory_bulk_delete'), {})
+        self.assertRedirects(resp, reverse('production_inventory_snapshots'))
+        msgs = list(resp.wsgi_request._messages)
+        self.assertTrue(any('No snapshots' in str(m) for m in msgs))
+
+    def test_bulk_delete_invalid_ids_handled_gracefully(self):
+        resp = self.client.post(
+            reverse('production_inventory_bulk_delete'),
+            {'snapshot_ids': ['abc', 'xyz']},
+        )
+        self.assertRedirects(resp, reverse('production_inventory_snapshots'))

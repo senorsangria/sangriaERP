@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+
+{% block title %}Inventory Snapshots{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'production_home' %}">Production</a></li>
+    <li class="breadcrumb-item active">Inventory Snapshots</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+  <div>
+    <h1 class="h3 fw-bold mb-1">Inventory Snapshots</h1>
+    <p class="text-muted small mb-0">On-hand inventory records for {{ company.name }}</p>
+  </div>
+  <a href="{% url 'production_inventory_upload' %}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-lg me-1"></i>Enter Snapshot
+  </a>
+</div>
+
+{% if not has_any_snapshots %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-boxes fs-1 text-muted d-block mb-3"></i>
+    <h5 class="fw-semibold">No inventory snapshots yet</h5>
+    <p class="text-muted mb-4">Record your on-hand case counts to get started.</p>
+    <a href="{% url 'production_inventory_upload' %}" class="btn btn-primary">
+      <i class="bi bi-plus-lg me-1"></i>Enter Snapshot
+    </a>
+  </div>
+</div>
+
+{% else %}
+
+<!-- Filters -->
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      {% if period_choices %}
+      <div class="col-12 col-sm-auto">
+        <label class="form-label small text-muted mb-1">Period</label>
+        <select name="filter_period" class="form-select form-select-sm">
+          <option value="">All Periods</option>
+          {% for p in period_choices %}
+          <option value="{{ p.value }}" {% if filter_period == p.value %}selected{% endif %}>{{ p.display }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+      {% if all_brands %}
+      <div class="col-12 col-sm-auto">
+        <label class="form-label small text-muted mb-1">Brand</label>
+        <select name="filter_brand" class="form-select form-select-sm">
+          <option value="">All Brands</option>
+          {% for b in all_brands %}
+          <option value="{{ b.pk }}" {% if filter_brand == b.pk|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+      <div class="col-auto">
+        <button type="submit" class="btn btn-outline-primary btn-sm">Filter</button>
+        <a href="{% url 'production_inventory_snapshots' %}" class="btn btn-outline-secondary btn-sm ms-1">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Action bar -->
+<div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+  <span class="text-muted small">{{ snapshots|length }} record{{ snapshots|length|pluralize }} shown</span>
+  <button type="button" class="btn btn-danger btn-sm" id="snapshot-delete-btn" disabled>
+    Delete Selected (<span id="snapshot-selected-count">0</span>)
+  </button>
+</div>
+
+{% if snapshots %}
+<form id="snapshot-delete-form" method="post" action="{% url 'production_inventory_bulk_delete' %}">
+  {% csrf_token %}
+  <div class="card border-0 shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-hover table-sm mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th style="width: 2rem;">
+              <input type="checkbox" class="form-check-input" id="select-all-snapshots">
+            </th>
+            <th>Period</th>
+            <th>Brand</th>
+            <th>Item</th>
+            <th>Item Code</th>
+            <th class="text-end">Quantity (cases)</th>
+            <th>Entered by</th>
+            <th>Entered</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in snapshots %}
+          <tr>
+            <td>
+              <input type="checkbox" class="form-check-input snapshot-row-check"
+                     name="snapshot_ids" value="{{ row.pk }}">
+            </td>
+            <td class="small fw-medium">{{ row.period_display }}</td>
+            <td class="small text-muted">{{ row.brand_name }}</td>
+            <td class="small">{{ row.item_name }}</td>
+            <td><code class="small">{{ row.item_code }}</code></td>
+            <td class="text-end fw-medium">{{ row.quantity_display }}</td>
+            <td class="small text-muted">{{ row.created_by|default:"—" }}</td>
+            <td class="small text-muted">{{ row.created_at|date:"M j, Y" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</form>
+{% else %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center text-muted py-4">
+    <i class="bi bi-funnel fs-4 d-block mb-2"></i>
+    No snapshots match the selected filters.
+  </div>
+</div>
+{% endif %}
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="snapshotDeleteModal" tabindex="-1"
+     aria-labelledby="snapshotDeleteModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="snapshotDeleteModalLabel">Confirm Delete</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        Delete <strong><span id="snapshot-modal-count">0</span> snapshot(s)</strong>?
+        This cannot be undone.
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="snapshot-confirm-delete-btn">Confirm Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endif %}{# has_any_snapshots #}
+{% endblock %}
+
+{% block extra_js %}
+{% if has_any_snapshots %}
+<script>
+(function () {
+  var selectAll   = document.getElementById('select-all-snapshots');
+  var deleteBtn   = document.getElementById('snapshot-delete-btn');
+  var countSpan   = document.getElementById('snapshot-selected-count');
+  var modalCount  = document.getElementById('snapshot-modal-count');
+  var deleteForm  = document.getElementById('snapshot-delete-form');
+  var confirmBtn  = document.getElementById('snapshot-confirm-delete-btn');
+  var modalEl     = document.getElementById('snapshotDeleteModal');
+  var bsModal     = modalEl ? new bootstrap.Modal(modalEl) : null;
+
+  function getRowCheckboxes() {
+    return document.querySelectorAll('.snapshot-row-check');
+  }
+
+  function updateCount() {
+    var boxes   = getRowCheckboxes();
+    var checked = 0;
+    boxes.forEach(function (cb) { if (cb.checked) checked++; });
+    if (countSpan) countSpan.textContent = checked;
+    if (deleteBtn) deleteBtn.disabled = checked === 0;
+    if (selectAll) {
+      var total = boxes.length;
+      selectAll.indeterminate = checked > 0 && checked < total;
+      selectAll.checked = total > 0 && checked === total;
+    }
+  }
+
+  getRowCheckboxes().forEach(function (cb) {
+    cb.addEventListener('change', updateCount);
+  });
+
+  if (selectAll) {
+    selectAll.addEventListener('change', function () {
+      getRowCheckboxes().forEach(function (cb) { cb.checked = selectAll.checked; });
+      updateCount();
+    });
+  }
+
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', function () {
+      var checked = 0;
+      getRowCheckboxes().forEach(function (cb) { if (cb.checked) checked++; });
+      if (modalCount) modalCount.textContent = checked;
+      if (bsModal) bsModal.show();
+    });
+  }
+
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', function () {
+      if (deleteForm) deleteForm.submit();
+    });
+  }
+})();
+</script>
+{% endif %}
+{% endblock %}
