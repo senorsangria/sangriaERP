@@ -3992,7 +3992,21 @@ The nav system has no submenu/child-item concept — flat list only.
 - `production_inventory_upload` and `production_inventory_bulk_delete` success redirects updated to `/production/?tab=inventory`.
 - `production → distribution` import dependency established (production/forecast.py imports `DistributorPOLine`). Direction is clean; distribution does not import from production.
 
+### Phase D — Manual Production PO Entry Modal and Forecast Integration (Complete)
+
+- `compute_production_forecast` now accepts `production_po_additions` parameter `{(item_id, year, month): total_cases_float}`; PO cases are added to running inventory at the start of each projection month before depletion. Anchor month (snapshot column) is unaffected.
+- **Production POs row** added to the forecast grid above item rows, showing a count badge per month. All projection-month cells are clickable (including 0-count cells, shown as `+`) to open the modal. Snapshot column shows `—`.
+- **Three new endpoints**: `production_po_modal_data` (GET), `production_po_save` (POST, atomic multi-PO), `production_po_delete` (POST).
+- **Modal supports multiple POs per (co-packer, month)**: tab-per-PO interface with co-packer selector, status (Projected/Actual), PO number, notes, and items table with `batch_count` input. `quantity_cases` derived server-side as `batch_count × item.cases_per_batch`.
+- Items table per tab shows ONLY items belonging to the selected co-packer that have `cases_per_batch` set; total cases displayed live (batch_count × cases_per_batch, read-only).
+- Co-packer change mid-edit shows a `confirm()` dialog if any batch_count > 0. If confirmed, clears entries and rebuilds items table for new co-packer.
+- Tab labels show co-packer name as primary with PO number sub-label when `external_po_number` is set.
+- All-zero lines → delete existing PO or skip new PO. `generated_by_algorithm` flips `False` on any user edit or creation via modal.
+- **Warning banner** above forecast grid lists items missing `co_packer` or `cases_per_batch` with links to their edit pages.
+- **Phase C tweaks bundled**: item code `<div style="font-size:0.75rem;">` removed from forecast grid item rows; Demand row renamed to Dist Orders and shows COUNT of DistributorPO records (not sum of cases); item_code removed from demand breakdown modal JS rendering.
+- `production_pos_by_month` and `dist_orders_by_month` built in the view and passed to the template (not computed inside `forecast.py`). `forecast_result.demand_by_month` (case sum) retained in forecast return for future Phase E use.
+- All views gated by `can_manage_production` permission. Full page reload after save/delete.
+
 #### Remaining phases
 
-- **Phase D** — Manual ProductionPO entry
 - **Phase E** — Production algorithm (project batches needed from demand and safety stock)

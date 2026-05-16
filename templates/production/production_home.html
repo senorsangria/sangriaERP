@@ -13,8 +13,11 @@
 .forecast-grid tbody td.status-red       { background-color: #f8d7da !important; color: #842029; }
 .forecast-grid tbody td.status-no_data   { color: #aaa; }
 .forecast-demand-row td                  { background-color: #e8f4f8 !important; border-top: 2px solid #b8d4e0 !important; border-bottom: 2px solid #b8d4e0 !important; }
+.forecast-production-row td              { background-color: #e8f0fa !important; border-top: 2px solid #b8c8e0 !important; border-bottom: 2px solid #b8c8e0 !important; }
 .demand-btn { font-size: .8rem; line-height: 1; text-decoration: none; }
 .demand-btn:hover { background-color: rgba(0,0,0,.05); }
+.production-po-btn { font-size: .8rem; line-height: 1; text-decoration: none; }
+.production-po-btn:hover { background-color: rgba(0,0,0,.05); }
 </style>
 {% endblock %}
 
@@ -69,6 +72,20 @@
     </div>
     {% else %}
 
+    {% if items_missing_config %}
+    <div class="alert alert-warning small mb-3">
+      <strong>&#9888; Some items can't be included in production POs:</strong>
+      <ul class="mb-0 mt-1">
+        {% for entry in items_missing_config %}
+        <li>
+          <strong>{{ entry.item.name }}</strong> ({{ entry.item.brand.name }}) &mdash; {{ entry.issue }}
+          &mdash; <a href="{% url 'item_edit' brand_pk=entry.item.brand.pk pk=entry.item.pk %}">edit item</a>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
     <div class="card border-0 shadow-sm">
       <div class="table-responsive">
         <table class="table table-sm table-bordered forecast-grid mb-0">
@@ -89,29 +106,57 @@
             </tr>
           </thead>
           <tbody>
-            <!-- Demand row -->
+            <!-- Dist Orders row (Phase C: count of distributor POs, not sum of cases) -->
             <tr class="forecast-demand-row">
-              <td class="fw-semibold small">Demand</td>
+              <td class="fw-semibold small">Dist Orders</td>
               {% for cell in forecast_result.horizon %}
-              {% with key=cell.year|stringformat:"d" %}
               {% with mkey=cell.month|stringformat:"02d" %}
-              {% with fullkey=key|add:"-"|add:mkey %}
+              {% with fullkey=cell.year|stringformat:"d"|add:"-"|add:mkey %}
               <td class="text-center small border-start forecast-cell p-0">
-                {% with demand=forecast_result.demand_by_month|get_item:fullkey %}
-                {% if demand and demand > 0 %}
+                {% with dist_count=dist_orders_by_month|get_item:fullkey %}
+                {% if dist_count and dist_count > 0 %}
                 <button type="button"
                         class="btn btn-link btn-sm p-1 w-100 demand-btn"
                         data-year="{{ cell.year }}"
                         data-month="{{ cell.month }}"
                         data-url="{% url 'production_demand_modal' year=cell.year month=cell.month %}">
-                  {{ demand|floatformat:"-2" }}
+                  {{ dist_count }}
                 </button>
                 {% else %}
                 <span class="text-muted px-1">—</span>
                 {% endif %}
                 {% endwith %}
               </td>
-              {% endwith %}{% endwith %}{% endwith %}
+              {% endwith %}{% endwith %}
+              {% endfor %}
+            </tr>
+
+            <!-- Production POs row -->
+            <tr class="forecast-production-row">
+              <td class="fw-semibold small">Production POs</td>
+              {% for cell in forecast_result.horizon %}
+              {% with mkey=cell.month|stringformat:"02d" %}
+              {% with fullkey=cell.year|stringformat:"d"|add:"-"|add:mkey %}
+              <td class="text-center small border-start forecast-cell p-0">
+                {% if cell.is_snapshot %}
+                <span class="text-muted px-1">—</span>
+                {% else %}
+                {% with po_count=production_pos_by_month|get_item:fullkey %}
+                <button type="button"
+                        class="btn btn-link btn-sm p-1 w-100 production-po-btn"
+                        data-year="{{ cell.year }}"
+                        data-month="{{ cell.month }}"
+                        data-modal-url="{% url 'production_po_modal_data' year=cell.year month=cell.month %}">
+                  {% if po_count %}
+                  <span class="badge bg-success">{{ po_count }}</span>
+                  {% else %}
+                  <span class="text-muted">+</span>
+                  {% endif %}
+                </button>
+                {% endwith %}
+                {% endif %}
+              </td>
+              {% endwith %}{% endwith %}
               {% endfor %}
             </tr>
 
@@ -127,7 +172,6 @@
             <tr>
               <td class="small">
                 <div class="fw-medium">{{ row.item.name }}</div>
-                <div class="text-muted" style="font-size:0.75rem;">{{ row.item.item_code }}</div>
               </td>
               {% for cell in row.monthly_data %}
               <td class="text-center small border-start forecast-cell status-{{ cell.status }}">
@@ -144,7 +188,8 @@
     <p class="small text-muted mt-2">
       <i class="bi bi-info-circle me-1"></i>
       * = snapshot month (actual on-hand). Cells show projected ending inventory.
-      Demand row totals distributor PO cases; click a cell to see the breakdown.
+      Dist Orders row counts distributor POs; click a cell to see the breakdown.
+      Production POs row counts production orders; click any cell (including +) to add or edit.
     </p>
     {% endif %}
   </div>
@@ -309,6 +354,42 @@
     </div>
   </div>
 </div>
+
+<!-- Production PO modal -->
+<div class="modal fade" id="productionPoModal" tabindex="-1"
+     aria-labelledby="prodPoModalLabel" aria-hidden="true"
+     data-save-url="{% url 'production_po_save' %}"
+     data-delete-url-base="/production/po/">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="prodPoModalLabel">Production Orders</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="prod-po-modal-error" class="alert alert-danger d-none mb-3"></div>
+        <div id="prod-po-modal-spinner" class="text-center py-4">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading…</span>
+          </div>
+        </div>
+        <div id="prod-po-modal-content" style="display:none;">
+          <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+            <ul class="nav nav-pills flex-grow-1 flex-wrap" id="prod-po-tabs" role="tablist"></ul>
+            <button type="button" class="btn btn-outline-primary btn-sm" id="prod-po-add-btn">
+              + Add Production PO
+            </button>
+          </div>
+          <div class="tab-content" id="prod-po-tab-content"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="prod-po-save-btn">Save All Orders</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -361,8 +442,7 @@
         html += '<th class="text-end fw-bold">Total</th></tr></thead><tbody>';
 
         data.items.forEach(function (item) {
-          html += '<tr><td><div class="fw-medium small">' + _esc(item.name) + '</div>';
-          html += '<div class="text-muted" style="font-size:.75rem;">' + _esc(item.item_code) + '</div></td>';
+          html += '<tr><td><div class="fw-medium small">' + _esc(item.name) + '</div></td>';
           data.distributors.forEach(function (d) {
             var cases = cellMap[item.id + '-' + d.id];
             html += '<td class="text-end small">' + (cases != null ? cases : '—') + '</td>';
@@ -442,6 +522,475 @@
     confirmBtn.addEventListener('click', function () {
       if (deleteForm) deleteForm.submit();
     });
+  }
+})();
+
+// ----------------------------------------------------------------
+// Production PO modal IIFE
+// ----------------------------------------------------------------
+(function () {
+  'use strict';
+
+  var modalEl     = document.getElementById('productionPoModal');
+  if (!modalEl) return;
+  var bsModal     = new bootstrap.Modal(modalEl);
+  var modalLabel  = document.getElementById('prodPoModalLabel');
+  var errorEl     = document.getElementById('prod-po-modal-error');
+  var spinnerEl   = document.getElementById('prod-po-modal-spinner');
+  var contentEl_m = document.getElementById('prod-po-modal-content');
+  var tabsEl      = document.getElementById('prod-po-tabs');
+  var tabContentEl = document.getElementById('prod-po-tab-content');
+  var addBtn      = document.getElementById('prod-po-add-btn');
+  var saveBtn     = document.getElementById('prod-po-save-btn');
+  var saveUrl     = modalEl.dataset.saveUrl;
+  var deleteUrlBase = modalEl.dataset.deleteUrlBase;
+
+  var _state = {
+    year: null,
+    month: null,
+    coPackers: [],
+    itemsByCoPackerId: {},
+    tabs: [],          // [{tabId, savedPo}]
+    nextTabId: 0,
+  };
+
+  function _esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function getCsrf() {
+    var m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+  }
+
+  function showError(msg) {
+    errorEl.textContent = msg;
+    errorEl.classList.remove('d-none');
+  }
+
+  function hideError() {
+    errorEl.classList.add('d-none');
+  }
+
+  // Open modal on Production PO row button click
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.production-po-btn');
+    if (!btn) return;
+    e.preventDefault();
+    openModal(btn.dataset.modalUrl, parseInt(btn.dataset.year, 10), parseInt(btn.dataset.month, 10));
+  });
+
+  addBtn.addEventListener('click', function () {
+    addOrderTab(null);
+    activateLastTab();
+  });
+
+  saveBtn.addEventListener('click', saveAllOrders);
+
+  // ------------------------------------------------------------------
+
+  function openModal(url, year, month) {
+    _state.year = year;
+    _state.month = month;
+    _state.tabs = [];
+    _state.nextTabId = 0;
+
+    hideError();
+    spinnerEl.style.display = '';
+    contentEl_m.style.display = 'none';
+    tabsEl.innerHTML = '';
+    tabContentEl.innerHTML = '';
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save All Orders';
+
+    bsModal.show();
+
+    fetch(url, {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        spinnerEl.style.display = 'none';
+        contentEl_m.style.display = '';
+
+        if (modalLabel) modalLabel.textContent = 'Production Orders — ' + data.period_label;
+        _state.coPackers = data.co_packers || [];
+        _state.itemsByCoPackerId = data.items_by_co_packer || {};
+
+        if (data.saved_pos && data.saved_pos.length > 0) {
+          data.saved_pos.forEach(function (po) { addOrderTab(po); });
+        } else {
+          addOrderTab(null);
+        }
+        activateFirstTab();
+      })
+      .catch(function (err) {
+        spinnerEl.style.display = 'none';
+        contentEl_m.style.display = '';
+        showError('Failed to load order data: ' + err.message);
+      });
+  }
+
+  function addOrderTab(savedPo) {
+    var tabId  = 'prod-po-tab-' + (_state.nextTabId++);
+    _state.tabs.push({tabId: tabId, savedPo: savedPo});
+
+    // Nav pill
+    var li = document.createElement('li');
+    li.className = 'nav-item';
+    li.setAttribute('role', 'presentation');
+    li.id = 'prod-po-li-' + tabId;
+
+    var btn = document.createElement('button');
+    btn.className = 'nav-link';
+    btn.id = 'prod-po-btn-' + tabId;
+    btn.setAttribute('data-bs-toggle', 'pill');
+    btn.setAttribute('data-bs-target', '#' + tabId);
+    btn.setAttribute('type', 'button');
+    btn.setAttribute('role', 'tab');
+    btn.innerHTML = buildTabLabel(savedPo);
+    li.appendChild(btn);
+    tabsEl.appendChild(li);
+
+    // Pane
+    var pane = document.createElement('div');
+    pane.className = 'tab-pane fade';
+    pane.id = tabId;
+    pane.setAttribute('role', 'tabpanel');
+    pane.innerHTML = buildOrderForm(tabId, savedPo);
+    tabContentEl.appendChild(pane);
+
+    // Wire co-packer change
+    var cpSelect = pane.querySelector('.prod-po-copacker-select');
+    if (cpSelect) {
+      cpSelect.addEventListener('change', function () {
+        handleCopPackerChange(tabId, pane, cpSelect);
+      });
+    }
+
+    // Wire status change (PO number requirement indicator)
+    var statusSelect = pane.querySelector('.prod-po-status-select');
+    if (statusSelect) {
+      statusSelect.addEventListener('change', function () {
+        updatePoNumberRequirement(pane, statusSelect.value);
+      });
+    }
+
+    // Wire delete / remove buttons
+    var delBtn = pane.querySelector('.prod-po-delete-btn');
+    if (delBtn && savedPo) {
+      delBtn.addEventListener('click', function () {
+        if (!confirm('Delete this production order? This cannot be undone.')) return;
+        deleteOrder(tabId, savedPo.po_id);
+      });
+    }
+    var rmBtn = pane.querySelector('.prod-po-remove-btn');
+    if (rmBtn) {
+      rmBtn.addEventListener('click', function () { removeTab(tabId); });
+    }
+  }
+
+  function buildTabLabel(savedPo) {
+    if (!savedPo) return 'New PO';
+    var name = _esc(savedPo.co_packer_name || 'PO');
+    var sub = savedPo.external_po_number
+      ? '<div class="text-muted" style="font-size:.7rem;">(' + _esc(savedPo.external_po_number) + ')</div>'
+      : '';
+    return '<div>' + name + '</div>' + sub;
+  }
+
+  function buildOrderForm(tabId, savedPo) {
+    var curCopacker = savedPo ? savedPo.co_packer_id : '';
+    var curStatus   = savedPo ? savedPo.status : 'projected';
+    var curPoNum    = savedPo ? (savedPo.external_po_number || '') : '';
+    var curNotes    = savedPo ? (savedPo.notes || '') : '';
+    var isActual    = curStatus === 'actual';
+
+    var html = '<div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">';
+    if (savedPo) {
+      html += '<span class="badge bg-' + (savedPo.generated_by_algorithm ? 'secondary' : 'primary') + '">';
+      html += savedPo.generated_by_algorithm ? 'Algorithm' : 'Manual';
+      html += '</span>';
+      html += '<button type="button" class="btn btn-outline-danger btn-sm prod-po-delete-btn">Delete Order</button>';
+    } else {
+      html += '<span class="text-muted small">New production PO</span>';
+      html += '<button type="button" class="btn btn-outline-secondary btn-sm prod-po-remove-btn">Remove</button>';
+    }
+    html += '</div>';
+
+    // Metadata row
+    html += '<div class="row g-2 mb-3">';
+
+    // Co-packer selector
+    html += '<div class="col-sm-4">';
+    html += '<label class="form-label small text-muted mb-1">Co-Packer</label>';
+    html += '<select class="form-select form-select-sm prod-po-copacker-select">';
+    html += '<option value="">— Select a co-packer —</option>';
+    _state.coPackers.forEach(function (cp) {
+      var sel = (cp.id === curCopacker) ? ' selected' : '';
+      html += '<option value="' + cp.id + '"' + sel + '>' + _esc(cp.name) + '</option>';
+    });
+    html += '</select></div>';
+
+    // Status
+    html += '<div class="col-sm-2">';
+    html += '<label class="form-label small text-muted mb-1">Status</label>';
+    html += '<select class="form-select form-select-sm prod-po-status-select">';
+    html += '<option value="projected"' + (curStatus === 'projected' ? ' selected' : '') + '>Projected</option>';
+    html += '<option value="actual"' + (curStatus === 'actual' ? ' selected' : '') + '>Actual</option>';
+    html += '</select></div>';
+
+    // PO Number
+    html += '<div class="col-sm-3">';
+    html += '<label class="form-label small text-muted mb-1">PO Number';
+    html += '<span class="prod-po-required-indicator text-danger ms-1"' + (isActual ? '' : ' style="display:none;"') + '>*</span>';
+    html += '</label>';
+    html += '<input type="text" class="form-control form-control-sm prod-po-number-input" value="' + _esc(curPoNum) + '" placeholder="Optional">';
+    html += '</div>';
+
+    // Notes
+    html += '<div class="col-sm-3">';
+    html += '<label class="form-label small text-muted mb-1">Notes</label>';
+    html += '<input type="text" class="form-control form-control-sm prod-po-notes-input" value="' + _esc(curNotes) + '">';
+    html += '</div>';
+
+    html += '</div>'; // end row
+
+    // Items table area
+    html += '<div class="prod-po-items-area">';
+    if (!curCopacker) {
+      html += '<div class="text-muted small text-center py-3 border rounded">Select a co-packer to view items.</div>';
+    } else {
+      html += buildItemsTable(String(curCopacker), savedPo ? savedPo.lines : []);
+    }
+    html += '</div>';
+
+    return html;
+  }
+
+  function buildItemsTable(copackerId, savedLines) {
+    var items = _state.itemsByCoPackerId[String(copackerId)] || [];
+    if (items.length === 0) {
+      return '<div class="text-muted small text-center py-3 border rounded">No items configured for this co-packer (with cases per batch set).</div>';
+    }
+
+    var html = '<div class="table-responsive">';
+    html += '<table class="table table-sm table-bordered mb-0">';
+    html += '<thead class="table-light"><tr>';
+    html += '<th class="small">Item</th>';
+    html += '<th class="small text-center" style="width:90px;">Cases/Batch</th>';
+    html += '<th class="small text-center" style="width:90px;">Batches</th>';
+    html += '<th class="small text-center" style="width:100px;">Total Cases</th>';
+    html += '</tr></thead><tbody>';
+
+    items.forEach(function (item) {
+      var batchCount = 0;
+      if (savedLines) {
+        var found = savedLines.find(function (l) { return l.item_id === item.id; });
+        if (found) batchCount = found.batch_count || 0;
+      }
+      var totalCases = batchCount * item.cases_per_batch;
+
+      html += '<tr>';
+      html += '<td class="small">' + _esc(item.name);
+      if (item.brand_name) html += ' <span class="text-muted small">(' + _esc(item.brand_name) + ')</span>';
+      html += '</td>';
+      html += '<td class="text-center small">' + item.cases_per_batch + '</td>';
+      html += '<td class="p-1">';
+      html += '<input type="number" min="0" step="1" class="form-control form-control-sm text-center prod-po-batch-input"';
+      html += ' data-item-id="' + item.id + '"';
+      html += ' data-cpp="' + item.cases_per_batch + '"';
+      html += ' value="' + batchCount + '">';
+      html += '</td>';
+      html += '<td class="text-center small prod-po-total-cases" data-item-id="' + item.id + '">' + totalCases + '</td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  function wireBatchInputs(pane) {
+    pane.querySelectorAll('.prod-po-batch-input').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var cpp = parseInt(inp.dataset.cpp, 10) || 0;
+        var batches = parseInt(inp.value, 10) || 0;
+        if (batches < 0) { inp.value = 0; batches = 0; }
+        var total = batches * cpp;
+        var cell = pane.querySelector('.prod-po-total-cases[data-item-id="' + inp.dataset.itemId + '"]');
+        if (cell) cell.textContent = total;
+      });
+    });
+  }
+
+  function handleCopPackerChange(tabId, pane, cpSelect) {
+    var newId = cpSelect.value;
+
+    // Check for any non-zero batch counts
+    var hasEntries = false;
+    pane.querySelectorAll('.prod-po-batch-input').forEach(function (inp) {
+      if (parseInt(inp.value, 10) > 0) hasEntries = true;
+    });
+
+    if (hasEntries) {
+      if (!confirm('Changing the co-packer will clear your current entries. Continue?')) {
+        // Revert select
+        var tab = _state.tabs.find(function (t) { return t.tabId === tabId; });
+        var prevId = tab && tab.savedPo ? String(tab.savedPo.co_packer_id) : '';
+        cpSelect.value = prevId;
+        return;
+      }
+    }
+
+    var areaEl = pane.querySelector('.prod-po-items-area');
+    if (!newId) {
+      areaEl.innerHTML = '<div class="text-muted small text-center py-3 border rounded">Select a co-packer to view items.</div>';
+    } else {
+      areaEl.innerHTML = buildItemsTable(newId, []);
+      wireBatchInputs(pane);
+    }
+
+    // Update tab label
+    var cpName = '';
+    _state.coPackers.forEach(function (cp) { if (String(cp.id) === String(newId)) cpName = cp.name; });
+    var tabBtn = document.getElementById('prod-po-btn-' + tabId);
+    if (tabBtn) {
+      tabBtn.innerHTML = newId ? ('<div>' + _esc(cpName) + '</div>') : 'New PO';
+    }
+  }
+
+  function updatePoNumberRequirement(pane, status) {
+    var indicator = pane.querySelector('.prod-po-required-indicator');
+    if (indicator) indicator.style.display = status === 'actual' ? '' : 'none';
+  }
+
+  function removeTab(tabId) {
+    _state.tabs = _state.tabs.filter(function (t) { return t.tabId !== tabId; });
+    var li   = document.getElementById('prod-po-li-' + tabId);
+    var pane = document.getElementById(tabId);
+    if (li) li.remove();
+    if (pane) pane.remove();
+    var firstBtn = tabsEl.querySelector('.nav-link');
+    if (firstBtn) firstBtn.click();
+  }
+
+  function activateFirstTab() {
+    var firstBtn = tabsEl.querySelector('.nav-link');
+    if (firstBtn) {
+      new bootstrap.Tab(firstBtn).show();
+      wireBatchInputs(document.getElementById(firstBtn.getAttribute('data-bs-target').slice(1)));
+    }
+    _state.tabs.forEach(function (t) {
+      wireBatchInputs(document.getElementById(t.tabId));
+    });
+  }
+
+  function activateLastTab() {
+    var btns = tabsEl.querySelectorAll('.nav-link');
+    if (btns.length) {
+      var last = btns[btns.length - 1];
+      new bootstrap.Tab(last).show();
+      wireBatchInputs(document.getElementById(last.getAttribute('data-bs-target').slice(1)));
+    }
+  }
+
+  function saveAllOrders() {
+    hideError();
+    var orders = [];
+    var errMsg = '';
+    var valid  = true;
+
+    for (var i = 0; i < _state.tabs.length; i++) {
+      var tab  = _state.tabs[i];
+      var pane = document.getElementById(tab.tabId);
+      if (!pane) continue;
+
+      var cpSelect    = pane.querySelector('.prod-po-copacker-select');
+      var statusSel   = pane.querySelector('.prod-po-status-select');
+      var poNumInp    = pane.querySelector('.prod-po-number-input');
+      var notesInp    = pane.querySelector('.prod-po-notes-input');
+
+      var copackerId  = cpSelect ? (cpSelect.value ? parseInt(cpSelect.value, 10) : null) : null;
+      var status      = statusSel ? statusSel.value : 'projected';
+      var poNumber    = poNumInp  ? poNumInp.value.trim() : '';
+      var notes       = notesInp  ? notesInp.value.trim() : '';
+
+      if (!copackerId) {
+        valid  = false;
+        errMsg = 'Please select a co-packer for every PO before saving.';
+        break;
+      }
+      if (status === 'actual' && !poNumber) {
+        valid  = false;
+        errMsg = 'PO number is required when status is Actual (PO ' + (i + 1) + ').';
+        break;
+      }
+
+      var lines = [];
+      pane.querySelectorAll('.prod-po-batch-input').forEach(function (inp) {
+        var bc = parseInt(inp.value, 10) || 0;
+        if (bc > 0) {
+          lines.push({item_id: parseInt(inp.dataset.itemId, 10), batch_count: bc});
+        }
+      });
+
+      orders.push({
+        po_id:              tab.savedPo ? tab.savedPo.po_id : null,
+        co_packer_id:       copackerId,
+        status:             status,
+        external_po_number: poNumber,
+        notes:              notes,
+        lines:              lines,
+      });
+    }
+
+    if (!valid) { showError(errMsg); return; }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+
+    fetch(saveUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrf(),
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({year: _state.year, month: _state.month, pos: orders}),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.success) {
+        window.location.reload();
+      } else {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save All Orders';
+        showError(data.error || 'Save failed.');
+      }
+    })
+    .catch(function (err) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save All Orders';
+      showError('Network error: ' + err.message);
+    });
+  }
+
+  function deleteOrder(tabId, poId) {
+    var url = deleteUrlBase + poId + '/delete/';
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrf(),
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.success) { window.location.reload(); }
+      else { showError(data.error || 'Delete failed.'); }
+    })
+    .catch(function (err) { showError('Network error: ' + err.message); });
   }
 })();
 </script>

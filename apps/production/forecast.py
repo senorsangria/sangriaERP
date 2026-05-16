@@ -1,7 +1,7 @@
 """
-Production Inventory Forecast — Phase C.
+Production Inventory Forecast — Phase D.
 
-Public API: compute_production_forecast(company, today=None)
+Public API: compute_production_forecast(company, today=None, production_po_additions=None)
 """
 from django.db.models import Sum
 
@@ -34,7 +34,7 @@ def _cell_status(inv, safety_stock):
     return 'green'
 
 
-def compute_production_forecast(company, today=None):
+def compute_production_forecast(company, today=None, production_po_additions=None):
     """
     Compute a 13-month ending-inventory forecast for the company's own inventory.
 
@@ -43,6 +43,9 @@ def compute_production_forecast(company, today=None):
 
     Depletion source: sum of DistributorPOLine.quantity_cases for that (item, year, month),
     aggregated across all distributors in the company.
+
+    production_po_additions: optional dict {(item_id, year, month): total_cases_float}
+    applied at the start of each projection month before depletion.
 
     For items whose most recent snapshot is BEFORE the anchor month, demand is walked
     forward from the snapshot month to the anchor to estimate the current running value.
@@ -209,7 +212,9 @@ def compute_production_forecast(company, today=None):
                         'is_snapshot': True,
                     })
             else:
-                # Projection month
+                # Projection month — production PO cases arrive before depletion
+                production_adds = (production_po_additions or {}).get((item.pk, y, m), 0.0)
+                running += production_adds
                 depletion = demand_map.get((item.pk, y, m), 0.0)
                 running -= depletion
                 inv = round(running, 2)

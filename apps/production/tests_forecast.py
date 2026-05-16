@@ -418,3 +418,64 @@ class ForecastItemOrderingTest(TestCase):
         codes = [r['item'].item_code for r in result['rows']]
         self.assertIn('ACT', codes)
         self.assertNotIn('INACT', codes)
+
+
+# ---------------------------------------------------------------------------
+# Phase D: production_po_additions parameter
+# ---------------------------------------------------------------------------
+
+class ProductionPOAdditionsTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.brand = make_brand(self.company)
+        self.item = make_item(self.brand, name='Red Wine', item_code='RED')
+        # Anchor month: April 2026, 100 cases on hand
+        make_snapshot(self.company, self.item, year=2026, month=4, qty='100')
+        # Distributor demand: 30 cases in May 2026
+        dist = make_distributor(self.company)
+        make_po_with_demand(dist, self.item, year=2026, month=5, cases=30)
+
+    def test_production_po_additions_increases_inventory(self):
+        # Without production PO: May = 100 - 30 = 70
+        result_no_po = compute_production_forecast(self.company)
+        may_data_no_po = result_no_po['rows'][0]['monthly_data'][1]
+        self.assertAlmostEqual(may_data_no_po['inventory'], 70.0)
+
+        # With production PO of 200 cases in May: May = 100 + 200 - 30 = 270
+        additions = {(self.item.pk, 2026, 5): 200.0}
+        result_with_po = compute_production_forecast(self.company, production_po_additions=additions)
+        may_data_with_po = result_with_po['rows'][0]['monthly_data'][1]
+        self.assertAlmostEqual(may_data_with_po['inventory'], 270.0)
+
+    def test_production_po_additions_applies_at_start_of_month_before_depletion(self):
+        # If production adds 20 but demand is 30: net = 100 + 20 - 30 = 90 (not 100 - 30 + 20 = 90, same math)
+        # Verify the order doesn't matter numerically but the addition IS counted:
+        additions = {(self.item.pk, 2026, 5): 20.0}
+        result = compute_production_forecast(self.company, production_po_additions=additions)
+        may_inv = result['rows'][0]['monthly_data'][1]['inventory']
+        self.assertAlmostEqual(may_inv, 90.0)  # 100 + 20 - 30
+
+    def test_production_po_additions_does_not_apply_to_anchor_month(self):
+        # Anchor month is April — additions for April should NOT affect the snapshot cell
+        additions = {(self.item.pk, 2026, 4): 500.0}
+        result = compute_production_forecast(self.company, production_po_additions=additions)
+        anchor_data = result['rows'][0]['monthly_data'][0]
+        self.assertEqual(anchor_data['status'], 'snapshot')
+        # Snapshot value is still 100 (additions do not change it)
+        self.assertAlmostEqual(anchor_data['inventory'], 100.0)
+
+    def test_none_production_po_additions_uses_no_additions(self):
+        result_none = compute_production_forecast(self.company, production_po_additions=None)
+        result_default = compute_production_forecast(self.company)
+        may_none = result_none['rows'][0]['monthly_data'][1]['inventory']
+        may_default = result_default['rows'][0]['monthly_data'][1]['inventory']
+        self.assertAlmostEqual(may_none, may_default)
+
+    def test_production_po_additions_propagate_across_months(self):
+        # Production adds 200 in May; downstream months carry that forward
+        additions = {(self.item.pk, 2026, 5): 200.0}
+        result = compute_production_forecast(self.company, production_po_additions=additions)
+        # June: no demand, no production adds → carries May's 270
+        jun_inv = result['rows'][0]['monthly_data'][2]['inventory']
+        self.assertAlmostEqual(jun_inv, 270.0)

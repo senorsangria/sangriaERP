@@ -3,22 +3,24 @@ Production views. Gated by can_manage_production permission.
 Phase A: production_home placeholder.
 Phase B: snapshot entry and management.
 Phase C: tabbed home (Forecast + Inventory), demand breakdown modal.
+Phase D: production PO modal endpoints, production_po_additions forecast integration.
 """
+import json
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Count, Sum
 from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 
-from apps.catalog.models import Brand, Item
-from apps.distribution.models import DistributorPOLine
+from apps.catalog.models import Brand, CoPacker, Item
+from apps.distribution.models import DistributorPO, DistributorPOLine
 from .forecast import compute_production_forecast, MONTH_SHORT
 from .forms import MONTH_CHOICES, OwnInventorySnapshotPeriodForm
-from .models import OwnInventorySnapshot
+from .models import OwnInventorySnapshot, ProductionPO, ProductionPOLine
 
 
 # Month names list for views (full names, indexed 0-based)
@@ -73,8 +75,50 @@ def production_home(request):
     if active_tab not in ('forecast', 'inventory'):
         active_tab = 'forecast'
 
+    # Build production_po_additions dict for the forecast algorithm
+    production_po_additions = {}
+    for po in ProductionPO.objects.filter(company=company).prefetch_related('lines__item'):
+        for line in po.lines.all():
+            key = (line.item_id, po.year, po.month)
+            production_po_additions[key] = production_po_additions.get(key, 0.0) + float(line.quantity_cases)
+
     # Forecast tab — always computed eagerly so JS tab-switching works without reload
-    forecast_result = compute_production_forecast(company)
+    forecast_result = compute_production_forecast(
+        company,
+        production_po_additions=production_po_additions or None,
+    )
+
+    # Production PO count by month for the Production POs row in the grid
+    production_po_count_rows = (
+        ProductionPO.objects.filter(company=company)
+        .values('year', 'month')
+        .annotate(count=Count('id'))
+    )
+    production_pos_by_month = {
+        f"{r['year']}-{r['month']:02d}": r['count']
+        for r in production_po_count_rows
+    }
+
+    # Dist Orders count by month (Phase C tweak: count POs, not sum of cases)
+    dist_po_count_rows = (
+        DistributorPO.objects.filter(distributor__company=company)
+        .values('year', 'month')
+        .annotate(count=Count('id'))
+    )
+    dist_orders_by_month = {
+        f"{r['year']}-{r['month']:02d}": r['count']
+        for r in dist_po_count_rows
+    }
+
+    # Warning banner: items missing co_packer or cases_per_batch
+    items_missing_config = []
+    for item in Item.objects.filter(
+        brand__company=company, is_active=True
+    ).select_related('brand', 'co_packer').order_by('brand__name', 'sort_order', 'name'):
+        if item.co_packer_id is None:
+            items_missing_config.append({'item': item, 'issue': 'missing co-packer'})
+        elif item.cases_per_batch is None:
+            items_missing_config.append({'item': item, 'issue': 'missing cases per batch'})
 
     # Inventory tab — snapshot list with optional filters
     snap_qs = OwnInventorySnapshot.objects.filter(company=company).select_related(
@@ -136,6 +180,9 @@ def production_home(request):
         'active_tab': active_tab,
         # Forecast tab
         'forecast_result': forecast_result,
+        'production_pos_by_month': production_pos_by_month,
+        'dist_orders_by_month': dist_orders_by_month,
+        'items_missing_config': items_missing_config,
         # Inventory tab
         'snapshots': snapshots,
         'period_choices': period_choices,
@@ -318,6 +365,271 @@ def production_inventory_bulk_delete(request):
         f'Deleted {count} inventory snapshot{"s" if count != 1 else ""}.',
     )
     return redirect(reverse('production_home') + '?tab=inventory')
+
+
+# ---------------------------------------------------------------------------
+# Production PO modal data endpoint (Phase D)
+# ---------------------------------------------------------------------------
+
+@login_required
+def production_po_modal_data(request, year, month):
+    denied = _require_production_permission(request)
+    if denied:
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    company = request.user.company
+
+    co_packers = list(CoPacker.objects.filter(company=company, is_active=True).order_by('name'))
+
+    items_by_co_packer = {}
+    for cp in co_packers:
+        cp_items = list(
+            Item.objects.filter(
+                brand__company=company,
+                co_packer=cp,
+                is_active=True,
+                cases_per_batch__isnull=False,
+            ).select_related('brand').order_by('brand__name', 'sort_order', 'name')
+        )
+        items_by_co_packer[str(cp.pk)] = [
+            {
+                'id': item.pk,
+                'name': item.name,
+                'brand_name': item.brand.name,
+                'cases_per_batch': item.cases_per_batch,
+            }
+            for item in cp_items
+        ]
+
+    saved_pos_qs = (
+        ProductionPO.objects
+        .filter(company=company, year=year, month=month)
+        .select_related('co_packer')
+        .prefetch_related('lines__item')
+        .order_by('id')
+    )
+
+    saved_pos_json = []
+    for po in saved_pos_qs:
+        lines = [
+            {
+                'item_id': line.item_id,
+                'batch_count': line.batch_count,
+                'quantity_cases': float(line.quantity_cases),
+            }
+            for line in po.lines.all()
+        ]
+        saved_pos_json.append({
+            'po_id': po.pk,
+            'co_packer_id': po.co_packer_id,
+            'co_packer_name': po.co_packer.name,
+            'status': po.status,
+            'external_po_number': po.external_po_number or '',
+            'notes': po.notes or '',
+            'generated_by_algorithm': po.generated_by_algorithm,
+            'lines': lines,
+        })
+
+    period_label = f"{MONTH_NAMES[month - 1]} {year}"
+
+    return JsonResponse({
+        'year': year,
+        'month': month,
+        'period_label': period_label,
+        'co_packers': [{'id': cp.pk, 'name': cp.name} for cp in co_packers],
+        'items_by_co_packer': items_by_co_packer,
+        'saved_pos': saved_pos_json,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Production PO save endpoint (Phase D)
+# ---------------------------------------------------------------------------
+
+@login_required
+def production_po_save(request):
+    denied = _require_production_permission(request)
+    if denied:
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    company = request.user.company
+
+    try:
+        data = json.loads(request.body)
+    except (ValueError, TypeError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    year = data.get('year')
+    month = data.get('month')
+    pos_payload = data.get('pos', [])
+
+    if not isinstance(year, int) or year < 2000 or year > 2100:
+        return JsonResponse({'error': 'Invalid year'}, status=400)
+    if not isinstance(month, int) or month < 1 or month > 12:
+        return JsonResponse({'error': 'Invalid month'}, status=400)
+    if not isinstance(pos_payload, list):
+        return JsonResponse({'error': 'Invalid pos list'}, status=400)
+
+    # Collect all item IDs and co-packer IDs for bulk validation
+    all_item_ids = set()
+    all_co_packer_ids = set()
+    for po in pos_payload:
+        co_packer_id = po.get('co_packer_id')
+        if co_packer_id is None:
+            return JsonResponse(
+                {'error': 'A PO is missing a co-packer selection. Please select a co-packer for each PO.'},
+                status=400,
+            )
+        all_co_packer_ids.add(co_packer_id)
+        for line in po.get('lines', []):
+            item_id = line.get('item_id')
+            if item_id:
+                all_item_ids.add(item_id)
+
+    # Validate co-packers belong to company
+    valid_co_packer_ids = set(
+        CoPacker.objects.filter(pk__in=all_co_packer_ids, company=company)
+        .values_list('pk', flat=True)
+    )
+    if all_co_packer_ids - valid_co_packer_ids:
+        return JsonResponse({'error': 'One or more co-packers are invalid for your company.'}, status=400)
+
+    # Validate items and build lookup map
+    item_map = {
+        item.pk: item
+        for item in Item.objects.filter(pk__in=all_item_ids, brand__company=company)
+        .select_related('co_packer')
+    }
+    if all_item_ids - set(item_map.keys()):
+        return JsonResponse({'error': 'One or more items are invalid for your company.'}, status=400)
+
+    # Per-PO and per-line validation
+    for po in pos_payload:
+        co_packer_id = po.get('co_packer_id')
+        status = po.get('status', 'projected')
+        external_po_number = (po.get('external_po_number') or '').strip()
+
+        if status not in ('projected', 'actual'):
+            return JsonResponse({'error': f'Invalid status: {status}'}, status=400)
+        if status == 'actual' and not external_po_number:
+            return JsonResponse({'error': 'PO number is required when status is Actual.'}, status=400)
+
+        seen_item_ids = set()
+        for line in po.get('lines', []):
+            item_id = line.get('item_id')
+            batch_count = line.get('batch_count')
+
+            if item_id in seen_item_ids:
+                return JsonResponse({'error': 'Duplicate item in a PO.'}, status=400)
+            seen_item_ids.add(item_id)
+
+            if not isinstance(batch_count, int) or batch_count < 0:
+                return JsonResponse({'error': 'Batch count must be a non-negative integer.'}, status=400)
+
+            item = item_map.get(item_id)
+            if item is None:
+                return JsonResponse({'error': 'Invalid item.'}, status=400)
+            if item.co_packer_id != co_packer_id:
+                return JsonResponse(
+                    {'error': f'Item "{item.name}" does not belong to the selected co-packer.'},
+                    status=400,
+                )
+            if item.cases_per_batch is None:
+                return JsonResponse(
+                    {'error': f'Item "{item.name}" has no cases per batch configured.'},
+                    status=400,
+                )
+
+    # Atomic save
+    with transaction.atomic():
+        for po_data in pos_payload:
+            po_id = po_data.get('po_id')
+            co_packer_id = po_data['co_packer_id']
+            status = po_data.get('status', 'projected')
+            external_po_number = (po_data.get('external_po_number') or '').strip()
+            notes = (po_data.get('notes') or '').strip()
+            lines = po_data.get('lines', [])
+
+            nonzero_lines = [line for line in lines if int(line.get('batch_count', 0)) > 0]
+
+            if po_id is not None:
+                try:
+                    po = ProductionPO.objects.get(pk=po_id, company=company)
+                except ProductionPO.DoesNotExist:
+                    continue
+
+                if not nonzero_lines:
+                    po.delete()
+                    continue
+
+                po.co_packer_id = co_packer_id
+                po.status = status
+                po.external_po_number = external_po_number
+                po.notes = notes
+                po.generated_by_algorithm = False
+                po.save()
+
+                po.lines.all().delete()
+                for line in nonzero_lines:
+                    item = item_map[line['item_id']]
+                    batch_count = int(line['batch_count'])
+                    ProductionPOLine.objects.create(
+                        po=po,
+                        item=item,
+                        batch_count=batch_count,
+                        quantity_cases=Decimal(batch_count) * Decimal(item.cases_per_batch),
+                    )
+            else:
+                if not nonzero_lines:
+                    continue
+
+                po = ProductionPO.objects.create(
+                    company=company,
+                    co_packer_id=co_packer_id,
+                    year=year,
+                    month=month,
+                    status=status,
+                    external_po_number=external_po_number,
+                    notes=notes,
+                    generated_by_algorithm=False,
+                    created_by=request.user,
+                )
+                for line in nonzero_lines:
+                    item = item_map[line['item_id']]
+                    batch_count = int(line['batch_count'])
+                    ProductionPOLine.objects.create(
+                        po=po,
+                        item=item,
+                        batch_count=batch_count,
+                        quantity_cases=Decimal(batch_count) * Decimal(item.cases_per_batch),
+                    )
+
+    return JsonResponse({'success': True})
+
+
+# ---------------------------------------------------------------------------
+# Production PO delete endpoint (Phase D)
+# ---------------------------------------------------------------------------
+
+@login_required
+def production_po_delete(request, po_pk):
+    denied = _require_production_permission(request)
+    if denied:
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    company = request.user.company
+
+    try:
+        po = ProductionPO.objects.get(pk=po_pk, company=company)
+    except ProductionPO.DoesNotExist:
+        return JsonResponse({'error': 'PO not found'}, status=404)
+
+    po.delete()
+    return JsonResponse({'success': True})
 
 
 # ---------------------------------------------------------------------------

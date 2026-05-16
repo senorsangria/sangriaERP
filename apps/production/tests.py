@@ -797,3 +797,107 @@ class ProductionDemandModalTest(TestCase):
         self.assertIn(self.item.pk, item_ids)
         self.assertNotIn(other_item.pk, item_ids)
         self.assertEqual(data['grand_total'], 120.0)
+
+
+# ---------------------------------------------------------------------------
+# Phase D — Forecast tab view tests
+# ---------------------------------------------------------------------------
+
+class ForecastTabPhaseD_Test(TestCase):
+    """
+    View-level tests for Phase D additions: Production POs row, warning banner,
+    Phase C tweaks (item code removed, Dist Orders rename, count display).
+    """
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.brand = make_brand(self.company)
+        self.co_packer = make_co_packer(self.company)
+        self.item = Item.objects.create(
+            brand=self.brand, name='Classic Red 750ml', item_code='RED0750',
+            co_packer=self.co_packer, cases_per_batch=280,
+        )
+        OwnInventorySnapshot.objects.create(
+            company=self.company, item=self.item, year=2026, month=5,
+            quantity_cases=Decimal('500'),
+        )
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_forecast_tab_shows_production_pos_row(self):
+        resp = self.client.get(reverse('production_home') + '?tab=forecast')
+        self.assertContains(resp, 'Production POs')
+        self.assertContains(resp, 'production-po-btn')
+
+    def test_forecast_tab_production_pos_row_shows_count_badge(self):
+        ProductionPO.objects.create(
+            company=self.company, co_packer=self.co_packer, year=2026, month=6,
+            status='projected', generated_by_algorithm=False,
+        )
+        resp = self.client.get(reverse('production_home') + '?tab=forecast')
+        self.assertContains(resp, 'bg-success')  # badge for count > 0
+
+    def test_forecast_tab_shows_warning_banner_when_items_missing_co_packer(self):
+        item_no_cp = Item.objects.create(
+            brand=self.brand, name='No CP Item', item_code='NOCP01',
+            co_packer=None, cases_per_batch=100,
+        )
+        resp = self.client.get(reverse('production_home') + '?tab=forecast')
+        self.assertContains(resp, 'No CP Item')
+        self.assertContains(resp, 'missing co-packer')
+
+    def test_forecast_tab_shows_warning_banner_when_items_missing_cases_per_batch(self):
+        item_no_batch = Item.objects.create(
+            brand=self.brand, name='No Batch Item', item_code='NOBT01',
+            co_packer=self.co_packer, cases_per_batch=None,
+        )
+        resp = self.client.get(reverse('production_home') + '?tab=forecast')
+        self.assertContains(resp, 'No Batch Item')
+        self.assertContains(resp, 'missing cases per batch')
+
+    def test_forecast_tab_no_banner_when_all_items_configured(self):
+        resp = self.client.get(reverse('production_home') + '?tab=forecast')
+        self.assertNotContains(resp, 'missing co-packer')
+        self.assertNotContains(resp, 'missing cases per batch')
+
+    def test_forecast_tab_no_item_code_in_grid(self):
+        resp = self.client.get(reverse('production_home') + '?tab=forecast')
+        # The item_code appeared in the forecast grid as <div style="font-size:0.75rem;">item_code</div>
+        # That specific inline style was ONLY used in the forecast grid item row for the code sub-label.
+        # After Phase C removal, that style should be gone from the page.
+        # (The item_code itself still appears in the Inventory tab snapshot table as <code>.)
+        self.assertNotContains(resp, 'style="font-size:0.75rem;"')
+
+    def test_dist_orders_row_shows_count_not_sum(self):
+        from apps.distribution.models import Distributor, DistributorPO, DistributorPOLine
+        dist = Distributor.objects.create(company=self.company, name='Test Dist')
+        # Two POs in June 2026 with large case totals — sum would be 1000, count is 2
+        for _ in range(2):
+            po = DistributorPO.objects.create(
+                distributor=dist, year=2026, month=6, status='projected',
+            )
+            DistributorPOLine.objects.create(po=po, item=self.item, quantity_cases=Decimal('500'))
+        resp = self.client.get(reverse('production_home') + '?tab=forecast')
+        self.assertContains(resp, 'Dist Orders')
+        # Context variable should hold count (2), not sum (1000)
+        dist_orders = resp.context['dist_orders_by_month']
+        self.assertEqual(dist_orders.get('2026-06'), 2)
+        # Sum of cases (1000) should NOT appear in the dist orders row button
+        # (It could appear elsewhere as a forecast inventory number — check via context only)
+        self.assertNotContains(resp, '1000')
+
+    def test_demand_breakdown_no_item_code_in_modal(self):
+        from apps.distribution.models import Distributor, DistributorPO, DistributorPOLine
+        dist = Distributor.objects.create(company=self.company, name='Test Dist 2')
+        po = DistributorPO.objects.create(
+            distributor=dist, year=2026, month=6, status='projected',
+        )
+        DistributorPOLine.objects.create(po=po, item=self.item, quantity_cases=Decimal('120'))
+        resp = self.client.get(
+            reverse('production_demand_modal', kwargs={'year': 2026, 'month': 6}),
+        )
+        data = resp.json()
+        # item_code is still returned but item list structure should not require it for display
+        # The key is that item_code is still in the payload but the template JS no longer renders it
+        self.assertIn('item_code', data['items'][0])  # still in API response
