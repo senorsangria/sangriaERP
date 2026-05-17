@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% load rbac %}
+
+{% block title %}Enter Inventory Snapshot{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'production_home' %}">Production</a></li>
+    <li class="breadcrumb-item active">Enter Inventory Snapshot</li>
+  </ol>
+</nav>
+
+<h1 class="h3 fw-bold mb-1">Enter Inventory Snapshot</h1>
+<p class="text-muted small mb-4">
+  Enter on-hand case counts for each item. Leave blank to skip an item; enter 0 to record zero on hand.
+</p>
+
+{% if general_error %}
+<div class="alert alert-danger">{{ general_error }}</div>
+{% endif %}
+
+{% if not items %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-box fs-2 d-block mb-2"></i>
+    No active items found. Add items to your catalog first.
+  </div>
+</div>
+{% else %}
+<form method="post" action="{% url 'production_inventory_upload' %}">
+  {% csrf_token %}
+
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-auto">
+          <label for="{{ period_form.year.id_for_label }}" class="form-label small fw-semibold">Year</label>
+          {{ period_form.year }}
+          {% if period_form.year.errors %}
+          <div class="invalid-feedback d-block">{{ period_form.year.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-auto">
+          <label for="{{ period_form.month.id_for_label }}" class="form-label small fw-semibold">Month</label>
+          {{ period_form.month }}
+          {% if period_form.month.errors %}
+          <div class="invalid-feedback d-block">{{ period_form.month.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3">Item</th>
+            <th class="text-end pe-3" style="width: 180px;">Quantity (cases)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+          {% ifchanged item.brand.name %}
+          <tr class="table-secondary">
+            <th colspan="2" class="ps-3 py-1">
+              <span class="small text-uppercase text-muted fw-semibold">{{ item.brand.name }}</span>
+            </th>
+          </tr>
+          {% endifchanged %}
+          <tr>
+            <td class="ps-3">
+              <div class="fw-medium small">{{ item.name }}</div>
+              <div class="text-muted" style="font-size: 0.75rem;">{{ item.item_code }}</div>
+            </td>
+            <td class="text-end pe-3">
+              <input type="number"
+                     step="0.01"
+                     min="0"
+                     class="form-control form-control-sm text-end{% if item_errors|get_item:item.pk %} is-invalid{% endif %}"
+                     name="qty_{{ item.pk }}"
+                     value="{{ input_values|get_item:item.pk|default:'' }}"
+                     placeholder="—"
+                     style="width: 120px; margin-left: auto;">
+              {% with err=item_errors|get_item:item.pk %}
+              {% if err %}
+              <div class="invalid-feedback d-block text-end">{{ err }}</div>
+              {% endif %}
+              {% endwith %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-primary">
+      <i class="bi bi-check-lg me-1"></i>Save Snapshot
+    </button>
+    <a href="{% url 'production_home' %}" class="btn btn-outline-secondary">Cancel</a>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

@@ -310,6 +310,419 @@ Searchable list for one-off or exception assignments
 | Phase 10.5 | RBAC Migration + Ok to Pay + Payroll Reviewer | ✅ Complete |
 | Phase 10.6 | Historical Event Import — Stages 1 & 2 (matching + review) | ✅ Complete |
 | Phase 10.7 | Historical Event Import — Stage 3 (event creation, batch tracking, batch delete) | ✅ Complete |
+| Distributor Inventory Phase 1 | Foundation data: cases_per_pallet, order quantity fields, DistributorItemProfile, 3-tab edit UI | ✅ Complete |
+
+---
+
+## Distributor Inventory & Order Forecasting
+
+### Phase 1 — Foundation Data
+
+#### Models
+
+**`Item.cases_per_pallet`** — `PositiveIntegerField(null=True, blank=True)`
+Number of cases that fit on one pallet for this item. Used by the distributor inventory
+and forecasting tools. Null means "not yet configured." Visible and editable on the
+item edit form (accessible to anyone with `can_manage_brands`, since item editing is
+tied to brand management). Displayed as "Not set" in the safety stock UI until configured.
+
+**`Distributor.order_quantity_value`** — `PositiveIntegerField(null=True, blank=True)`
+The typical order size for this distributor. Null until configured. Whole number.
+
+**`Distributor.order_quantity_unit`** — `CharField(choices=OrderQuantityUnit, null=True, blank=True)`
+Whether the order quantity is expressed in pallets or cases.
+`OrderQuantityUnit` is an inner `TextChoices` class on `Distributor`:
+- `PALLETS = 'pallets', 'Pallets'`
+- `CASES = 'cases', 'Cases'`
+
+Both fields must be set together (value + unit) or left blank together. The Order Profile
+save view enforces this: setting one without the other returns an error message.
+
+**`DistributorItemProfile`** — `apps/distribution/models.py`
+Per-(distributor, item) safety stock target in cases.
+- `distributor` — FK → `Distributor`, PROTECT
+- `item` — FK → `catalog.Item`, PROTECT
+- `safety_stock_cases` — `PositiveIntegerField(null=True, blank=True)`. Null means not configured.
+- `unique_together = [['distributor', 'item']]` — one profile per (distributor, item) pair
+- Inherits `created_at` / `updated_at` from `TimeStampedModel`
+- A missing record is semantically equivalent to a null `safety_stock_cases`.
+- Posting blank or "0" for an item deletes the profile (rather than storing 0).
+
+#### Edit UI — 3-Tab Interface
+
+The distributor edit page (`/distributors/<pk>/edit/`) is structured as a 3-tab Bootstrap
+nav-tabs interface. Uses the `distributor_edit.html` template (separate from
+`distributor_form.html` which is still used for create).
+
+**Tab 1 — Basic Info:** Name, address, city, state, notes, active flag. Always visible.
+Posts to `POST /distributors/<pk>/edit/` (existing DistributorForm).
+
+**Tab 2 — Order Profile:** Unit (Pallets / Cases) first, then order quantity value. Fields
+appear in that order so the form reads naturally: "Pallets, 20" rather than "20... of what?"
+Only visible to users with `can_manage_distributor_inventory`. Posts to
+`POST /distributors/<pk>/order-profile/`. Redirects back to `?tab=order-profile`.
+
+**Tab 3 — Safety Stock:** Editable table of all active company items grouped by brand
+(brand name as a section row header, using `{% ifchanged %}`). Two columns only: Item
+(name + item code) and Safety Stock (cases, editable input). The `cases_per_pallet` field
+still exists on the Item model and is editable on the item edit form, but is not displayed
+here — it will be used by the future forecast tool (Phase 4) where it belongs. One form,
+posts to `POST /distributors/<pk>/safety-stock/`. Redirects back to `?tab=safety-stock`.
+
+Active tab on page load is determined by the `?tab=` query parameter. Valid values:
+`basic` (default), `order-profile`, `safety-stock`.
+
+#### Permission
+
+**`can_manage_distributor_inventory`** — granted to `supplier_admin` only.
+
+- The Basic Info tab requires `can_manage_distributors` (existing permission, unchanged).
+- The Order Profile and Safety Stock tabs require `can_manage_distributor_inventory`.
+  If the user has `can_manage_distributors` but not `can_manage_distributor_inventory`,
+  only the Basic Info tab is visible. The Order Profile and Safety Stock save endpoints
+  return 403 without this permission.
+- Currently only `supplier_admin` has both permissions. The separation supports future
+  role differentiation (e.g., a future "Inventory Manager" role could get
+  `can_manage_distributor_inventory` without `can_manage_distributors`).
+
+#### Time Granularity Convention
+
+**Established in Phase 2a.** All inventory and forecast models use **separate
+`year (IntegerField)` + `month (IntegerField)` fields** for month-level data. This is
+consistent with how the reports utils already think about months as `(year, month)` integer
+pairs, and avoids the leaky `day=1` DateField convention. `InventorySnapshot` is the first
+model using this convention; all future phases follow it.
+
+---
+
+### Phase 2a — Inventory Foundation
+
+#### `DistributorItemProfile.is_active` (added)
+
+`BooleanField, default=True`. Controls whether this distributor carries this item.
+When `False`, the item is hidden from inventory views and excluded from forecasts.
+
+**Profile persistence rule:** A profile only exists when it holds non-default data:
+- `is_active=False` (distributor does not carry this item), OR
+- `safety_stock_cases` is set (a target is configured).
+
+A missing profile is equivalent to `is_active=True` with no safety stock target.
+The save endpoint implements three explicit paths:
+
+- **Path 1 — Active + valid value:** `get_or_create` profile, set `is_active=True`,
+  set `safety_stock_cases`, save.
+- **Path 2 — Active + blank/zero value:** delete any existing profile (return to default state).
+- **Path 3 — Inactive (checkbox absent from POST):** `get_or_create` profile, set
+  `is_active=False`, set `safety_stock_cases=None`, save. Safety stock input value is ignored.
+
+#### `InventorySnapshot` model (new, `apps/distribution/models.py`)
+
+Stores on-hand inventory for one (distributor, item) combination as of a given month.
+
+- `distributor` — FK → Distributor, PROTECT
+- `item` — FK → catalog.Item, PROTECT
+- `quantity_cases` — PositiveIntegerField (zero is valid; some months may have zero on hand)
+- `year` — IntegerField
+- `month` — IntegerField (1–12)
+- `created_by` — FK → core.User, SET_NULL, null/blank (null when set by system)
+- `unique_together = [['distributor', 'item', 'year', 'month']]`
+- `ordering = ['-year', '-month', 'distributor__name', 'item__name']`
+
+#### Distributor list page — 3-tab structure
+
+`/distributors/` is now a 3-tab Bootstrap nav-tabs page mirroring the edit page pattern:
+
+- **Distributors tab** (default): existing distributor list, search, add button. Always visible
+  with `can_manage_distributors`.
+- **Inventory tab**: upload and current-snapshot table (Phase 2b-1). Requires
+  `can_manage_distributor_inventory`.
+- **Forecast tab** (renamed from Snapshots): empty state pending Phase 4 forecast
+  view. Requires `can_manage_distributor_inventory`.
+
+Active tab controlled by `?tab=` query parameter (`distributors` default). Users without
+`can_manage_distributor_inventory` see only the Distributors tab; `?tab=inventory` and
+`?tab=snapshots` fall back to `distributors` for unpermissioned users.
+
+#### Safety Stock tab — Active checkbox column
+
+The Safety Stock tab on the distributor edit page now has three columns:
+**Active** (checkbox) | **Item** (name + code) | **Safety Stock (cases)** (editable input).
+
+Items with `is_active=False` are greyed out but remain visible so the user can re-enable them.
+When the Active checkbox is unchecked, the safety stock input is disabled (via JS on toggle;
+via `disabled` attribute on initial render for inactive items).
+
+---
+
+### Phase 2b-1 — CSV Upload (Complete)
+
+#### Model changes
+
+- **`InventorySnapshot.quantity_cases`** changed from `PositiveIntegerField` to
+  `DecimalField(max_digits=10, decimal_places=6)` with `MinValueValidator(0)`.
+  Supports fractional case counts from real VIP inventory reports (e.g., 54.166667
+  for partial cases / loose bottles). Zero is still valid.
+
+- **`InventoryImportBatch`** — new model in `apps/distribution/models.py`. Tracks
+  one upload event. Fields: `company` (FK→Company, PROTECT), `year`, `month`,
+  `uploaded_by` (FK→User, SET_NULL), `filename`, `distributor_count`,
+  `snapshots_created`. Inherits `created_at`/`updated_at` from `TimeStampedModel`.
+  Ordering: `['-created_at']`. No `status` field — uploads are atomic (complete or
+  fully rolled back, no partial states).
+
+- **`InventorySnapshot.import_batch`** — new nullable FK → `InventoryImportBatch`,
+  `on_delete=SET_NULL`. Allows tracking which upload created each snapshot. Null for
+  manually created snapshots or after batch deletion.
+
+- The pre-existing `ImportBatch.ImportType.INVENTORY_DATA` stub in `apps/imports/models.py`
+  remains unwired. Inventory import tracking uses `InventoryImportBatch` in
+  `apps/distribution/` instead (same pattern as `HistoricalImportBatch` for events).
+
+#### CSV format
+
+Row 1 is the header row. Exactly **3 columns** required:
+
+| Position | Header (case-insensitive) | Content |
+|---|---|---|
+| 1 | `Distributors` | Distributor name |
+| 2 | `Item Name ID` | Item code (must be mapped in ItemMapping) |
+| 3 | Any name | Quantity on hand (cases, decimals allowed) |
+
+150–500 rows typical. Blank rows silently skipped. Strict validation: any error
+(missing distributor, unmapped item, period conflict) aborts the entire upload.
+
+#### Distributor matching
+
+Case-insensitive exact match on `Distributor.name` within the company. Active
+distributors only (`is_active=True`).
+
+#### Item code matching
+
+Uses the existing `ItemMapping` table — same mechanism as Sales Import. Matches on
+`raw_item_name` (case-insensitive via `raw_item_name__iexact`). Codes with status
+`IGNORED` or `UNMAPPED` abort the upload with an error. The `apps/imports/` code is
+not modified; `ItemMapping` is imported read-only from the distribution views.
+
+#### Auto-activation
+
+Items present in the CSV automatically get `DistributorItemProfile.is_active=True`
+for their (distributor, item) pair. Pre-existing inactive profiles are updated.
+
+#### Upload flow
+
+Two-step preview flow at `/distributors/inventory/` (URL prefix):
+
+1. **Upload** (`GET/POST /distributors/inventory/upload/`) — year/month selector +
+   file upload. Parses and validates the CSV. On any error, re-renders with full error
+   list (no truncation). On success, saves temp file to
+   `MEDIA_ROOT/temp_inventory_imports/` and redirects to preview.
+2. **Preview** (`GET /distributors/inventory/preview/`) — shows period, filename, and
+   per-distributor summary (distributor name, item count, total cases). Cancel clears
+   session and deletes temp file. Confirm POSTs to `/distributors/inventory/confirm/`.
+3. **Confirm** (`POST /distributors/inventory/confirm/`) — re-parses and re-validates
+   against fresh DB state, then executes inside `transaction.atomic()`. On success:
+   creates `InventoryImportBatch` + `InventorySnapshot` rows + auto-activates profiles,
+   clears session, deletes temp file, redirects to `/distributors/?tab=inventory`.
+
+Session key: `pending_inventory_import`. Temp files deleted on success, cancel, or error.
+
+#### Inventory tab (Phase 2b-1 portion)
+
+The Inventory tab at `/distributors/?tab=inventory` now shows:
+- **Empty state** (no snapshots exist): icon + description + prominent Upload button.
+- **Populated state**: Upload button at top, filter dropdowns (distributor, brand,
+  period), sortable table (Distributor | Brand | Item | Item Code | Quantity | Period |
+  Uploaded). Default view shows the **most recent snapshot per (distributor, item) pair**.
+  Period filter overrides to show all rows for that specific month. Sort via `?sort=`
+  query param.
+- Quantity display: integer if whole (e.g., "248"), 2 decimal places if fractional
+  (e.g., "54.17").
+- Upload button hidden from users without `can_manage_distributor_inventory`.
+
+Permission: `can_manage_distributor_inventory` (supplier_admin only, unchanged).
+
+#### Phase 2b-2 — Bulk Delete on Inventory Tab (Complete)
+
+- **Inventory tab now shows all snapshots across all periods** (previously showed only
+  the most-recent snapshot per (distributor, item) pair). Default view (no period filter)
+  displays every period; rows ordered by distributor name, brand name, item name, then
+  year+month descending.
+- **Period filter** ("All Periods" default, plus individual month options) alongside the
+  existing distributor and brand filters. Selecting a period shows only that month's rows.
+- **Checkbox column**: each data row has a checkbox (`name="snapshot_ids" value=<pk>`).
+  Header row has a "select all visible" checkbox that toggles all visible rows (with
+  indeterminate state). The whole table is inside a `<form>` POSTing to the delete endpoint.
+- **Delete Selected button**: disabled until at least one row is checked. Counter shows
+  current selection count. Clicking the button shows a Bootstrap confirmation modal:
+  "Delete N inventory record(s)? This cannot be undone." Two actions: Cancel, Confirm Delete.
+  Confirm submits the form programmatically via JS. Selection state is client-side only —
+  changing a filter loses the selection.
+- **Bulk delete endpoint** `POST /distributors/inventory/delete/`
+  (`name='inventory_bulk_delete'`). Permission: `can_manage_distributor_inventory` (returns
+  403 without it). IDs are validated as integers; non-integer or non-existent IDs silently
+  ignored. Delete is scoped to `distributor__company=request.user.company` — users cannot
+  delete another company's snapshots even if they know the PKs. Executes inside
+  `transaction.atomic()`. Redirects to `/distributors/?tab=inventory` with success message
+  "Deleted N inventory record(s)."
+- **`InventoryImportBatch` records are preserved** even after all their snapshots are deleted.
+  Batches serve as upload history. `InventorySnapshot.import_batch` is `SET_NULL`, so
+  deleting snapshots orphans (not deletes) the batch. No inline edit — mistakes are fixed by
+  delete + re-upload.
+
+---
+
+### Phase 4-step-1 — Forecast Tab (Complete)
+
+#### Logic module: `apps/distribution/forecast.py`
+
+Public function: `compute_distributor_forecast(distributor, today=None) → dict`
+
+**Horizon:** 13 columns — snapshot anchor month (column 1, actual on-hand) + 12 projection
+months. The anchor is the distributor's most recent snapshot date across all items.
+If no snapshots exist, returns an empty result with an explanatory message.
+
+**Snapshot column (column 1):** Shows the item's actual recorded quantity from its most
+recent snapshot. Status is `'snapshot'` (light blue background). Header marked with `*`
+and a tooltip "Inventory snapshot — actual on-hand count". Not colored by safety stock.
+
+**Depletion source (projection columns 2–13):**
+- Fully-ended months `(year, month) < (current_year, current_month)`: actual
+  `SalesRecord` aggregate for that distributor × item × month. If no records exist for
+  that month, depletion = 0 (assume no movement).
+- Current calendar month and all future months: prior-year same-month
+  `SalesRecord` aggregate as projection. If no prior-year record exists, cell is
+  `no_data` (grey, tooltip explains why).
+- Negative depletion (net returns) is floored to 0 in both cases.
+- The 12th projection month (one year after the snapshot) is `no_data` when
+  the snapshot month has no prior-year sales data — this is expected since the snapshot
+  period itself is typically not a sales data period.
+
+**Cell status:**
+- `snapshot` — column 1 only; actual recorded on-hand inventory
+- `green` — inventory > 0 AND (above safety stock target OR no target set)
+- `yellow` — inventory > 0 AND below safety stock target
+- `red` — inventory ≤ 0; negative values displayed in bold
+- `no_data` — prior-year data missing for projection months, or item has neither snapshot
+  nor any sales history
+
+**CSS specificity:** Status background colors use `.forecast-table tbody td.forecast-*`
+selectors with `!important` to override Bootstrap's table background variable.
+
+**Sales data:** One bulk query `SalesRecord.objects.filter(account__distributor=distributor)`
+grouped by `(item_id, sale_date__year, sale_date__month)`. Covers both actual
+(fully-ended) months and prior-year (projection) months. No N+1 queries.
+
+**Items:** Active company items (`Item.is_active=True`) excluding any
+`DistributorItemProfile.is_active=False` entries. Missing profile = implicitly active
+(Phase 2a rule preserved). Ordered by brand name → sort_order → item name.
+Brand name is **not** displayed in the forecast grid (items only).
+
+**Year spans:** Horizon months grouped by year for the two-row table header
+(`year_spans = [{'year': int, 'colspan': int}, ...]`).
+
+**Safety stock:** `DistributorItemProfile.safety_stock_cases`. Null means no target —
+cells are only green/red, never yellow.
+
+#### View integration
+
+Forecast data computed eagerly on every `distributor_list` page load (within
+`if can_manage_inventory:`) so Bootstrap tab-switching shows data without a URL change.
+Selected distributor read from `?forecast_distributor=<pk>`; defaults to the
+first distributor alphabetically when unset. Context keys: `forecast_result`,
+`forecast_distributor`, `available_distributors`.
+
+#### Template: `templates/distribution/distributor_list.html` — Forecast tab pane
+
+- Distributor selector `<select id="forecast-distributor-select">` — changing triggers
+  `window.location.href` navigation to `?tab=forecast&forecast_distributor=<pk>` via JS
+  in `{% block extra_js %}`.
+- Grid table with two header rows (year spans + month abbreviations), one row per item,
+  cells styled via `.forecast-green / .forecast-yellow / .forecast-red / .forecast-no_data`.
+- No-data cells show `—` with a `title` tooltip explaining the reason.
+- CSS in `{% block extra_css %}`.
+
+---
+
+### Phase 4-step-2a — Projected Order Generation Algorithm + Orders Row (Complete)
+
+#### New models: `DistributorPO` and `DistributorPOLine`
+
+`DistributorPO` — a projected or actual purchase order for a distributor in a given month.
+Fields: `distributor` (FK→Distributor, PROTECT), `year`, `month`, `status` (PROJECTED/ACTUAL),
+`external_po_number` (required when status=ACTUAL, enforced via `clean()`),
+`generated_by_algorithm` (BooleanField), `notes`, `created_by` (FK→User, SET_NULL).
+No `unique_together` on (distributor, year, month) — multiple POs per month are allowed.
+
+`DistributorPOLine` — one line item within a PO.
+Fields: `po` (FK→DistributorPO, CASCADE), `item` (FK→Item, PROTECT),
+`quantity_cases` (DecimalField, same precision as InventorySnapshot).
+`unique_together = [['po', 'item']]`. Quantities always stored in cases; pallet display
+is derived at render time from `distributor.order_quantity_unit`.
+
+Migration: `0010_distributorpo_distributorpoline.py`
+
+#### Order generation: `apps/distribution/order_generation.py`
+
+Public function: `generate_projected_orders(distributor, forecast_result)`. Does NOT
+save to the database — Phase 4-step-2a is read-only display.
+
+**Algorithm (revised — per-month standalone sizing):**
+
+Order generation algorithm (revised): Walks the forecast horizon forward. For each month M,
+if any items would drop below safety stock, generates an order in month M-1 sized to cover
+M's depletion plus the item's safety stock buffer (zero buffer for items with no safety stock
+set). Order capacity follows the distributor's `order_quantity_value` and `order_quantity_unit`
+strictly. Remaining capacity is filled with items that would trigger in subsequent months
+(M+1, M+2, …), using the same sizing formula. If a single item's need exceeds `order_quantity`,
+multiple orders are generated for the prior month (up to 5 per month). Each generated order is
+applied to the running forecast before checking the next month, so subsequent triggers see the
+post-order inventory. This eliminates the chain-order dependency: each month's needs are covered
+by the immediately prior month's orders, not by a sequence of orders sized assuming the whole
+chain is placed together.
+
+1. Check `Distributor.order_quantity_value` and `.order_quantity_unit` are both set.
+   If not, return `has_order_profile=False` with no orders.
+2. Pre-process items from `forecast_result.rows`:
+   - Items with no depletion data in any projection cell → skipped (`no_depletion_data`)
+   - Items missing `cases_per_pallet` when distributor is pallet-based → skipped (`no_cases_per_pallet`)
+3. Build virtual inventory per item per month (starts at forecast values; adjusted as orders placed).
+4. Walk projection months in order:
+   - Find items where virtual inventory < safety stock (or < 0 if no target).
+   - Sizing formula: `required_cases = max(0, safety_stock − virtual_inv[M])`. Pallet rounding
+     via `math.ceil` adds a natural buffer for pallet-based distributors.
+   - Generate up to **5 orders per prior month** (cap prevents runaway loops).
+   - Each order: **Step 1** covers triggering items (most critical first);
+     **Step 2** fills remaining capacity with items that would trigger in M+1, M+2, … (same formula).
+   - Each order is recorded in the **prior month** (order placed one month before it's needed).
+   - Apply order cases to virtual inventory for all months from the trigger month onward.
+5. Return `orders_per_horizon`: 13-entry list aligned with `forecast_result.horizon`,
+   each entry holding the order count and order details for that month.
+
+**Forecast changes (Phase 4-step-2a):**
+- Each cell in `monthly_data` now exposes `'depletion': float | None` (was internal-only).
+- `forecast_result` now includes `'safety_stock_map': {item_id: int}` for use by the algorithm.
+
+#### UI changes
+
+- **Orders row**: First row in the forecast grid `<tbody>`, styled with a blue-grey
+  background. Shows a badge (`bg-info`) with the order count per month, or `—` for zero.
+  Snapshot column always shows `—`. "No order profile" condition shows a colspan warning.
+- **Skipped items banner**: Warning above the forecast grid when items were excluded
+  from order projections. Links to item edit page for `no_cases_per_pallet`, plain text
+  for `no_depletion_data`.
+
+#### Phase 4-step-2b (Complete)
+
+Modal UI for reviewing, editing, and saving projected POs as `DistributorPO` rows.
+Status change from PROJECTED → ACTUAL requires an external PO number.
+Saved POs feed back into the forecast via the `po_additions` parameter (designed
+into `compute_distributor_forecast` in 4-step-2b).
+
+#### Future Phases
+
+- **Phase 3:** PO entry — manual entry of purchase order lines (distributor, item, year,
+  month, cases_ordered).
+- **Phase 4-step-2b:** Save/edit projected POs — see above.
 
 ---
 
@@ -3500,3 +3913,131 @@ Account Sales by Year, Item Sales by Year, and Account Distribution by Volume no
 HTML + CSV view pairs with significant code duplication totalling ~750 lines. Extract
 shared aggregation utilities into `apps/reports/aggregation.py` and refactor all six
 views to use them. This should be the next reports task before adding more reports.
+
+---
+
+## Production Management
+
+### Phase A — Foundation Models (Complete)
+
+#### CoPacker model
+
+`CoPacker` lives in `apps/catalog/` (not `apps/production/`) to avoid a circular migration dependency. `catalog.Item.co_packer` is a FK → `catalog.CoPacker`, and `production.ProductionPOLine.item` is a FK → `catalog.Item`. Placing CoPacker in production would create catalog→production and production→catalog cross-app cycles. In catalog, both FKs are unidirectional: production → catalog only.
+
+Fields: `company` (FK → core.Company, PROTECT), `name` (CharField), `notes` (TextField, blank), `is_active` (BooleanField, default=True). `unique_together = [['company', 'name']]`. Ordering by name.
+
+**Seeded records:** Brotherhood Winery and Nidra Packaging are seeded for every Company in the system via data migration `catalog.0007_seed_co_packers_all_companies`. Idempotent via `get_or_create` — safe to re-apply. (`0006` filtered for a specific company name and was superseded by `0007`.)
+
+#### New apps/production/ app
+
+Three models:
+
+**`ProductionPO`** — mirrors `DistributorPO` structurally. Scoped by `(company, co_packer, year, month)`. Multiple POs per month allowed. Fields: `company` (FK PROTECT), `co_packer` (FK → catalog.CoPacker, PROTECT), `year`, `month`, `status` (TextChoices: PROJECTED/ACTUAL, default PROJECTED), `external_po_number` (blank, default ''), `generated_by_algorithm` (BooleanField, default True), `notes`, `created_by` (SET_NULL). `clean()` enforces `external_po_number` required when status=ACTUAL. No `unique_together` — multiple POs per (co_packer, month) allowed.
+
+**`ProductionPOLine`** — mirrors `DistributorPOLine`. FK to `ProductionPO` via CASCADE (lines deleted with PO). FK to `catalog.Item` via PROTECT. Fields: `batch_count` (PositiveIntegerField — whole batches), `quantity_cases` (DecimalField max_digits=10, decimal_places=6 — total cases). `unique_together = [['po', 'item']]`. Ordering by brand/sort_order/name.
+
+**`OwnInventorySnapshot`** — mirrors `InventorySnapshot` but scoped by company (not distributor). No import batch (entered manually via UI in Phase B). `quantity_cases` has `MinValueValidator(0)`. `unique_together = [['company', 'item', 'year', 'month']]`. Ordering: `-year, -month, item__brand__name, item__name`.
+
+#### Item model additions (in catalog)
+
+Three new nullable fields on `catalog.Item`:
+- `co_packer`: FK → catalog.CoPacker, PROTECT, null=True, blank=True. Dropdown on Item form, filtered to the item's brand's company's co-packers.
+- `cases_per_batch`: PositiveIntegerField, null=True, blank=True. Used by production projections.
+- `production_safety_stock_cases`: PositiveIntegerField, null=True, blank=True. Minimum on-hand to trigger production order.
+
+All three shown on the Item form. `co_packer` dropdown excludes inactive co-packers.
+
+#### Permission
+
+`can_manage_production` — granted to `supplier_admin` only. Core migration `0014_production_permission`.
+
+#### Navigation
+
+"Production" nav item added in `apps/core/nav.py` as a flat sibling to "Distributors" in the `main` section. Gated by `can_manage_production`. Icon: `bi-clipboard2-check`. URL name: `production_home`. Active match: `'production'`.
+
+The nav system has no submenu/child-item concept — flat list only.
+
+#### Phase A page
+
+`/production/` renders an empty placeholder. Returns 403 without `can_manage_production`.
+
+### Phase B — Snapshot Entry and Management (Complete)
+
+- Production home page redesigned with two action cards: "Enter Inventory Snapshot" and "Manage Snapshots". Placeholder text retained below as a hint for upcoming Phase C.
+- New entry page at `/production/inventory/upload/` — user picks year + month from dropdowns, then enters case quantities per item in a brand-grouped table. Leave blank to skip an item; enter 0 to record zero on hand.
+- Entry validation rules (all-or-nothing; pre-validate before any writes):
+  - Blank input → skip (no row created)
+  - "0" → creates snapshot with `quantity_cases=0` (semantically: "zero on hand, deliberately recorded")
+  - Negative or non-numeric → rejects entire submission, re-renders form with per-item error messages and preserved input values
+  - All-blank submission → `messages.info`, no rows saved
+- Period conflict: if any `OwnInventorySnapshot` exists for `(company, year, month)`, entire submission is rejected with an error message linking to the snapshots page. User must delete existing rows and re-enter from scratch. No partial-period overlay allowed.
+- Save wrapped in `transaction.atomic()` — all rows written or none.
+- New snapshots listing page at `/production/inventory/snapshots/` — shows all company snapshots in a sortable table (Period, Brand, Item, Item Code, Quantity, Entered by, Entered). Period and brand filter dropdowns populated from existing data.
+- Bulk delete: checkbox per row + "Delete Selected" button + Bootstrap confirmation modal. Scoped by `company` FK directly (simpler than distributor inventory which scopes via `distributor__company`). Mirrors `inventory_bulk_delete` pattern exactly.
+- `_format_quantity_cases` helper copied from distribution views (not imported) to avoid cross-app view dependency.
+- `input_values` dict in the entry view is keyed by integer item PK; template uses `input_values|get_item:item.pk` via existing `get_item` template filter.
+
+### Phase C — Forecast Grid View and Demand Breakdown (Complete)
+
+- Production home page restructured as a 2-tab interface: **Forecast** (default) and **Inventory** (snapshot management embedded).
+- New `apps/production/forecast.py` with `compute_production_forecast(company, today=None)`. Returns a 13-column grid: anchor month (most recent snapshot company-wide) + 12 projection months.
+- **Algorithm:** For each active item, find its most recent `OwnInventorySnapshot`. If that snapshot is older than the anchor month, demand from gap months is walked forward to estimate the current running value. Projection months subtract distributor PO demand (sum of `DistributorPOLine.quantity_cases` across all distributors for the company, both projected and actual POs). No prior-year sales fallback needed — missing demand means zero depletion.
+- **Anchor cell display:** shows actual quantity only when item has a snapshot for the anchor month specifically; items with earlier-month snapshots show "—" in the anchor column. Running value is still the most recent snapshot regardless.
+- **Cell status:** `red` when inventory ≤ 0, `yellow` when below `Item.production_safety_stock_cases` (strictly less than), `green` otherwise. `no_data` for items with neither snapshot nor demand.
+- **Demand row:** one row at the top of the grid showing total distributor PO cases per month. Each cell is a clickable button opening a demand breakdown modal.
+- **Demand breakdown modal:** AJAX call to `/production/demand/<year>/<month>/` returns JSON with per-(item, distributor) pivot table. Rendered in a modal dialog, read-only.
+- `production_inventory_snapshots` view converted to a redirect stub → `/production/?tab=inventory`. The standalone `/production/inventory/snapshots/` URL still resolves but redirects.
+- `inventory_snapshots.html` template deleted; content embedded in the Inventory tab of `production_home.html`.
+- Phase B tweaks bundled: snapshot list sorted by period DESC → brand → item sort_order → name; Item Name and Entered by columns removed; Item Code column kept.
+- `production_inventory_upload` and `production_inventory_bulk_delete` success redirects updated to `/production/?tab=inventory`.
+- `production → distribution` import dependency established (production/forecast.py imports `DistributorPOLine`). Direction is clean; distribution does not import from production.
+
+### Phase D — Manual Production PO Entry Modal and Forecast Integration (Complete)
+
+- `compute_production_forecast` now accepts `production_po_additions` parameter `{(item_id, year, month): total_cases_float}`; PO cases are added to running inventory at the start of each projection month before depletion. Anchor month (snapshot column) is unaffected.
+- **Production POs row** added to the forecast grid above item rows, showing a count badge per month. All projection-month cells are clickable (including 0-count cells, shown as `+`) to open the modal. Snapshot column shows `—`.
+- **Three new endpoints**: `production_po_modal_data` (GET), `production_po_save` (POST, atomic multi-PO), `production_po_delete` (POST).
+- **Modal supports multiple POs per (co-packer, month)**: tab-per-PO interface with co-packer selector, status (Projected/Actual), PO number, notes, and items table with `batch_count` input. `quantity_cases` derived server-side as `batch_count × item.cases_per_batch`.
+- Items table per tab shows ONLY items belonging to the selected co-packer that have `cases_per_batch` set; total cases displayed live (batch_count × cases_per_batch, read-only).
+- Co-packer change mid-edit shows a `confirm()` dialog if any batch_count > 0. If confirmed, clears entries and rebuilds items table for new co-packer.
+- Tab labels show co-packer name as primary with PO number sub-label when `external_po_number` is set.
+- All-zero lines → delete existing PO or skip new PO. `generated_by_algorithm` flips `False` on any user edit or creation via modal.
+- **Warning banner** above forecast grid lists items missing `co_packer` or `cases_per_batch` with links to their edit pages.
+- **Phase C tweaks bundled**: item code `<div style="font-size:0.75rem;">` removed from forecast grid item rows; Demand row renamed to Dist Orders and shows COUNT of DistributorPO records (not sum of cases); item_code removed from demand breakdown modal JS rendering.
+- `production_pos_by_month` and `dist_orders_by_month` built in the view and passed to the template (not computed inside `forecast.py`). `forecast_result.demand_by_month` (case sum) retained in forecast return for future Phase E use.
+- All views gated by `can_manage_production` permission. Full page reload after save/delete.
+
+### Phase D1 — Snapshot-Override Algorithm and Mode-Aware Modal (Complete)
+
+- **Forecast algorithm reworked** (`apps/production/forecast.py`):
+  - All `OwnInventorySnapshot` records for the company are fetched in a single query (ASC order). Two structures are built: `item_snapshots_map` (per-item list, ASC) and `snapshot_lookup` ({(item_id, year, month): snap}) for O(1) override lookup.
+  - **Anchor month** = oldest of each item's most-recent snapshot date (`min` across items of each item's max snapshot year/month). Replaces the previous "single most-recent snapshot company-wide" approach.
+  - **Per-item walk**: each item walks forward from its EARLIEST snapshot (or from the anchor month at 0 if it has no snapshots but has demand). At each step: production PO additions applied first, then demand depletion, then snapshot override if a snapshot exists for that item/month.
+  - **Snapshot override**: when `snapshot_lookup` contains an entry for (item_id, year, month), `running` is replaced with the snapshot quantity and `status='snapshot'`. Snapshots are source of truth — the override applies regardless of what the math calculated.
+  - **Anchor column display**: items WITH a snapshot at the anchor month → `status='snapshot'`; items with earlier snapshots whose walk covers the anchor month → normal color-coded calculated value; items with no snapshots at all → `no_data` (we have no real data to project from).
+  - **Mid-horizon snapshot cells**: any projection month where the item has an actual snapshot shows `status='snapshot'` (blue background). Value and subsequent months continue from the snapshot value.
+  - **Snapshot status wins over color coding**: a zero-value snapshot shows `status='snapshot'`, not `status='red'`. The blue cell signals "this is real on-hand data", not a projection.
+  - **Bug fix**: production PO additions now apply during the pre-anchor walk (previously only applied during projection months). This means PO cases in gap months between an item's earliest snapshot and the anchor are correctly reflected.
+- **Modal data endpoint** (`production_po_modal_data`) now returns `'mode': 'month'` in the JSON response, enabling mode-aware behavior in the IIFE.
+- **Modal IIFE** (`production_home.html`): `_state.mode` added (defaults `'month'`); `openModal` reads `data.mode` from the fetch response and shows/hides the "+ Add Production PO" button accordingly (`display:none` when `mode='single'`). Save payload now includes `mode` field for forward-compatibility with Phase D2.
+- **Rationale for mode foundation**: Phase D2 will add single-PO mode (clicking a specific PO badge in the grid opens the modal locked to that one PO). The mode flag infrastructure is wired now so Phase D2 only adds the single-PO endpoint and URL, not JS restructuring.
+- Tests: `ForecastEarlierSnapshotTest` class rewritten to reflect new anchor semantics (4 tests). New `SnapshotOverrideTest` class adds 9 tests covering: snapshot override, multiple overrides per item, anchor calculation variants, pre-anchor-walk bug fix, zero-snapshot semantics, and continuation from overridden value.
+
+### Phase D2 — COMPLETE Status, Production POs Tab, Single-PO Modal (Complete)
+
+- **COMPLETE status** added to `ProductionPO.Status` TextChoices. `clean()` now requires `external_po_number` for both ACTUAL and COMPLETE (same rule). Save endpoint updated to accept `'complete'` and enforce the PO number requirement server-side. Modal JS updated: Complete option added to status select; required indicator shown for both Actual and Complete; client-side validation enforces PO number for both.
+- **Production POs tab** added as the third tab on the Production page (Forecast → Inventory → Production POs).
+- **List view** shows one row per PO: period (month + year), co-packer, status badge, PO number. Status badges: `bg-primary` (Projected), `bg-success` (Actual), `bg-secondary` (Complete).
+- **Filters**: period (YYYY-MM format, most-recent-first in dropdown), status group (Active=Projected+Actual default, Complete, All), co-packer (only co-packers with at least one PO). All filters preserve the active tab via hidden `<input name="tab">` on the form. Filter param names prefixed `filter_pos_` to avoid collision with the Inventory tab's `filter_period`/`filter_brand` params.
+- **Sort**: year ASC, month ASC, co-packer alpha, status alpha, empty PO numbers last (Case/When annotation), PO number alpha. `output_field=IntegerField()` set on Case for safety.
+- **Empty states**: two variants — "No production POs yet" (no POs in DB for this company) vs. "No production POs match the current filters" (POs exist but filtered out). Controlled by `has_any_pos = pos_qs_base.exists()` computed before filtering.
+- **Click row to edit**: each `<tr>` has class `production-po-row` with `data-modal-url`, `data-year`, `data-month` attributes. Event delegation in the modal IIFE detects clicks and calls `openModal()`. No global function exposure needed.
+- **Single-PO mode** (`mode='single'`): new endpoint `/production/po/single/<po_pk>/` returns one PO with `mode='single'`. Modal IIFE hides both the `+ Add Production PO` button AND the tab strip wrapper div (`#prod-po-tab-wrapper`) when mode is single — the form shows directly without the pill nav.
+- **`_build_items_by_co_packer(company)` helper** extracted from the month-mode endpoint and reused by the single-mode endpoint. Returns `(co_packers, items_by_co_packer)`.
+- **Modal fetch `r.ok` guard** added to `openModal()`. A 404 response (e.g., PO deleted by another user between list load and row click) now throws and hits the `.catch`, showing a dismissible error message in the modal.
+- **`month_names_dict`** (integer-keyed: `{1: 'January', …, 12: 'December'}`) passed to context for use in the template's `|get_item:po.month` lookups.
+- **19 new tests** across `CompleteStatusModelTest`, `CompleteStatusSaveTest`, `ProductionPOsTabTest`, `SingleModalDataTest`. Test total: 173.
+
+#### Remaining phases
+
+- **Phase E** — Production algorithm (project batches needed from demand and safety stock)

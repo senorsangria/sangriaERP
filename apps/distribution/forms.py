@@ -1,8 +1,18 @@
 """
-Forms for distribution: Distributor CRUD.
+Forms for distribution: Distributor CRUD and inventory CSV upload.
 """
+from datetime import date
+
 from django import forms
+
 from .models import Distributor
+
+
+MONTH_CHOICES = [
+    (1, 'January'), (2, 'February'), (3, 'March'), (4, 'April'),
+    (5, 'May'), (6, 'June'), (7, 'July'), (8, 'August'),
+    (9, 'September'), (10, 'October'), (11, 'November'), (12, 'December'),
+]
 
 US_STATE_CHOICES = [
     ('', '— Select State —'),
@@ -73,3 +83,55 @@ class DistributorForm(forms.ModelForm):
         if commit:
             distributor.save()
         return distributor
+
+
+class InventoryImportUploadForm(forms.Form):
+    """Step 1 of inventory snapshot import: select period and upload CSV."""
+
+    year = forms.TypedChoiceField(
+        coerce=int,
+        label='Year',
+        widget=forms.Select(attrs={'class': 'form-select'}),
+    )
+    month = forms.TypedChoiceField(
+        coerce=int,
+        choices=MONTH_CHOICES,
+        label='Month',
+        widget=forms.Select(attrs={'class': 'form-select'}),
+    )
+    csv_file = forms.FileField(
+        label='Inventory CSV',
+        help_text='Upload the VIP inventory report CSV file (max 5 MB).',
+        widget=forms.FileInput(attrs={
+            'class': 'form-control',
+            'accept': '.csv,text/csv',
+        }),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        current_year = date.today().year
+        # Offer current+1 down to current-3 (5 choices)
+        year_choices = [(y, str(y)) for y in range(current_year + 1, current_year - 4, -1)]
+        self.fields['year'].choices = year_choices
+
+    def clean_csv_file(self):
+        f = self.cleaned_data.get('csv_file')
+        if f:
+            if not f.name.lower().endswith('.csv'):
+                raise forms.ValidationError('Please upload a .csv file.')
+            if f.size > 5 * 1024 * 1024:
+                raise forms.ValidationError('File size must be under 5 MB.')
+        return f
+
+    def clean_year(self):
+        year = self.cleaned_data.get('year')
+        if year is not None and not (2000 <= year <= 2100):
+            raise forms.ValidationError('Year must be between 2000 and 2100.')
+        return year
+
+    def clean_month(self):
+        month = self.cleaned_data.get('month')
+        if month is not None and not (1 <= month <= 12):
+            raise forms.ValidationError('Month must be between 1 and 12.')
+        return month

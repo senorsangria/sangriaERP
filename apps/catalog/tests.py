@@ -1,12 +1,12 @@
 """
-Tests for apps.catalog — Item sort order and AJAX reorder endpoints.
-
-Phase 10.3.3
+Tests for apps.catalog — Item sort order, AJAX reorder, CoPacker model, and Item form.
 """
+from django.db import IntegrityError
+from django.db.models import ProtectedError
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from apps.catalog.models import Brand, Item
+from apps.catalog.models import Brand, CoPacker, Item
 from apps.core.models import Company, User
 
 
@@ -250,3 +250,136 @@ class SortOrderNormalizationTest(TestCase):
         c.refresh_from_db()
         orders = [a.sort_order, b.sort_order, c.sort_order]
         self.assertEqual(len(orders), len(set(orders)), "page load must normalize duplicate sort_orders")
+
+
+# ---------------------------------------------------------------------------
+# CoPacker model tests (Phase A)
+# ---------------------------------------------------------------------------
+
+class CoPackerCreateAndStrTest(TestCase):
+    """CoPacker basic CRUD and __str__."""
+
+    def setUp(self):
+        self.company = make_company()
+
+    def test_co_packer_create_and_str(self):
+        cp = CoPacker.objects.create(company=self.company, name='Brotherhood Winery')
+        self.assertEqual(str(cp), f'Brotherhood Winery ({self.company.name})')
+        self.assertTrue(cp.is_active)
+        self.assertEqual(cp.notes, '')
+
+    def test_co_packer_unique_per_company(self):
+        CoPacker.objects.create(company=self.company, name='Brotherhood Winery')
+        with self.assertRaises(IntegrityError):
+            CoPacker.objects.create(company=self.company, name='Brotherhood Winery')
+
+    def test_co_packer_same_name_different_company_allowed(self):
+        other_company = make_company('Other Co')
+        CoPacker.objects.create(company=self.company, name='Brotherhood Winery')
+        cp2 = CoPacker.objects.create(company=other_company, name='Brotherhood Winery')
+        self.assertIsNotNone(cp2.pk)
+
+    def test_co_packer_ordering_by_name(self):
+        CoPacker.objects.create(company=self.company, name='Zeta Packaging')
+        CoPacker.objects.create(company=self.company, name='Alpha Winery')
+        names = list(CoPacker.objects.filter(company=self.company).values_list('name', flat=True))
+        self.assertEqual(names, ['Alpha Winery', 'Zeta Packaging'])
+
+
+# ---------------------------------------------------------------------------
+# Item production field tests (Phase A)
+# ---------------------------------------------------------------------------
+
+class ItemProductionFieldsTest(TestCase):
+    """Tests for co_packer FK, cases_per_batch, production_safety_stock_cases."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.brand = make_brand(self.company)
+        self.co_packer = CoPacker.objects.create(company=self.company, name='Brotherhood Winery')
+
+    def test_item_co_packer_field_nullable(self):
+        item = Item.objects.create(brand=self.brand, name='Item A', item_code='A001')
+        self.assertIsNone(item.co_packer)
+
+    def test_item_co_packer_field_assignable(self):
+        item = Item.objects.create(
+            brand=self.brand, name='Item A', item_code='A001',
+            co_packer=self.co_packer,
+        )
+        item.refresh_from_db()
+        self.assertEqual(item.co_packer, self.co_packer)
+
+    def test_item_co_packer_protect_on_delete(self):
+        Item.objects.create(
+            brand=self.brand, name='Item A', item_code='A001',
+            co_packer=self.co_packer,
+        )
+        with self.assertRaises(ProtectedError):
+            self.co_packer.delete()
+
+    def test_item_cases_per_batch_nullable(self):
+        item = Item.objects.create(brand=self.brand, name='Item A', item_code='A001')
+        self.assertIsNone(item.cases_per_batch)
+
+    def test_item_cases_per_batch_settable(self):
+        item = Item.objects.create(
+            brand=self.brand, name='Item A', item_code='A001',
+            cases_per_batch=120,
+        )
+        item.refresh_from_db()
+        self.assertEqual(item.cases_per_batch, 120)
+
+    def test_item_production_safety_stock_nullable(self):
+        item = Item.objects.create(brand=self.brand, name='Item A', item_code='A001')
+        self.assertIsNone(item.production_safety_stock_cases)
+
+    def test_item_production_safety_stock_settable(self):
+        item = Item.objects.create(
+            brand=self.brand, name='Item A', item_code='A001',
+            production_safety_stock_cases=50,
+        )
+        item.refresh_from_db()
+        self.assertEqual(item.production_safety_stock_cases, 50)
+
+
+# ---------------------------------------------------------------------------
+# ItemForm — new production fields and co_packer queryset scoping (Phase A)
+# ---------------------------------------------------------------------------
+
+class ItemFormProductionFieldsTest(TestCase):
+    """ItemForm includes new production fields, co_packer queryset scoped to company."""
+
+    def setUp(self):
+        from apps.catalog.forms import ItemForm
+        self.ItemForm = ItemForm
+        self.company_a = make_company('Company A')
+        self.company_b = make_company('Company B')
+        self.brand_a = make_brand(self.company_a, 'Brand A')
+        self.brand_b = make_brand(self.company_b, 'Brand B')
+        self.cp_a = CoPacker.objects.create(company=self.company_a, name='Co-Packer A')
+        self.cp_b = CoPacker.objects.create(company=self.company_b, name='Co-Packer B')
+
+    def test_item_form_includes_new_fields(self):
+        form = self.ItemForm(brand=self.brand_a)
+        self.assertIn('co_packer', form.fields)
+        self.assertIn('cases_per_batch', form.fields)
+        self.assertIn('production_safety_stock_cases', form.fields)
+
+    def test_item_form_co_packer_queryset_scoped_to_company(self):
+        form_a = self.ItemForm(brand=self.brand_a)
+        qs_a = list(form_a.fields['co_packer'].queryset)
+        self.assertIn(self.cp_a, qs_a)
+        self.assertNotIn(self.cp_b, qs_a)
+
+        form_b = self.ItemForm(brand=self.brand_b)
+        qs_b = list(form_b.fields['co_packer'].queryset)
+        self.assertIn(self.cp_b, qs_b)
+        self.assertNotIn(self.cp_a, qs_b)
+
+    def test_item_form_co_packer_queryset_excludes_inactive(self):
+        inactive_cp = CoPacker.objects.create(
+            company=self.company_a, name='Inactive CP', is_active=False
+        )
+        form = self.ItemForm(brand=self.brand_a)
+        self.assertNotIn(inactive_cp, list(form.fields['co_packer'].queryset))

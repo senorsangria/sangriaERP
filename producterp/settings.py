@@ -97,6 +97,7 @@ INSTALLED_APPS = [
     'apps.reports',
     'apps.event_import',
     'apps.routes',
+    'apps.production',
 ]
 
 MIDDLEWARE = [

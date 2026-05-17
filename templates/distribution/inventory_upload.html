@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Upload Inventory Snapshot{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center mb-4">
+  <div>
+    <h2 class="mb-0 fw-bold">Upload Inventory Snapshot</h2>
+    <p class="text-muted mb-0">Select the reporting period and upload the VIP inventory CSV.</p>
+  </div>
+</div>
+
+{% if import_errors %}
+<div class="alert alert-danger" role="alert">
+  <h6 class="alert-heading fw-bold mb-2">
+    <i class="bi bi-exclamation-triangle me-1"></i>
+    {{ import_errors|length }} error{{ import_errors|length|pluralize }} found — import aborted
+  </h6>
+  <ul class="mb-0 ps-3">
+    {% for error in import_errors %}
+    <li class="small">{{ error }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="row">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-cloud-upload me-2"></i>Upload File
+      </div>
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data" novalidate>
+          {% csrf_token %}
+
+          <div class="row g-3 mb-3">
+            <div class="col-6">
+              <label for="{{ form.year.id_for_label }}" class="form-label fw-semibold">
+                Year <span class="text-danger">*</span>
+              </label>
+              {{ form.year }}
+              {% for error in form.year.errors %}
+              <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+            <div class="col-6">
+              <label for="{{ form.month.id_for_label }}" class="form-label fw-semibold">
+                Month <span class="text-danger">*</span>
+              </label>
+              {{ form.month }}
+              {% for error in form.month.errors %}
+              <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div class="mb-4">
+            <label for="{{ form.csv_file.id_for_label }}" class="form-label fw-semibold">
+              CSV File <span class="text-danger">*</span>
+            </label>
+            {{ form.csv_file }}
+            {% if form.csv_file.help_text %}
+            <div class="form-text">{{ form.csv_file.help_text }}</div>
+            {% endif %}
+            {% for error in form.csv_file.errors %}
+            <div class="invalid-feedback d-block">{{ error }}</div>
+            {% endfor %}
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-arrow-right me-1"></i>Preview Import
+            </button>
+            <a href="{% url 'distributor_list' %}?tab=inventory" class="btn btn-outline-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6 mt-4 mt-lg-0">
+    <div class="card border-info">
+      <div class="card-header fw-semibold text-info-emphasis bg-info-subtle">
+        <i class="bi bi-info-circle me-2"></i>Expected CSV Format
+      </div>
+      <div class="card-body small">
+        <p class="mb-2">The inventory CSV must have <strong>exactly 3 columns</strong> in this order:</p>
+        <table class="table table-sm mb-3">
+          <thead class="table-light">
+            <tr><th>Column</th><th>Expected Value</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>Distributors</code></td><td>Distributor name (must match system exactly)</td></tr>
+            <tr><td><code>Item Name ID</code></td><td>Item code (must be mapped in Item Mapping)</td></tr>
+            <tr><td><em>Any name</em></td><td>Quantity on hand (cases, decimals allowed)</td></tr>
+          </tbody>
+        </table>
+        <ul class="mb-0 ps-3">
+          <li>Row 1 must be the header row.</li>
+          <li>Distributor names must exactly match names in your system (case-insensitive).</li>
+          <li>Item codes must be mapped via <a href="{% url 'mapping_list' %}">Item Mapping</a>.</li>
+          <li>Any validation error aborts the entire upload — nothing is saved.</li>
+          <li>If a snapshot already exists for a distributor + period, delete it first.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

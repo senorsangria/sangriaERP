@@ -57,6 +57,50 @@
           </div>
 
           <div class="mb-3">
+            <label for="{{ form.cases_per_pallet.id_for_label }}" class="form-label fw-medium">
+              Cases per Pallet
+            </label>
+            {{ form.cases_per_pallet }}
+            <div class="form-text">Number of cases that fit on one pallet. Used by the inventory and forecasting tools. Optional.</div>
+            {% if form.cases_per_pallet.errors %}
+            <div class="invalid-feedback d-block">{{ form.cases_per_pallet.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label for="{{ form.co_packer.id_for_label }}" class="form-label fw-medium">
+              Co-Packer
+            </label>
+            {{ form.co_packer }}
+            <div class="form-text">{{ form.co_packer.help_text }}</div>
+            {% if form.co_packer.errors %}
+            <div class="invalid-feedback d-block">{{ form.co_packer.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label for="{{ form.cases_per_batch.id_for_label }}" class="form-label fw-medium">
+              Cases per Batch
+            </label>
+            {{ form.cases_per_batch }}
+            <div class="form-text">{{ form.cases_per_batch.help_text }}</div>
+            {% if form.cases_per_batch.errors %}
+            <div class="invalid-feedback d-block">{{ form.cases_per_batch.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label for="{{ form.production_safety_stock_cases.id_for_label }}" class="form-label fw-medium">
+              Production Safety Stock (cases)
+            </label>
+            {{ form.production_safety_stock_cases }}
+            <div class="form-text">{{ form.production_safety_stock_cases.help_text }}</div>
+            {% if form.production_safety_stock_cases.errors %}
+            <div class="invalid-feedback d-block">{{ form.production_safety_stock_cases.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+
+          <div class="mb-3">
             <label for="{{ form.description.id_for_label }}" class="form-label fw-medium">
               Description
             </label>

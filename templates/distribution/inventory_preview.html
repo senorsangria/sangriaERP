@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Inventory Import Preview{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center mb-4">
+  <div>
+    <h2 class="mb-0 fw-bold">Import Preview</h2>
+    <p class="text-muted mb-0">Review the summary below, then confirm to run the import.</p>
+  </div>
+</div>
+
+<div class="row g-4">
+
+  <!-- Summary + actions -->
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-clipboard-data me-2"></i>Import Summary
+      </div>
+      <table class="table table-sm mb-0">
+        <tbody>
+          <tr>
+            <th class="ps-3 text-muted fw-normal" style="width:45%">Period</th>
+            <td class="fw-semibold">{{ period_display }}</td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">File</th>
+            <td class="small">{{ filename }}</td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">Total Rows</th>
+            <td><span class="badge bg-primary fs-6">{{ total_rows }}</span></td>
+          </tr>
+          <tr>
+            <th class="ps-3 text-muted fw-normal">Distributors</th>
+            <td>{{ distributor_summaries|length }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-body">
+        <p class="small text-muted mb-3">
+          The import runs in a single transaction. If anything fails, it is fully
+          rolled back — nothing will be partially saved.
+        </p>
+        <p class="small text-muted mb-3">
+          Items in the CSV will automatically have their distributor profile set to
+          <strong>Active</strong>.
+        </p>
+        <form method="post" action="{% url 'inventory_confirm' %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-success">
+            <i class="bi bi-check-circle me-1"></i>Confirm Import
+          </button>
+        </form>
+        <form method="post" action="{% url 'inventory_preview' %}" class="mt-2">
+          {% csrf_token %}
+          <button type="submit" name="action" value="cancel" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-x me-1"></i>Cancel
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per-distributor breakdown -->
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-truck me-2"></i>Distributor Breakdown
+        <span class="badge bg-secondary ms-1">{{ distributor_summaries|length }}</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Distributor</th>
+              <th class="text-end">Items</th>
+              <th class="text-end">Total Cases</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in distributor_summaries %}
+            <tr>
+              <td>{{ s.name }}</td>
+              <td class="text-end">{{ s.item_count }}</td>
+              <td class="text-end fw-medium">{{ s.total_cases_display }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
