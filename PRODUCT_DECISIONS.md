@@ -4007,6 +4007,23 @@ The nav system has no submenu/child-item concept — flat list only.
 - `production_pos_by_month` and `dist_orders_by_month` built in the view and passed to the template (not computed inside `forecast.py`). `forecast_result.demand_by_month` (case sum) retained in forecast return for future Phase E use.
 - All views gated by `can_manage_production` permission. Full page reload after save/delete.
 
+### Phase D1 — Snapshot-Override Algorithm and Mode-Aware Modal (Complete)
+
+- **Forecast algorithm reworked** (`apps/production/forecast.py`):
+  - All `OwnInventorySnapshot` records for the company are fetched in a single query (ASC order). Two structures are built: `item_snapshots_map` (per-item list, ASC) and `snapshot_lookup` ({(item_id, year, month): snap}) for O(1) override lookup.
+  - **Anchor month** = oldest of each item's most-recent snapshot date (`min` across items of each item's max snapshot year/month). Replaces the previous "single most-recent snapshot company-wide" approach.
+  - **Per-item walk**: each item walks forward from its EARLIEST snapshot (or from the anchor month at 0 if it has no snapshots but has demand). At each step: production PO additions applied first, then demand depletion, then snapshot override if a snapshot exists for that item/month.
+  - **Snapshot override**: when `snapshot_lookup` contains an entry for (item_id, year, month), `running` is replaced with the snapshot quantity and `status='snapshot'`. Snapshots are source of truth — the override applies regardless of what the math calculated.
+  - **Anchor column display**: items WITH a snapshot at the anchor month → `status='snapshot'`; items with earlier snapshots whose walk covers the anchor month → normal color-coded calculated value; items with no snapshots at all → `no_data` (we have no real data to project from).
+  - **Mid-horizon snapshot cells**: any projection month where the item has an actual snapshot shows `status='snapshot'` (blue background). Value and subsequent months continue from the snapshot value.
+  - **Snapshot status wins over color coding**: a zero-value snapshot shows `status='snapshot'`, not `status='red'`. The blue cell signals "this is real on-hand data", not a projection.
+  - **Bug fix**: production PO additions now apply during the pre-anchor walk (previously only applied during projection months). This means PO cases in gap months between an item's earliest snapshot and the anchor are correctly reflected.
+- **Modal data endpoint** (`production_po_modal_data`) now returns `'mode': 'month'` in the JSON response, enabling mode-aware behavior in the IIFE.
+- **Modal IIFE** (`production_home.html`): `_state.mode` added (defaults `'month'`); `openModal` reads `data.mode` from the fetch response and shows/hides the "+ Add Production PO" button accordingly (`display:none` when `mode='single'`). Save payload now includes `mode` field for forward-compatibility with Phase D2.
+- **Rationale for mode foundation**: Phase D2 will add single-PO mode (clicking a specific PO badge in the grid opens the modal locked to that one PO). The mode flag infrastructure is wired now so Phase D2 only adds the single-PO endpoint and URL, not JS restructuring.
+- Tests: `ForecastEarlierSnapshotTest` class rewritten to reflect new anchor semantics (4 tests). New `SnapshotOverrideTest` class adds 9 tests covering: snapshot override, multiple overrides per item, anchor calculation variants, pre-anchor-walk bug fix, zero-snapshot semantics, and continuation from overridden value.
+
 #### Remaining phases
 
+- **Phase D2** — COMPLETE status, Production POs tab list view, single-PO modal mode
 - **Phase E** — Production algorithm (project batches needed from demand and safety stock)

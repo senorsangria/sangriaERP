@@ -311,25 +311,72 @@ class ForecastNoDataItemTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 7. Anchor cell for items with earlier snapshots
+# 7. Anchor cell semantics under the new algorithm
 # ---------------------------------------------------------------------------
 
 class ForecastEarlierSnapshotTest(TestCase):
+    """
+    Phase D1 — new anchor = oldest of each item's most-recent snapshot.
 
-    def test_item_with_earlier_snapshot_shows_no_data_in_anchor_column(self):
+    An item WITH a snapshot in the anchor month shows status='snapshot'.
+    An item WITHOUT a snapshot in the anchor month but with earlier data
+    shows a calculated green/yellow/red value (NOT no_data — that was the old behavior).
+    An item whose walk hasn't reached the anchor column at all shows no_data.
+    """
+
+    def test_anchor_cell_shows_snapshot_when_item_has_anchor_month_snap(self):
+        # item_a most-recent = Apr; item_b most-recent = Jan → anchor = Jan
+        # item_b HAS a Jan snapshot → 'snapshot' at anchor column
         company = make_company()
         brand = make_brand(company)
         item_a = make_item(brand, item_code='A001')
         item_b = make_item(brand, item_code='B001')
-        # item_a snapshot in April (anchor), item_b snapshot in January
         make_snapshot(company, item_a, year=2026, month=4, qty='200')
         make_snapshot(company, item_b, year=2026, month=1, qty='300')
         result = compute_production_forecast(company)
+        self.assertEqual(result['anchor_year'], 2026)
+        self.assertEqual(result['anchor_month'], 1)
         row_b = next(r for r in result['rows'] if r['item'].item_code == 'B001')
-        # Anchor column (April): item_b has no April snapshot → no_data
-        self.assertEqual(row_b['monthly_data'][0]['status'], 'no_data')
+        anchor_cell = row_b['monthly_data'][0]
+        self.assertEqual(anchor_cell['status'], 'snapshot')
+        self.assertAlmostEqual(anchor_cell['inventory'], 300.0)
+
+    def test_anchor_cell_shows_no_data_for_item_whose_walk_misses_anchor(self):
+        # Same setup: anchor=Jan, but item_a's earliest snap is Apr → walk doesn't reach Jan
+        company = make_company()
+        brand = make_brand(company)
+        item_a = make_item(brand, item_code='A001')
+        item_b = make_item(brand, item_code='B001')
+        make_snapshot(company, item_a, year=2026, month=4, qty='200')
+        make_snapshot(company, item_b, year=2026, month=1, qty='300')
+        result = compute_production_forecast(company)
+        row_a = next(r for r in result['rows'] if r['item'].item_code == 'A001')
+        # item_a has no Jan snapshot and walk starts at Apr → no_data at Jan anchor
+        anchor_cell = row_a['monthly_data'][0]
+        self.assertEqual(anchor_cell['status'], 'no_data')
+
+    def test_anchor_cell_shows_calculated_value_for_item_with_earlier_snapshot(self):
+        # item_a: Dec 2025 snap + Apr 2026 snap (most-recent=Apr)
+        # item_b: Jan 2026 snap (most-recent=Jan) → anchor=Jan
+        # item_a walk covers Dec→Jan; Jan has no item_a snap → calculated value shown
+        company = make_company()
+        brand = make_brand(company)
+        item_a = make_item(brand, item_code='A001', safety_stock=None)
+        item_b = make_item(brand, item_code='B001')
+        make_snapshot(company, item_a, year=2025, month=12, qty='400')
+        make_snapshot(company, item_a, year=2026, month=4,  qty='300')
+        make_snapshot(company, item_b, year=2026, month=1,  qty='200')
+        result = compute_production_forecast(company)
+        self.assertEqual(result['anchor_month'], 1)
+        row_a = next(r for r in result['rows'] if r['item'].item_code == 'A001')
+        jan_cell = row_a['monthly_data'][0]  # Jan is the anchor column
+        # item_a: walk Dec(snap=400) → Jan(no snap, no demand → 400, green)
+        self.assertEqual(jan_cell['status'], 'green')
+        self.assertAlmostEqual(jan_cell['inventory'], 400.0)
 
     def test_item_with_earlier_snapshot_projects_forward_from_known_value(self):
+        # anchor = min(Apr, Feb) = Feb (item_b most-recent=Feb, item_a most-recent=Apr)
+        # item_b walk: Feb(snap=300) → Mar(-50=250) → Apr(-50=200) → May(-60=140)
         company = make_company()
         brand = make_brand(company)
         dist = make_distributor(company)
@@ -337,16 +384,14 @@ class ForecastEarlierSnapshotTest(TestCase):
         item_b = make_item(brand, item_code='B001')
         make_snapshot(company, item_a, year=2026, month=4, qty='100')
         make_snapshot(company, item_b, year=2026, month=2, qty='300')
-        # Demand for item_b in Mar, Apr (gap months) and then May (projection)
         make_po_with_demand(dist, item_b, 2026, 3, 50)
         make_po_with_demand(dist, item_b, 2026, 4, 50)
         make_po_with_demand(dist, item_b, 2026, 5, 60)
         result = compute_production_forecast(company)
         row_b = next(r for r in result['rows'] if r['item'].item_code == 'B001')
-        # After gap walk: 300 - 50(Mar) - 50(Apr) = 200 at start of projection
-        # May projection: 200 - 60 = 140
+        # 300 - 50(Mar) - 50(Apr) = 200; May: 200 - 60 = 140
         may_cell = next(c for c in row_b['monthly_data'] if c['month'] == 5)
-        self.assertEqual(may_cell['inventory'], 140.0)
+        self.assertAlmostEqual(may_cell['inventory'], 140.0)
 
 
 # ---------------------------------------------------------------------------
@@ -479,3 +524,193 @@ class ProductionPOAdditionsTest(TestCase):
         # June: no demand, no production adds → carries May's 270
         jun_inv = result['rows'][0]['monthly_data'][2]['inventory']
         self.assertAlmostEqual(jun_inv, 270.0)
+
+
+# ---------------------------------------------------------------------------
+# Phase D1: snapshot-override algorithm
+# ---------------------------------------------------------------------------
+
+class SnapshotOverrideTest(TestCase):
+    """
+    Tests for Phase D1 snapshot-override semantics:
+    - Snapshots REPLACE the calculated running value at their month
+    - Multiple snapshots per item each override independently
+    - Anchor = oldest of each item's most-recent snapshot
+    - Production PO additions apply in the pre-anchor walk (bug fix)
+    - Zero-value snapshots override with status='snapshot' (not red)
+    """
+
+    def test_snapshot_overrides_calculated_value(self):
+        # Walk: Jan snap=100 → Feb(+500 prod, no demand → 600 calc) → Mar snap=300 (override)
+        company = make_company()
+        brand = make_brand(company)
+        item = make_item(brand, item_code='RED')
+        make_snapshot(company, item, year=2026, month=1, qty='100')
+        make_snapshot(company, item, year=2026, month=3, qty='300')
+        # anchor = Jan (only item, most-recent = Jan... wait: most-recent = Mar!)
+        # Actually most-recent = Mar 2026 → anchor = Mar 2026
+        additions = {(item.pk, 2026, 2): 500.0}
+        result = compute_production_forecast(company, production_po_additions=additions)
+        self.assertEqual(result['anchor_month'], 3)  # most-recent = Mar
+        row = result['rows'][0]
+        # anchor (Mar): snapshot=300 overrides the calculated 600
+        mar_cell = next(c for c in row['monthly_data'] if c['month'] == 3 and c['is_snapshot'])
+        self.assertEqual(mar_cell['status'], 'snapshot')
+        self.assertAlmostEqual(mar_cell['inventory'], 300.0)
+        # Feb comes before the anchor and is not in horizon; Apr+ continues from 300
+        apr_cell = next(c for c in row['monthly_data'] if c['month'] == 4)
+        self.assertAlmostEqual(apr_cell['inventory'], 300.0)  # no demand in Apr
+
+    def test_snapshot_overrides_calculated_value_mid_horizon(self):
+        # anchor = Jan; projection months include Mar which has a snapshot → override
+        company = make_company()
+        brand = make_brand(company)
+        dist = make_distributor(company)
+        item = make_item(brand, item_code='RED')
+        make_snapshot(company, item, year=2026, month=1, qty='500')
+        make_snapshot(company, item, year=2026, month=3, qty='800')
+        make_po_with_demand(dist, item, 2026, 2, 200)
+        make_po_with_demand(dist, item, 2026, 3, 100)
+        # Walk: Jan(snap=500) → Feb(+0-200=300) → Mar(+0-100=200 calc, but snap=800 overrides)
+        result = compute_production_forecast(company)
+        # Item has Jan AND Mar snapshots; most-recent = Mar → anchor = Mar
+        self.assertEqual(result['anchor_month'], 3)
+        row = result['rows'][0]
+        mar_cell = row['monthly_data'][0]  # anchor column = Mar
+        self.assertEqual(mar_cell['status'], 'snapshot')
+        self.assertAlmostEqual(mar_cell['inventory'], 800.0)
+        # Apr continues from 800
+        apr_cell = next(c for c in row['monthly_data'] if c['month'] == 4)
+        self.assertAlmostEqual(apr_cell['inventory'], 800.0)
+
+    def test_multiple_snapshots_per_item_each_overrides(self):
+        # Jan snap=200, Mar snap=500, May snap=100; demands in Feb(50), Apr(80), Jun(30)
+        # Walk: Jan(200) → Feb(150) → Mar(override=500) → Apr(420) → May(override=100) → Jun(70)
+        company = make_company()
+        brand = make_brand(company)
+        dist = make_distributor(company)
+        item = make_item(brand, item_code='RED')
+        make_snapshot(company, item, year=2026, month=1, qty='200')
+        make_snapshot(company, item, year=2026, month=3, qty='500')
+        make_snapshot(company, item, year=2026, month=5, qty='100')
+        make_po_with_demand(dist, item, 2026, 2, 50)
+        make_po_with_demand(dist, item, 2026, 4, 80)
+        make_po_with_demand(dist, item, 2026, 6, 30)
+        result = compute_production_forecast(company)
+        # most-recent = May 2026 → anchor = May
+        self.assertEqual(result['anchor_month'], 5)
+        row = result['rows'][0]
+        may_cell = next(c for c in row['monthly_data'] if c['month'] == 5 and c['is_snapshot'])
+        self.assertEqual(may_cell['status'], 'snapshot')
+        self.assertAlmostEqual(may_cell['inventory'], 100.0)
+        jun_cell = next(c for c in row['monthly_data'] if c['month'] == 6)
+        self.assertAlmostEqual(jun_cell['inventory'], 70.0)  # 100 - 30
+
+    def test_anchor_is_oldest_of_most_recent_snapshots(self):
+        # item_a most-recent = Apr 2026; item_b most-recent = Feb 2026 → anchor = Feb
+        company = make_company()
+        brand = make_brand(company)
+        item_a = make_item(brand, item_code='A')
+        item_b = make_item(brand, item_code='B')
+        make_snapshot(company, item_a, year=2026, month=4, qty='100')
+        make_snapshot(company, item_b, year=2026, month=2, qty='200')
+        result = compute_production_forecast(company)
+        self.assertEqual(result['anchor_year'],  2026)
+        self.assertEqual(result['anchor_month'], 2)
+
+    def test_anchor_when_all_items_share_same_most_recent_snapshot(self):
+        # Both items' most-recent = Apr 2026 → anchor = Apr
+        company = make_company()
+        brand = make_brand(company)
+        item_a = make_item(brand, item_code='A')
+        item_b = make_item(brand, item_code='B')
+        make_snapshot(company, item_a, year=2026, month=4, qty='100')
+        make_snapshot(company, item_b, year=2026, month=4, qty='200')
+        result = compute_production_forecast(company)
+        self.assertEqual(result['anchor_year'],  2026)
+        self.assertEqual(result['anchor_month'], 4)
+
+    def test_anchor_when_items_have_different_most_recent_dates(self):
+        # item_a most-recent=Jun, item_b most-recent=Mar, item_c most-recent=May → anchor=Mar
+        company = make_company()
+        brand = make_brand(company)
+        for code, month in [('A', 6), ('B', 3), ('C', 5)]:
+            item = make_item(brand, item_code=code)
+            make_snapshot(company, item, year=2026, month=month, qty='100')
+        result = compute_production_forecast(company)
+        self.assertEqual(result['anchor_month'], 3)
+
+    def test_production_po_additions_apply_in_pre_anchor_walk(self):
+        # item_a: Jan snap=500, Apr snap=300 (most-recent=Apr)
+        # item_b: Mar snap=200 (most-recent=Mar) → anchor=Mar
+        # item_a walk: Jan(500) → Feb(+200 prod, -100 demand=600) → Mar(no snap → 600 green)
+        # Old algorithm had a bug: prod adds not applied during pre-anchor walk
+        company = make_company()
+        brand = make_brand(company)
+        dist = make_distributor(company)
+        item_a = make_item(brand, item_code='A', safety_stock=None)
+        item_b = make_item(brand, item_code='B')
+        make_snapshot(company, item_a, year=2026, month=1, qty='500')
+        make_snapshot(company, item_a, year=2026, month=4, qty='300')
+        make_snapshot(company, item_b, year=2026, month=3, qty='200')
+        make_po_with_demand(dist, item_a, 2026, 2, 100)
+        additions = {(item_a.pk, 2026, 2): 200.0}
+        result = compute_production_forecast(company, production_po_additions=additions)
+        self.assertEqual(result['anchor_month'], 3)
+        row_a = next(r for r in result['rows'] if r['item'].item_code == 'A')
+        # Mar anchor: item_a has no Mar snapshot → calculated; walk: 500+200-100=600 at Mar
+        mar_cell = next(c for c in row_a['monthly_data'] if c['month'] == 3)
+        self.assertAlmostEqual(mar_cell['inventory'], 600.0)
+        self.assertEqual(mar_cell['status'], 'green')
+        # Apr: snapshot=300 overrides
+        apr_cell = next(c for c in row_a['monthly_data'] if c['month'] == 4)
+        self.assertEqual(apr_cell['status'], 'snapshot')
+        self.assertAlmostEqual(apr_cell['inventory'], 300.0)
+
+    def test_zero_snapshot_value_overrides_with_snapshot_status(self):
+        # A snapshot of 0 is real data — shows status='snapshot', not 'red'
+        company = make_company()
+        brand = make_brand(company)
+        item = make_item(brand, item_code='RED')
+        make_snapshot(company, item, year=2026, month=4, qty='500')
+        make_snapshot(company, item, year=2026, month=6, qty='0')
+        result = compute_production_forecast(company)
+        row = result['rows'][0]
+        jun_cell = next(c for c in row['monthly_data'] if c['month'] == 6)
+        self.assertEqual(jun_cell['status'], 'snapshot')
+        self.assertAlmostEqual(jun_cell['inventory'], 0.0)
+
+    def test_item_with_no_snapshot_shows_no_data_at_anchor(self):
+        # Item with demand but no snapshot: anchor cell = no_data (not a calculated red)
+        company = make_company()
+        brand = make_brand(company)
+        dist = make_distributor(company)
+        anchor_item = make_item(brand, item_code='ANC')
+        demand_item = make_item(brand, item_code='DEM')
+        make_snapshot(company, anchor_item, year=2026, month=4, qty='200')
+        make_po_with_demand(dist, demand_item, 2026, 5, 50)
+        result = compute_production_forecast(company)
+        row = next(r for r in result['rows'] if r['item'].item_code == 'DEM')
+        anchor_cell = row['monthly_data'][0]
+        self.assertEqual(anchor_cell['status'], 'no_data')
+        may_cell = next(c for c in row['monthly_data'] if c['month'] == 5)
+        self.assertAlmostEqual(may_cell['inventory'], -50.0)
+        self.assertEqual(may_cell['status'], 'red')
+
+    def test_snapshot_override_then_continues_from_overridden_value(self):
+        # After a mid-horizon snapshot, projection continues from snapshot value (not calculated)
+        # Jan snap=500; Feb demand=200 (calc=300); Mar snap=800 (override); Apr demand=100 → 700
+        company = make_company()
+        brand = make_brand(company)
+        dist = make_distributor(company)
+        item = make_item(brand, item_code='RED')
+        make_snapshot(company, item, year=2026, month=1, qty='500')
+        make_snapshot(company, item, year=2026, month=3, qty='800')
+        make_po_with_demand(dist, item, 2026, 2, 200)
+        make_po_with_demand(dist, item, 2026, 4, 100)
+        result = compute_production_forecast(company)
+        # anchor = Mar (most-recent = Mar); horizon starts at Mar
+        self.assertEqual(result['anchor_month'], 3)
+        row = result['rows'][0]
+        apr_cell = next(c for c in row['monthly_data'] if c['month'] == 4)
+        self.assertAlmostEqual(apr_cell['inventory'], 700.0)  # 800 - 100

@@ -435,6 +435,7 @@ def production_po_modal_data(request, year, month):
     return JsonResponse({
         'year': year,
         'month': month,
+        'mode': 'month',
         'period_label': period_label,
         'co_packers': [{'id': cp.pk, 'name': cp.name} for cp in co_packers],
         'items_by_co_packer': items_by_co_packer,
