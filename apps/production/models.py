@@ -12,17 +12,18 @@ from apps.core.models import TimeStampedModel
 
 class ProductionPO(TimeStampedModel):
     """
-    A projected or actual production purchase order to a co-packer for a given month.
+    A projected, actual, or complete production purchase order to a co-packer for a given month.
 
     Mirrors DistributorPO structure but scoped by (company, co_packer, year, month)
     instead of distributor. Multiple POs per (co_packer, year, month) are allowed.
 
-    Status PROJECTED → ACTUAL requires an external_po_number (enforced in clean()).
+    Status ACTUAL or COMPLETE requires an external_po_number (enforced in clean()).
     """
 
     class Status(models.TextChoices):
         PROJECTED = 'projected', 'Projected'
         ACTUAL    = 'actual',    'Actual'
+        COMPLETE  = 'complete',  'Complete'
 
     company = models.ForeignKey(
         'core.Company',
@@ -65,9 +66,9 @@ class ProductionPO(TimeStampedModel):
 
     def clean(self):
         super().clean()
-        if self.status == self.Status.ACTUAL and not self.external_po_number:
+        if self.status in (self.Status.ACTUAL, self.Status.COMPLETE) and not self.external_po_number:
             raise ValidationError({
-                'external_po_number': 'PO number is required when status is Actual.'
+                'external_po_number': 'PO number is required when status is Actual or Complete.'
             })
 
 

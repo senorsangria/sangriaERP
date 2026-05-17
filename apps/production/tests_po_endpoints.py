@@ -3,6 +3,11 @@ Tests for Phase D production PO modal endpoints:
   - production_po_modal_data (GET)
   - production_po_save (POST)
   - production_po_delete (POST)
+
+Phase D2 additions:
+  - COMPLETE status (model + save endpoint)
+  - Production POs tab list view
+  - production_po_modal_data_single (GET)
 """
 import json
 from decimal import Decimal
@@ -502,4 +507,258 @@ class DeleteTest(POMixin):
         other_cp = make_co_packer(other_company, 'Other CP 2')
         other_po = make_production_po(other_company, other_cp)
         r = self.client.post(delete_url(other_po.pk), HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(r.status_code, 404)
+
+
+# ---------------------------------------------------------------------------
+# Phase D2 — COMPLETE status (model + save endpoint)
+# ---------------------------------------------------------------------------
+
+class CompleteStatusModelTest(POMixin):
+
+    def test_complete_status_choice_exists(self):
+        from apps.production.models import ProductionPO
+        values = [choice[0] for choice in ProductionPO.Status.choices]
+        self.assertIn('complete', values)
+
+    def test_complete_status_requires_external_po_number(self):
+        from django.core.exceptions import ValidationError
+        po = ProductionPO(
+            company=self.company,
+            co_packer=self.cp1,
+            year=2026, month=7,
+            status='complete',
+            external_po_number='',
+            generated_by_algorithm=False,
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            po.full_clean()
+        self.assertIn('external_po_number', ctx.exception.message_dict)
+
+    def test_complete_status_valid_with_po_number(self):
+        from django.core.exceptions import ValidationError
+        po = ProductionPO(
+            company=self.company,
+            co_packer=self.cp1,
+            year=2026, month=7,
+            status='complete',
+            external_po_number='PO-999',
+            generated_by_algorithm=False,
+        )
+        try:
+            po.full_clean()
+        except ValidationError as e:
+            if 'external_po_number' in e.message_dict:
+                self.fail('full_clean() raised ValidationError for external_po_number unexpectedly')
+
+    def test_actual_status_still_requires_external_po_number(self):
+        from django.core.exceptions import ValidationError
+        po = ProductionPO(
+            company=self.company,
+            co_packer=self.cp1,
+            year=2026, month=7,
+            status='actual',
+            external_po_number='',
+            generated_by_algorithm=False,
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            po.full_clean()
+        self.assertIn('external_po_number', ctx.exception.message_dict)
+
+
+class CompleteStatusSaveTest(POMixin):
+
+    def _base_payload(self, **overrides):
+        po = {
+            'po_id': None,
+            'co_packer_id': self.cp1.pk,
+            'status': 'projected',
+            'external_po_number': '',
+            'notes': '',
+            'lines': [{'item_id': self.item1.pk, 'batch_count': 1}],
+        }
+        po.update(overrides)
+        return {'year': 2026, 'month': 7, 'pos': [po]}
+
+    def test_save_endpoint_accepts_complete_status(self):
+        r = post_save(self.client, self._base_payload(
+            status='complete', external_po_number='PO-DONE'
+        ))
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()['success'])
+        po = ProductionPO.objects.get(company=self.company, year=2026, month=7)
+        self.assertEqual(po.status, 'complete')
+        self.assertEqual(po.external_po_number, 'PO-DONE')
+
+    def test_save_endpoint_rejects_complete_without_po_number(self):
+        r = post_save(self.client, self._base_payload(
+            status='complete', external_po_number=''
+        ))
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('PO number', r.json()['error'])
+
+    def test_save_endpoint_rejects_invalid_status(self):
+        r = post_save(self.client, self._base_payload(status='bogus'))
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('Invalid status', r.json()['error'])
+
+
+# ---------------------------------------------------------------------------
+# Phase D2 — Production POs tab list view
+# ---------------------------------------------------------------------------
+
+class ProductionPOsTabTest(POMixin):
+
+    def _get_tab(self, params=None):
+        url = reverse('production_home') + '?tab=production_pos'
+        if params:
+            url += '&' + '&'.join(f'{k}={v}' for k, v in params.items())
+        return self.client.get(url)
+
+    def test_production_pos_tab_renders(self):
+        r = self._get_tab()
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, 'Production POs')
+
+    def test_production_pos_tab_requires_permission(self):
+        sales_user = User.objects.create_user(username='sales_tab', password='pass', company=self.company)
+        sales_user.roles.set([Role.objects.get(codename='sales_manager')])
+        c = Client()
+        c.login(username='sales_tab', password='pass')
+        r = c.get(reverse('production_home') + '?tab=production_pos')
+        self.assertEqual(r.status_code, 403)
+
+    def test_production_pos_tab_default_active_filter_excludes_complete(self):
+        make_production_po(self.company, self.cp1, year=2026, month=7, status='projected')
+        make_production_po(self.company, self.cp1, year=2026, month=8, status='actual', external_po_number='PO-1')
+        make_production_po(self.company, self.cp1, year=2026, month=9, status='complete', external_po_number='PO-2')
+        r = self._get_tab()
+        self.assertEqual(len(r.context['production_pos_list']), 2)
+        statuses = [po.status for po in r.context['production_pos_list']]
+        self.assertNotIn('complete', statuses)
+
+    def test_production_pos_tab_complete_filter_shows_only_complete(self):
+        make_production_po(self.company, self.cp1, year=2026, month=7, status='projected')
+        make_production_po(self.company, self.cp1, year=2026, month=8, status='complete', external_po_number='PO-C')
+        r = self._get_tab({'filter_pos_status': 'complete'})
+        self.assertEqual(len(r.context['production_pos_list']), 1)
+        self.assertEqual(r.context['production_pos_list'][0].status, 'complete')
+
+    def test_production_pos_tab_all_filter_shows_all(self):
+        make_production_po(self.company, self.cp1, year=2026, month=7, status='projected')
+        make_production_po(self.company, self.cp1, year=2026, month=8, status='actual', external_po_number='PO-A')
+        make_production_po(self.company, self.cp1, year=2026, month=9, status='complete', external_po_number='PO-C')
+        r = self._get_tab({'filter_pos_status': 'all'})
+        self.assertEqual(len(r.context['production_pos_list']), 3)
+
+    def test_production_pos_tab_period_filter(self):
+        make_production_po(self.company, self.cp1, year=2026, month=7, status='projected')
+        make_production_po(self.company, self.cp1, year=2026, month=8, status='projected')
+        r = self._get_tab({'filter_pos_period': '2026-08', 'filter_pos_status': 'all'})
+        self.assertEqual(len(r.context['production_pos_list']), 1)
+        self.assertEqual(r.context['production_pos_list'][0].month, 8)
+
+    def test_production_pos_tab_co_packer_filter(self):
+        make_production_po(self.company, self.cp1, year=2026, month=7, status='projected')
+        make_production_po(self.company, self.cp2, year=2026, month=7, status='projected')
+        r = self._get_tab({'filter_pos_co_packer': str(self.cp1.pk), 'filter_pos_status': 'all'})
+        self.assertEqual(len(r.context['production_pos_list']), 1)
+        self.assertEqual(r.context['production_pos_list'][0].co_packer_id, self.cp1.pk)
+
+    def test_production_pos_tab_sort_order_date_asc(self):
+        make_production_po(self.company, self.cp1, year=2026, month=9, status='projected')
+        make_production_po(self.company, self.cp1, year=2026, month=7, status='projected')
+        make_production_po(self.company, self.cp1, year=2026, month=8, status='projected')
+        r = self._get_tab({'filter_pos_status': 'all'})
+        months = [po.month for po in r.context['production_pos_list']]
+        self.assertEqual(months, [7, 8, 9])
+
+    def test_production_pos_tab_sort_empty_po_number_last(self):
+        po_no_num = make_production_po(self.company, self.cp1, year=2026, month=7,
+                                       status='projected', external_po_number='')
+        po_with_num = make_production_po(self.company, self.cp1, year=2026, month=7,
+                                         status='actual', external_po_number='PO-AAA')
+        r = self._get_tab({'filter_pos_status': 'all'})
+        result_pks = [po.pk for po in r.context['production_pos_list']]
+        self.assertEqual(result_pks.index(po_with_num.pk), 0)
+        self.assertEqual(result_pks.index(po_no_num.pk), 1)
+
+    def test_production_pos_tab_empty_state_no_pos(self):
+        r = self._get_tab()
+        self.assertFalse(r.context['has_any_pos'])
+        self.assertContains(r, 'No production POs yet')
+
+    def test_production_pos_tab_empty_state_filters_match_nothing(self):
+        make_production_po(self.company, self.cp1, year=2026, month=7, status='projected')
+        r = self._get_tab({'filter_pos_period': '2025-01'})
+        self.assertTrue(r.context['has_any_pos'])
+        self.assertEqual(len(r.context['production_pos_list']), 0)
+
+    def test_production_pos_tab_scoped_to_company(self):
+        other_company = make_company('Other Co Tab')
+        other_cp = make_co_packer(other_company, 'Other Packer Tab')
+        make_production_po(other_company, other_cp, year=2026, month=7, status='projected')
+        make_production_po(self.company, self.cp1, year=2026, month=7, status='projected')
+        r = self._get_tab({'filter_pos_status': 'all'})
+        self.assertEqual(len(r.context['production_pos_list']), 1)
+        self.assertEqual(r.context['production_pos_list'][0].co_packer.company, self.company)
+
+
+# ---------------------------------------------------------------------------
+# Phase D2 — single-PO modal data endpoint
+# ---------------------------------------------------------------------------
+
+class SingleModalDataTest(POMixin):
+
+    def setUp(self):
+        super().setUp()
+        self.po = make_production_po(self.company, self.cp1, year=2026, month=7,
+                                     status='projected')
+        make_po_line(self.po, self.item1, batch_count=4)
+
+    def _single_url(self, po_pk=None):
+        return reverse('production_po_modal_data_single', kwargs={'po_pk': po_pk or self.po.pk})
+
+    def test_modal_data_single_returns_one_po(self):
+        r = self.client.get(self._single_url())
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertEqual(len(data['saved_pos']), 1)
+        self.assertEqual(data['saved_pos'][0]['po_id'], self.po.pk)
+
+    def test_modal_data_single_returns_mode_single(self):
+        r = self.client.get(self._single_url())
+        self.assertEqual(r.json()['mode'], 'single')
+
+    def test_modal_data_single_returns_year_month(self):
+        r = self.client.get(self._single_url())
+        data = r.json()
+        self.assertEqual(data['year'], 2026)
+        self.assertEqual(data['month'], 7)
+
+    def test_modal_data_single_returns_lines(self):
+        r = self.client.get(self._single_url())
+        lines = r.json()['saved_pos'][0]['lines']
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]['batch_count'], 4)
+
+    def test_modal_data_single_returns_co_packers(self):
+        r = self.client.get(self._single_url())
+        data = r.json()
+        self.assertIn('co_packers', data)
+        self.assertIn('items_by_co_packer', data)
+
+    def test_modal_data_single_returns_403_without_permission(self):
+        sales_user = User.objects.create_user(username='sales_s', password='pass', company=self.company)
+        sales_user.roles.set([Role.objects.get(codename='sales_manager')])
+        c = Client()
+        c.login(username='sales_s', password='pass')
+        r = c.get(self._single_url())
+        self.assertEqual(r.status_code, 403)
+
+    def test_modal_data_single_returns_404_for_wrong_company(self):
+        other_company = make_company('Other Co Single')
+        other_cp = make_co_packer(other_company, 'Other Packer Single')
+        other_po = make_production_po(other_company, other_cp)
+        r = self.client.get(self._single_url(po_pk=other_po.pk))
         self.assertEqual(r.status_code, 404)

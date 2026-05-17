@@ -4023,7 +4023,21 @@ The nav system has no submenu/child-item concept — flat list only.
 - **Rationale for mode foundation**: Phase D2 will add single-PO mode (clicking a specific PO badge in the grid opens the modal locked to that one PO). The mode flag infrastructure is wired now so Phase D2 only adds the single-PO endpoint and URL, not JS restructuring.
 - Tests: `ForecastEarlierSnapshotTest` class rewritten to reflect new anchor semantics (4 tests). New `SnapshotOverrideTest` class adds 9 tests covering: snapshot override, multiple overrides per item, anchor calculation variants, pre-anchor-walk bug fix, zero-snapshot semantics, and continuation from overridden value.
 
+### Phase D2 — COMPLETE Status, Production POs Tab, Single-PO Modal (Complete)
+
+- **COMPLETE status** added to `ProductionPO.Status` TextChoices. `clean()` now requires `external_po_number` for both ACTUAL and COMPLETE (same rule). Save endpoint updated to accept `'complete'` and enforce the PO number requirement server-side. Modal JS updated: Complete option added to status select; required indicator shown for both Actual and Complete; client-side validation enforces PO number for both.
+- **Production POs tab** added as the third tab on the Production page (Forecast → Inventory → Production POs).
+- **List view** shows one row per PO: period (month + year), co-packer, status badge, PO number. Status badges: `bg-primary` (Projected), `bg-success` (Actual), `bg-secondary` (Complete).
+- **Filters**: period (YYYY-MM format, most-recent-first in dropdown), status group (Active=Projected+Actual default, Complete, All), co-packer (only co-packers with at least one PO). All filters preserve the active tab via hidden `<input name="tab">` on the form. Filter param names prefixed `filter_pos_` to avoid collision with the Inventory tab's `filter_period`/`filter_brand` params.
+- **Sort**: year ASC, month ASC, co-packer alpha, status alpha, empty PO numbers last (Case/When annotation), PO number alpha. `output_field=IntegerField()` set on Case for safety.
+- **Empty states**: two variants — "No production POs yet" (no POs in DB for this company) vs. "No production POs match the current filters" (POs exist but filtered out). Controlled by `has_any_pos = pos_qs_base.exists()` computed before filtering.
+- **Click row to edit**: each `<tr>` has class `production-po-row` with `data-modal-url`, `data-year`, `data-month` attributes. Event delegation in the modal IIFE detects clicks and calls `openModal()`. No global function exposure needed.
+- **Single-PO mode** (`mode='single'`): new endpoint `/production/po/single/<po_pk>/` returns one PO with `mode='single'`. Modal IIFE hides both the `+ Add Production PO` button AND the tab strip wrapper div (`#prod-po-tab-wrapper`) when mode is single — the form shows directly without the pill nav.
+- **`_build_items_by_co_packer(company)` helper** extracted from the month-mode endpoint and reused by the single-mode endpoint. Returns `(co_packers, items_by_co_packer)`.
+- **Modal fetch `r.ok` guard** added to `openModal()`. A 404 response (e.g., PO deleted by another user between list load and row click) now throws and hits the `.catch`, showing a dismissible error message in the modal.
+- **`month_names_dict`** (integer-keyed: `{1: 'January', …, 12: 'December'}`) passed to context for use in the template's `|get_item:po.month` lookups.
+- **19 new tests** across `CompleteStatusModelTest`, `CompleteStatusSaveTest`, `ProductionPOsTabTest`, `SingleModalDataTest`. Test total: 173.
+
 #### Remaining phases
 
-- **Phase D2** — COMPLETE status, Production POs tab list view, single-PO modal mode
 - **Phase E** — Production algorithm (project batches needed from demand and safety stock)

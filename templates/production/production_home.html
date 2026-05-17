@@ -49,6 +49,15 @@
       Inventory
     </button>
   </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'production_pos' %}active{% endif %}"
+            id="tab-production-pos" data-bs-toggle="tab" data-bs-target="#pane-production-pos"
+            type="button" role="tab"
+            aria-controls="pane-production-pos"
+            aria-selected="{% if active_tab == 'production_pos' %}true{% else %}false{% endif %}">
+      Production POs
+    </button>
+  </li>
 </ul>
 
 <div class="tab-content" id="productionTabContent">
@@ -334,6 +343,115 @@
     {% endif %}{# has_any_snapshots #}
   </div>
 
+  <!-- ============================================================ -->
+  <!-- PRODUCTION POs TAB -->
+  <!-- ============================================================ -->
+  <div class="tab-pane fade {% if active_tab == 'production_pos' %}show active{% endif %}"
+       id="pane-production-pos" role="tabpanel" aria-labelledby="tab-production-pos">
+
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <h2 class="h5 fw-bold mb-0">Production POs</h2>
+    </div>
+
+    <!-- Filters -->
+    <form method="get" class="card border-0 shadow-sm mb-3">
+      <div class="card-body py-2">
+        <input type="hidden" name="tab" value="production_pos">
+        <div class="row g-2 align-items-end">
+          <div class="col-12 col-sm-auto">
+            <label class="form-label small text-muted mb-1">Period</label>
+            <select name="filter_pos_period" class="form-select form-select-sm">
+              <option value="">All Periods</option>
+              {% for key, label in period_choices_pos %}
+              <option value="{{ key }}" {% if filter_pos_period == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-sm-auto">
+            <label class="form-label small text-muted mb-1">Status</label>
+            <select name="filter_pos_status" class="form-select form-select-sm">
+              {% for key, label in status_group_choices %}
+              <option value="{{ key }}" {% if filter_pos_status == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% if co_packer_choices_pos %}
+          <div class="col-12 col-sm-auto">
+            <label class="form-label small text-muted mb-1">Co-Packer</label>
+            <select name="filter_pos_co_packer" class="form-select form-select-sm">
+              <option value="">All Co-Packers</option>
+              {% for cp in co_packer_choices_pos %}
+              <option value="{{ cp.pk }}" {% if filter_pos_co_packer == cp.pk|stringformat:"d" %}selected{% endif %}>{{ cp.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          <div class="col-auto">
+            <button type="submit" class="btn btn-outline-primary btn-sm">Filter</button>
+            <a href="{% url 'production_home' %}?tab=production_pos" class="btn btn-outline-secondary btn-sm ms-1">Clear</a>
+          </div>
+        </div>
+      </div>
+    </form>
+
+    {% if not has_any_pos %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center py-5 text-muted">
+        <i class="bi bi-clipboard-x fs-1 d-block mb-3"></i>
+        <h5 class="fw-semibold">No production POs yet</h5>
+        <p class="mb-0">Use the Forecast tab to create one.</p>
+      </div>
+    </div>
+
+    {% elif not production_pos_list %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center text-muted py-4">
+        <i class="bi bi-funnel fs-4 d-block mb-2"></i>
+        No production POs match the current filters.
+      </div>
+    </div>
+
+    {% else %}
+    <div class="card border-0 shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-hover table-sm mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Period</th>
+              <th>Co-Packer</th>
+              <th>Status</th>
+              <th>PO Number</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for po in production_pos_list %}
+            <tr class="production-po-row"
+                style="cursor: pointer;"
+                data-year="{{ po.year }}"
+                data-month="{{ po.month }}"
+                data-modal-url="{% url 'production_po_modal_data_single' po_pk=po.pk %}">
+              <td class="small fw-medium">{{ month_names_dict|get_item:po.month }} {{ po.year }}</td>
+              <td class="small">{{ po.co_packer.name }}</td>
+              <td>
+                {% if po.status == 'projected' %}
+                  <span class="badge bg-primary">Projected</span>
+                {% elif po.status == 'actual' %}
+                  <span class="badge bg-success">Actual</span>
+                {% elif po.status == 'complete' %}
+                  <span class="badge bg-secondary">Complete</span>
+                {% endif %}
+              </td>
+              <td class="small text-muted">{{ po.external_po_number|default:"—" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}{# production_pos_list #}
+
+  </div>
+
 </div>{# tab-content #}
 
 <!-- Demand breakdown modal -->
@@ -374,7 +492,7 @@
           </div>
         </div>
         <div id="prod-po-modal-content" style="display:none;">
-          <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+          <div class="d-flex align-items-center gap-3 mb-3 flex-wrap" id="prod-po-tab-wrapper">
             <ul class="nav nav-pills flex-grow-1 flex-wrap" id="prod-po-tabs" role="tablist"></ul>
             <button type="button" class="btn btn-outline-primary btn-sm" id="prod-po-add-btn">
               + Add Production PO
@@ -544,6 +662,7 @@
   var saveBtn     = document.getElementById('prod-po-save-btn');
   var saveUrl     = modalEl.dataset.saveUrl;
   var deleteUrlBase = modalEl.dataset.deleteUrlBase;
+  var tabWrapperEl = document.getElementById('prod-po-tab-wrapper');
 
   var _state = {
     year: null,
@@ -575,12 +694,24 @@
     errorEl.classList.add('d-none');
   }
 
-  // Open modal on Production PO row button click
+  // Open modal on Production PO row button click (forecast grid)
   document.addEventListener('click', function (e) {
     var btn = e.target.closest('.production-po-btn');
     if (!btn) return;
     e.preventDefault();
     openModal(btn.dataset.modalUrl, parseInt(btn.dataset.year, 10), parseInt(btn.dataset.month, 10));
+  });
+
+  // Open modal in single mode when clicking a row in the Production POs tab
+  document.addEventListener('click', function (e) {
+    var row = e.target.closest('.production-po-row');
+    if (!row) return;
+    e.preventDefault();
+    openModal(
+      row.dataset.modalUrl,
+      parseInt(row.dataset.year, 10),
+      parseInt(row.dataset.month, 10)
+    );
   });
 
   addBtn.addEventListener('click', function () {
@@ -609,7 +740,10 @@
     bsModal.show();
 
     fetch(url, {headers: {'X-Requested-With': 'XMLHttpRequest'}})
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
       .then(function (data) {
         spinnerEl.style.display = 'none';
         contentEl_m.style.display = '';
@@ -617,6 +751,7 @@
         if (modalLabel) modalLabel.textContent = 'Production Orders — ' + data.period_label;
         _state.mode = data.mode || 'month';
         addBtn.style.display = _state.mode === 'single' ? 'none' : '';
+        if (tabWrapperEl) tabWrapperEl.style.display = _state.mode === 'single' ? 'none' : '';
         _state.coPackers = data.co_packers || [];
         _state.itemsByCoPackerId = data.items_by_co_packer || {};
 
@@ -707,7 +842,7 @@
     var curStatus   = savedPo ? savedPo.status : 'projected';
     var curPoNum    = savedPo ? (savedPo.external_po_number || '') : '';
     var curNotes    = savedPo ? (savedPo.notes || '') : '';
-    var isActual    = curStatus === 'actual';
+    var requiresPoNumber = curStatus === 'actual' || curStatus === 'complete';
 
     var html = '<div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">';
     if (savedPo) {
@@ -741,12 +876,13 @@
     html += '<select class="form-select form-select-sm prod-po-status-select">';
     html += '<option value="projected"' + (curStatus === 'projected' ? ' selected' : '') + '>Projected</option>';
     html += '<option value="actual"' + (curStatus === 'actual' ? ' selected' : '') + '>Actual</option>';
+    html += '<option value="complete"' + (curStatus === 'complete' ? ' selected' : '') + '>Complete</option>';
     html += '</select></div>';
 
     // PO Number
     html += '<div class="col-sm-3">';
     html += '<label class="form-label small text-muted mb-1">PO Number';
-    html += '<span class="prod-po-required-indicator text-danger ms-1"' + (isActual ? '' : ' style="display:none;"') + '>*</span>';
+    html += '<span class="prod-po-required-indicator text-danger ms-1"' + (requiresPoNumber ? '' : ' style="display:none;"') + '>*</span>';
     html += '</label>';
     html += '<input type="text" class="form-control form-control-sm prod-po-number-input" value="' + _esc(curPoNum) + '" placeholder="Optional">';
     html += '</div>';
@@ -864,7 +1000,7 @@
 
   function updatePoNumberRequirement(pane, status) {
     var indicator = pane.querySelector('.prod-po-required-indicator');
-    if (indicator) indicator.style.display = status === 'actual' ? '' : 'none';
+    if (indicator) indicator.style.display = (status === 'actual' || status === 'complete') ? '' : 'none';
   }
 
   function removeTab(tabId) {
@@ -923,9 +1059,9 @@
         errMsg = 'Please select a co-packer for every PO before saving.';
         break;
       }
-      if (status === 'actual' && !poNumber) {
+      if ((status === 'actual' || status === 'complete') && !poNumber) {
         valid  = false;
-        errMsg = 'PO number is required when status is Actual (PO ' + (i + 1) + ').';
+        errMsg = 'PO number is required when status is Actual or Complete (PO ' + (i + 1) + ').';
         break;
       }
 

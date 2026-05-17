@@ -4,6 +4,7 @@ Phase A: production_home placeholder.
 Phase B: snapshot entry and management.
 Phase C: tabbed home (Forecast + Inventory), demand breakdown modal.
 Phase D: production PO modal endpoints, production_po_additions forecast integration.
+Phase D2: COMPLETE status, Production POs tab list, single-PO modal endpoint.
 """
 import json
 from decimal import Decimal, InvalidOperation
@@ -11,7 +12,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
-from django.db.models import Count, Sum
+from django.db.models import Case, Count, IntegerField, Sum, Value, When
 from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -72,7 +73,7 @@ def production_home(request):
     company = request.user.company
 
     active_tab = request.GET.get('tab', 'forecast')
-    if active_tab not in ('forecast', 'inventory'):
+    if active_tab not in ('forecast', 'inventory', 'production_pos'):
         active_tab = 'forecast'
 
     # Build production_po_additions dict for the forecast algorithm
@@ -175,6 +176,69 @@ def production_home(request):
 
     has_any_snapshots = OwnInventorySnapshot.objects.filter(company=company).exists()
 
+    # Production POs tab data
+    pos_qs_base = ProductionPO.objects.filter(company=company)
+    has_any_pos = pos_qs_base.exists()
+
+    filter_pos_period = request.GET.get('filter_pos_period', '').strip()
+    filter_pos_status = request.GET.get('filter_pos_status', 'active').strip()
+    filter_pos_co_packer = request.GET.get('filter_pos_co_packer', '').strip()
+
+    if filter_pos_status not in ('active', 'complete', 'all'):
+        filter_pos_status = 'active'
+
+    pos_qs = pos_qs_base.select_related('co_packer')
+
+    if filter_pos_period:
+        parts = filter_pos_period.split('-')
+        if len(parts) == 2:
+            try:
+                pos_qs = pos_qs.filter(year=int(parts[0]), month=int(parts[1]))
+            except (ValueError, TypeError):
+                filter_pos_period = ''
+
+    if filter_pos_status == 'active':
+        pos_qs = pos_qs.filter(status__in=['projected', 'actual'])
+    elif filter_pos_status == 'complete':
+        pos_qs = pos_qs.filter(status='complete')
+
+    if filter_pos_co_packer:
+        try:
+            pos_qs = pos_qs.filter(co_packer_id=int(filter_pos_co_packer))
+        except (ValueError, TypeError):
+            filter_pos_co_packer = ''
+
+    pos_qs = pos_qs.order_by(
+        'year', 'month', 'co_packer__name', 'status',
+        Case(
+            When(external_po_number='', then=Value(1)),
+            default=Value(0),
+            output_field=IntegerField(),
+        ),
+        'external_po_number',
+    )
+
+    production_pos_list = list(pos_qs)
+
+    period_choices_pos = [
+        (f"{p['year']}-{p['month']:02d}", f"{MONTH_NAMES[p['month'] - 1]} {p['year']}")
+        for p in pos_qs_base.values('year', 'month').distinct().order_by('-year', '-month')
+    ]
+
+    co_packer_choices_pos = list(
+        CoPacker.objects.filter(company=company, production_pos__isnull=False)
+        .distinct()
+        .order_by('name')
+    )
+
+    status_group_choices = [
+        ('active', 'Active (Projected + Actual)'),
+        ('complete', 'Complete'),
+        ('all', 'All'),
+    ]
+
+    month_names_dict = {i: name for i, name in enumerate(MONTH_NAMES, 1)}
+
     return render(request, 'production/production_home.html', {
         'company': company,
         'active_tab': active_tab,
@@ -190,6 +254,16 @@ def production_home(request):
         'filter_period': filter_period,
         'filter_brand': filter_brand,
         'has_any_snapshots': has_any_snapshots,
+        # Production POs tab
+        'production_pos_list': production_pos_list,
+        'has_any_pos': has_any_pos,
+        'filter_pos_period': filter_pos_period,
+        'filter_pos_status': filter_pos_status,
+        'filter_pos_co_packer': filter_pos_co_packer,
+        'period_choices_pos': period_choices_pos,
+        'co_packer_choices_pos': co_packer_choices_pos,
+        'status_group_choices': status_group_choices,
+        'month_names_dict': month_names_dict,
     })
 
 
@@ -368,19 +442,12 @@ def production_inventory_bulk_delete(request):
 
 
 # ---------------------------------------------------------------------------
-# Production PO modal data endpoint (Phase D)
+# Shared helper: items grouped by co-packer (used by both modal endpoints)
 # ---------------------------------------------------------------------------
 
-@login_required
-def production_po_modal_data(request, year, month):
-    denied = _require_production_permission(request)
-    if denied:
-        return JsonResponse({'error': 'Permission denied'}, status=403)
-
-    company = request.user.company
-
+def _build_items_by_co_packer(company):
+    """Return (co_packers list, items_by_co_packer dict) for active co-packers with items."""
     co_packers = list(CoPacker.objects.filter(company=company, is_active=True).order_by('name'))
-
     items_by_co_packer = {}
     for cp in co_packers:
         cp_items = list(
@@ -400,6 +467,22 @@ def production_po_modal_data(request, year, month):
             }
             for item in cp_items
         ]
+    return co_packers, items_by_co_packer
+
+
+# ---------------------------------------------------------------------------
+# Production PO modal data endpoint (Phase D)
+# ---------------------------------------------------------------------------
+
+@login_required
+def production_po_modal_data(request, year, month):
+    denied = _require_production_permission(request)
+    if denied:
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    company = request.user.company
+
+    co_packers, items_by_co_packer = _build_items_by_co_packer(company)
 
     saved_pos_qs = (
         ProductionPO.objects
@@ -436,6 +519,63 @@ def production_po_modal_data(request, year, month):
         'year': year,
         'month': month,
         'mode': 'month',
+        'period_label': period_label,
+        'co_packers': [{'id': cp.pk, 'name': cp.name} for cp in co_packers],
+        'items_by_co_packer': items_by_co_packer,
+        'saved_pos': saved_pos_json,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Production PO single-mode modal data endpoint (Phase D2)
+# ---------------------------------------------------------------------------
+
+@login_required
+def production_po_modal_data_single(request, po_pk):
+    denied = _require_production_permission(request)
+    if denied:
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    company = request.user.company
+
+    try:
+        po = (
+            ProductionPO.objects
+            .select_related('co_packer')
+            .prefetch_related('lines__item')
+            .get(pk=po_pk, company=company)
+        )
+    except ProductionPO.DoesNotExist:
+        return JsonResponse({'error': 'PO not found'}, status=404)
+
+    co_packers, items_by_co_packer = _build_items_by_co_packer(company)
+
+    lines = [
+        {
+            'item_id': line.item_id,
+            'batch_count': line.batch_count,
+            'quantity_cases': float(line.quantity_cases),
+        }
+        for line in po.lines.all()
+    ]
+
+    saved_pos_json = [{
+        'po_id': po.pk,
+        'co_packer_id': po.co_packer_id,
+        'co_packer_name': po.co_packer.name,
+        'status': po.status,
+        'external_po_number': po.external_po_number or '',
+        'notes': po.notes or '',
+        'generated_by_algorithm': po.generated_by_algorithm,
+        'lines': lines,
+    }]
+
+    period_label = f"{MONTH_NAMES[po.month - 1]} {po.year}"
+
+    return JsonResponse({
+        'year': po.year,
+        'month': po.month,
+        'mode': 'single',
         'period_label': period_label,
         'co_packers': [{'id': cp.pk, 'name': cp.name} for cp in co_packers],
         'items_by_co_packer': items_by_co_packer,
@@ -512,10 +652,10 @@ def production_po_save(request):
         status = po.get('status', 'projected')
         external_po_number = (po.get('external_po_number') or '').strip()
 
-        if status not in ('projected', 'actual'):
+        if status not in ('projected', 'actual', 'complete'):
             return JsonResponse({'error': f'Invalid status: {status}'}, status=400)
-        if status == 'actual' and not external_po_number:
-            return JsonResponse({'error': 'PO number is required when status is Actual.'}, status=400)
+        if status in ('actual', 'complete') and not external_po_number:
+            return JsonResponse({'error': 'PO number is required when status is Actual or Complete.'}, status=400)
 
         seen_item_ids = set()
         for line in po.get('lines', []):

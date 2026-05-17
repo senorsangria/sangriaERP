@@ -11,4 +11,6 @@ urlpatterns = [
     path('production/po/save/', views.production_po_save, name='production_po_save'),
     path('production/po/<int:po_pk>/delete/', views.production_po_delete, name='production_po_delete'),
     path('production/po/<int:year>/<int:month>/', views.production_po_modal_data, name='production_po_modal_data'),
+    # Phase D2 — single-PO modal endpoint
+    path('production/po/single/<int:po_pk>/', views.production_po_modal_data_single, name='production_po_modal_data_single'),
 ]
