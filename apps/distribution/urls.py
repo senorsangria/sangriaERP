@@ -2,6 +2,12 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    # Distributor Groups
+    path('distributor-groups/', views.distributor_group_list, name='distributor_group_list'),
+    path('distributor-groups/create/', views.distributor_group_create, name='distributor_group_create'),
+    path('distributor-groups/<int:pk>/edit/', views.distributor_group_edit, name='distributor_group_edit'),
+    path('distributor-groups/<int:pk>/delete/', views.distributor_group_delete, name='distributor_group_delete'),
+    # Distributors
     path('distributors/', views.distributor_list, name='distributor_list'),
     path('distributors/create/', views.distributor_create, name='distributor_create'),
     # Inventory snapshot import (Phase 2b-1) — static paths before <int:pk>

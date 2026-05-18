@@ -17,13 +17,15 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 
+from django.http import HttpResponseForbidden
+
 from apps.catalog.models import Brand as CatalogBrand, Item
 from apps.imports.models import ItemMapping
 from .forecast import compute_distributor_forecast
-from .forms import DistributorForm, InventoryImportUploadForm
+from .forms import DistributorForm, DistributorGroupForm, InventoryImportUploadForm
 from .order_generation import generate_projected_orders
 from .models import (
-    Distributor, DistributorItemProfile, DistributorPO, DistributorPOLine,
+    Distributor, DistributorGroup, DistributorItemProfile, DistributorPO, DistributorPOLine,
     InventoryImportBatch, InventorySnapshot,
 )
 
@@ -249,6 +251,85 @@ def validate_inventory_import(rows, company, year, month):
 
 
 # ---------------------------------------------------------------------------
+# Distributor Group CRUD
+# ---------------------------------------------------------------------------
+
+@login_required
+def distributor_group_list(request):
+    if not request.user.has_permission('can_manage_distributor_groups'):
+        return HttpResponseForbidden('You do not have permission to access this page.')
+    company = request.user.company
+    groups = (
+        DistributorGroup.objects.filter(company=company)
+        .select_related('primary_distributor')
+        .prefetch_related('members')
+        .order_by('name')
+    )
+    return render(request, 'distribution/distributor_group_list.html', {
+        'groups': groups,
+    })
+
+
+@login_required
+def distributor_group_create(request):
+    if not request.user.has_permission('can_manage_distributor_groups'):
+        return HttpResponseForbidden('You do not have permission to access this page.')
+    company = request.user.company
+    if request.method == 'POST':
+        form = DistributorGroupForm(request.POST, company=company)
+        if form.is_valid():
+            group = form.save()
+            messages.success(request, f'Created distributor group "{group.name}".')
+            return redirect('distributor_group_list')
+    else:
+        form = DistributorGroupForm(company=company)
+    return render(request, 'distribution/distributor_group_form.html', {
+        'form': form,
+        'is_create': True,
+    })
+
+
+@login_required
+def distributor_group_edit(request, pk):
+    if not request.user.has_permission('can_manage_distributor_groups'):
+        return HttpResponseForbidden('You do not have permission to access this page.')
+    company = request.user.company
+    group = get_object_or_404(DistributorGroup, pk=pk, company=company)
+    if request.method == 'POST':
+        form = DistributorGroupForm(request.POST, instance=group, company=company)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f'Updated distributor group "{group.name}".')
+            return redirect('distributor_group_list')
+    else:
+        form = DistributorGroupForm(instance=group, company=company)
+    return render(request, 'distribution/distributor_group_form.html', {
+        'form': form,
+        'group': group,
+        'is_create': False,
+    })
+
+
+@login_required
+def distributor_group_delete(request, pk):
+    if not request.user.has_permission('can_manage_distributor_groups'):
+        return HttpResponseForbidden('You do not have permission to access this page.')
+    company = request.user.company
+    group = get_object_or_404(DistributorGroup, pk=pk, company=company)
+    if request.method == 'POST':
+        name = group.name
+        member_count = group.members.count()
+        with transaction.atomic():
+            group.delete()
+        messages.success(request, f'Deleted distributor group "{name}". {member_count} distributors are now ungrouped.')
+        return redirect('distributor_group_list')
+    return render(request, 'distribution/distributor_group_confirm_delete.html', {
+        'group': group,
+        'member_count': group.members.count(),
+    })
+
+
+# ---------------------------------------------------------------------------
 # Distributor list (3-tab page)
 # ---------------------------------------------------------------------------
 
@@ -261,11 +342,38 @@ def distributor_list(request):
     can_manage_inventory = request.user.has_permission('can_manage_distributor_inventory')
     company = request.user.company
 
-    distributors = Distributor.objects.filter(company=company).order_by('name')
-    search = request.GET.get('q', '').strip()
-    if search:
-        distributors = distributors.filter(name__icontains=search)
+    q = request.GET.get('q', '').strip()
+    base_qs = Distributor.objects.filter(company=company)
 
+    if q:
+        distributors_flat = list(base_qs.filter(name__icontains=q).order_by('name'))
+        grouped_data = None
+        ungrouped_data = None
+        is_grouped_view = False
+    else:
+        distributors_flat = None
+        from itertools import groupby
+        grouped_qs = (
+            base_qs.filter(group__isnull=False)
+            .select_related('group', 'group__primary_distributor')
+            .order_by('group__name', 'name')
+        )
+        ungrouped_qs = base_qs.filter(group__isnull=True).order_by('name')
+        grouped_data = []
+        for group_obj, members_iter in groupby(grouped_qs, key=lambda d: d.group):
+            grouped_data.append({
+                'group': group_obj,
+                'members': list(members_iter),
+            })
+        ungrouped_data = list(ungrouped_qs)
+        is_grouped_view = True
+
+    if is_grouped_view:
+        total_count = sum(len(g['members']) for g in grouped_data) + len(ungrouped_data)
+    else:
+        total_count = len(distributors_flat)
+
+    search = q
     active_tab = request.GET.get('tab', 'distributors')
     if active_tab not in ('distributors', 'inventory', 'forecast'):
         active_tab = 'distributors'
@@ -431,7 +539,11 @@ def distributor_list(request):
                 slot['total_count'] = saved_count + slot['order_count']
 
     return render(request, 'distribution/distributor_list.html', {
-        'distributors': distributors,
+        'distributors_flat': distributors_flat,
+        'grouped_data': grouped_data,
+        'ungrouped_data': ungrouped_data,
+        'is_grouped_view': is_grouped_view,
+        'total_count': total_count,
         'search': search,
         'active_tab': active_tab,
         'can_manage_inventory': can_manage_inventory,

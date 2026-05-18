@@ -4041,3 +4041,29 @@ The nav system has no submenu/child-item concept — flat list only.
 #### Remaining phases
 
 - **Phase E** — Production algorithm (project batches needed from demand and safety stock)
+
+---
+
+## Distributor Groups
+
+### Phase G1 — Foundation (Complete)
+
+- **New `DistributorGroup` model** (`apps/distribution/models.py`): company-scoped, fields: `name` (unique per company), `notes`, `primary_distributor` (FK → Distributor, PROTECT, `unique=True` so a distributor can only be primary of ONE group). Ordering: alphabetical by name.
+- **New `group` FK on `Distributor`** (SET_NULL on group delete, null/blank). Members are tracked via this reverse FK (`DistributorGroup.members`).
+- **Distributor edit form shows `group` as READ-ONLY** field with a link to the group edit page. Group assignment is exclusively managed via the Distributor Groups admin — intentional design to keep group structure centralized.
+- **New permission `can_manage_distributor_groups`** granted to `supplier_admin` role (migration `core/0015`).
+- **Fixed `active_match` matcher in nav.py** to use most-specific-prefix-wins algorithm: when multiple nav items prefix-match the current URL, only the one with the longest matching `active_match` is marked active. Prevents substring collisions (e.g., `'distributor'` no longer wins over `'distributor_group'` for group pages).
+- **New "Distributor Groups" admin page** in Admin Tools section (positioned after Brands, before Sales Import). Permission-gated by `can_manage_distributor_groups`.
+- **Group form**: name field, primary distributor dropdown (scoped to active company distributors), member checkboxes (CheckboxSelectMultiple, scrollable container), notes. Validates: name unique per company, primary must be in member list, at least one member required.
+- **Group form `save()` syncs member group FKs atomically**: adds `group` FK to newly-added members, clears `group` FK on removed members.
+- **Distributor list restructured**: grouped display by default (groups alphabetical, members alphabetical within each group, primary distributor marked with "Primary" badge, Ungrouped section appears last). Search falls back to flat (non-grouped) list.
+- **Group delete**: sets all members' `group` FK to NULL via Django's SET_NULL; flash message reports how many distributors became ungrouped.
+- **~22 new tests** in `apps/distribution/tests_groups.py` covering models, form validation, view permission gating, list restructure, edit read-only display, permission grants, and nav active_match behavior.
+
+### Phase G2 (pending)
+
+Group forecast view with aggregated demand/inventory across all group members.
+
+### Phase G3 (pending)
+
+Group PO modal where saves go to the primary distributor.

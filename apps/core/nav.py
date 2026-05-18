@@ -93,6 +93,14 @@ NAV_ITEMS = [
         'active_match': 'brand',
     },
     {
+        'label': 'Distributor Groups',
+        'url_name': 'distributor_group_list',
+        'icon': 'bi-collection',
+        'permission': 'can_manage_distributor_groups',
+        'section': 'admin_tools',
+        'active_match': 'distributor_group',
+    },
+    {
         'label': 'Sales Import',
         'url_name': 'import_upload',
         'icon': 'bi-cloud-upload',
@@ -153,6 +161,18 @@ def get_nav_for_user(user, request):
     if request.resolver_match:
         current_url_name = request.resolver_match.url_name or ''
 
+    # Compute most-specific active_match length for the current URL so that
+    # a shorter prefix (e.g. 'distributor') never beats a longer one
+    # (e.g. 'distributor_group') when both would prefix-match the current URL.
+    def _matches(match, url):
+        return bool(match and (url == match or url.startswith(match + '_')))
+
+    best_match_len = max(
+        (len(item.get('active_match', '')) for item in NAV_ITEMS
+         if _matches(item.get('active_match', ''), current_url_name)),
+        default=0,
+    )
+
     # Resolve visible items, annotating each with is_active.
     # We copy each item dict so mutations don't affect the module-level list.
     visible_items = []
@@ -166,7 +186,11 @@ def get_nav_for_user(user, request):
         # Items with neither key are shown to all authenticated users.
         copy = dict(item)
         match = copy.get('active_match', '')
-        copy['is_active'] = bool(match and match in current_url_name)
+        copy['is_active'] = bool(
+            best_match_len > 0
+            and len(match) == best_match_len
+            and _matches(match, current_url_name)
+        )
         visible_items.append(copy)
 
     # Group by section, preserving NAV_SECTIONS order.

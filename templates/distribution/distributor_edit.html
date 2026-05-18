@@ -116,6 +116,21 @@
                 {% endif %}
               </div>
 
+              <div class="mb-3">
+                <label class="form-label fw-medium">Group</label>
+                <div class="form-control-plaintext">
+                  {% if distributor.group %}
+                    <a href="{% url 'distributor_group_edit' pk=distributor.group.pk %}">{{ distributor.group.name }}</a>
+                    {% if distributor == distributor.group.primary_distributor %}
+                      <span class="badge bg-primary ms-1">Primary</span>
+                    {% endif %}
+                  {% else %}
+                    <span class="text-muted">— None —</span>
+                  {% endif %}
+                </div>
+                <small class="form-text text-muted">Group membership is managed via the Distributor Groups admin page.</small>
+              </div>
+
               <div class="mb-4">
                 <div class="form-check">
                   {{ form.is_active }}

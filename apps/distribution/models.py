@@ -10,6 +10,36 @@ from django.db import models
 from apps.core.models import TimeStampedModel
 
 
+class DistributorGroup(TimeStampedModel):
+    """
+    A named group of distributors scoped to a Company.
+
+    primary_distributor is unique — a distributor can be primary of at most one group.
+    Members are tracked via the group FK on Distributor (SET_NULL on group delete).
+    """
+
+    company = models.ForeignKey(
+        'core.Company',
+        on_delete=models.PROTECT,
+        related_name='distributor_groups',
+    )
+    name = models.CharField(max_length=255)
+    primary_distributor = models.ForeignKey(
+        'distribution.Distributor',
+        on_delete=models.PROTECT,
+        related_name='primary_for_groups',
+        unique=True,
+    )
+    notes = models.TextField(blank=True, default='')
+
+    class Meta:
+        unique_together = [['company', 'name']]
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class Distributor(TimeStampedModel):
     """
     A distribution company that services Accounts on behalf of a Brand.
@@ -44,6 +74,13 @@ class Distributor(TimeStampedModel):
         null=True,
         blank=True,
         help_text='Whether the order quantity is in pallets or cases.',
+    )
+    group = models.ForeignKey(
+        'distribution.DistributorGroup',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='members',
     )
 
     class Meta:
