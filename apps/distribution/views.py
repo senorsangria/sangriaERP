@@ -18,6 +18,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 
 from django.http import HttpResponseForbidden
+from django.utils.http import url_has_allowed_host_and_scheme
 
 from apps.catalog.models import Brand as CatalogBrand, Item
 from apps.imports.models import ItemMapping
@@ -280,6 +281,9 @@ def distributor_group_create(request):
         if form.is_valid():
             group = form.save()
             messages.success(request, f'Created distributor group "{group.name}".')
+            if form.moved_distributors:
+                move_list = ', '.join([f'{name} (from {old})' for name, old in form.moved_distributors])
+                messages.info(request, f'Moved distributors to this group: {move_list}')
             return redirect('distributor_group_list')
     else:
         form = DistributorGroupForm(company=company)
@@ -295,11 +299,19 @@ def distributor_group_edit(request, pk):
         return HttpResponseForbidden('You do not have permission to access this page.')
     company = request.user.company
     group = get_object_or_404(DistributorGroup, pk=pk, company=company)
+    next_url = request.GET.get('next', '') or request.POST.get('next', '')
+    if next_url and not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
+        next_url = ''
     if request.method == 'POST':
         form = DistributorGroupForm(request.POST, instance=group, company=company)
         if form.is_valid():
             form.save()
             messages.success(request, f'Updated distributor group "{group.name}".')
+            if form.moved_distributors:
+                move_list = ', '.join([f'{name} (from {old})' for name, old in form.moved_distributors])
+                messages.info(request, f'Moved distributors to this group: {move_list}')
+            if next_url:
+                return redirect(next_url)
             return redirect('distributor_group_list')
     else:
         form = DistributorGroupForm(instance=group, company=company)
@@ -307,6 +319,7 @@ def distributor_group_edit(request, pk):
         'form': form,
         'group': group,
         'is_create': False,
+        'next_url': next_url,
     })
 
 

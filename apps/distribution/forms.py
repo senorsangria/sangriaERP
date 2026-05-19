@@ -105,11 +105,20 @@ class DistributorGroupForm(forms.ModelForm):
     def __init__(self, *args, company=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.company = company
+        self.distributor_current_groups = {}
         if company is not None:
-            distributors_qs = Distributor.objects.filter(company=company, is_active=True).order_by('name')
+            distributors_qs = (
+                Distributor.objects.filter(company=company, is_active=True)
+                .order_by('name')
+                .select_related('group')
+            )
             self.fields['members'].queryset = distributors_qs
             self.fields['primary_distributor'].queryset = distributors_qs
-            self.fields['primary_distributor'].empty_label = None
+            self.fields['primary_distributor'].empty_label = '— Select primary distributor —'
+            self.fields['primary_distributor'].required = True
+            for dist in distributors_qs:
+                if dist.group_id and (not self.instance.pk or dist.group_id != self.instance.pk):
+                    self.distributor_current_groups[str(dist.pk)] = dist.group.name
         if self.instance and self.instance.pk:
             self.fields['members'].initial = self.instance.members.all()
 
@@ -142,7 +151,11 @@ class DistributorGroupForm(forms.ModelForm):
             new_members = set(self.cleaned_data['members'])
             old_members = set(instance.members.all()) if instance.pk else set()
 
+            self.moved_distributors = []
             for d in new_members - old_members:
+                old_group_name = self.distributor_current_groups.get(str(d.pk))
+                if old_group_name:
+                    self.moved_distributors.append((d.name, old_group_name))
                 d.group = instance
                 d.save(update_fields=['group'])
 

@@ -4060,6 +4060,17 @@ The nav system has no submenu/child-item concept — flat list only.
 - **Group delete**: sets all members' `group` FK to NULL via Django's SET_NULL; flash message reports how many distributors became ungrouped.
 - **~22 new tests** in `apps/distribution/tests_groups.py` covering models, form validation, view permission gating, list restructure, edit read-only display, permission grants, and nav active_match behavior.
 
+#### G1 Tweaks (follow-up)
+
+- **Primary distributor dropdown**: no default selection (empty option "— Select primary distributor —"), field is required — blank submission yields a validation error.
+- **Members-first workflow**: JS dynamically filters the primary dropdown to only show currently-checked members; dropdown is disabled when no members are selected.
+- **Distributors in other groups**: member checkboxes show a `bg-warning` "Currently in: [group]" badge for distributors already assigned to a different group, so admins can see the impact before saving.
+- **Move confirmation dialog**: submitting a group that would move distributors from other groups triggers a JS `confirm()` dialog listing each distributor and its current group before the POST proceeds.
+- **Move tracking on save**: `DistributorGroupForm.save()` populates `form.moved_distributors` (list of `(name, old_group)` tuples) for distributors pulled from other groups; views show an `info` flash message listing the moves.
+- **Group edit `?next=` redirect**: `distributor_group_edit` accepts a `?next=` query param (or hidden POST field); on successful save or Cancel, redirects to that URL instead of the group list. Unsafe/off-site URLs are rejected via `url_has_allowed_host_and_scheme`.
+- **Distributor edit group link**: includes `?next={{ request.path }}` so navigating to group edit from the distributor edit page returns to the distributor edit page after save.
+- **~7 new tests** covering primary-required, empty-label, move tracking, skipped tracking for ungrouped additions, and `?next=` redirect (present / absent / unsafe).
+
 ### Phase G2 (pending)
 
 Group forecast view with aggregated demand/inventory across all group members.

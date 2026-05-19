@@ -461,3 +461,121 @@ class NavActiveMatchWordBoundaryTest(TestCase):
         for url in ('distributor_group_list', 'distributor_group_create', 'distributor_group_edit', 'distributor_group_delete'):
             is_active = self._nav_is_active('distributor_group_list', url, self.admin, self.company)
             self.assertTrue(is_active, f"distributor_group_list nav item should be active for url '{url}'")
+
+
+# ---------------------------------------------------------------------------
+# G1 tweaks: primary required, members-first UX, move tracking, ?next= redirect
+# ---------------------------------------------------------------------------
+
+class DistributorGroupFormG1TweaksTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.dist_a = make_distributor(self.company, 'Dist A')
+        self.dist_b = make_distributor(self.company, 'Dist B')
+
+    def test_form_primary_field_is_required(self):
+        form = DistributorGroupForm(
+            data={
+                'name': 'New Group',
+                'primary_distributor': '',
+                'members': [self.dist_a.pk],
+                'notes': '',
+            },
+            company=self.company,
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn('primary_distributor', form.errors)
+
+    def test_form_primary_dropdown_has_no_default_selection(self):
+        form = DistributorGroupForm(company=self.company)
+        field = form.fields['primary_distributor']
+        self.assertEqual(field.empty_label, '— Select primary distributor —')
+        self.assertTrue(field.required)
+
+    def test_form_save_records_moved_distributors_when_adding_existing_member(self):
+        other_group = DistributorGroup.objects.create(
+            company=self.company, name='Other Group', primary_distributor=self.dist_b
+        )
+        self.dist_b.group = other_group
+        self.dist_b.save(update_fields=['group'])
+
+        form = DistributorGroupForm(
+            data={
+                'name': 'New Group',
+                'primary_distributor': self.dist_a.pk,
+                'members': [self.dist_a.pk, self.dist_b.pk],
+                'notes': '',
+            },
+            company=self.company,
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+        self.assertEqual(len(form.moved_distributors), 1)
+        moved_name, old_group = form.moved_distributors[0]
+        self.assertEqual(moved_name, 'Dist B')
+        self.assertEqual(old_group, 'Other Group')
+
+    def test_form_save_skips_move_tracking_for_new_members(self):
+        form = DistributorGroupForm(
+            data={
+                'name': 'New Group',
+                'primary_distributor': self.dist_a.pk,
+                'members': [self.dist_a.pk],
+                'notes': '',
+            },
+            company=self.company,
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+        self.assertEqual(form.moved_distributors, [])
+
+
+class DistributorGroupNextUrlTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company, 'admin')
+        self.dist_a = make_distributor(self.company, 'Dist A')
+        self.group = make_group(self.company, 'Edit Me', primary=self.dist_a, members=[self.dist_a])
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_group_edit_redirects_to_next_url_when_provided(self):
+        next_url = reverse('distributor_edit', kwargs={'pk': self.dist_a.pk})
+        resp = self.client.post(
+            reverse('distributor_group_edit', kwargs={'pk': self.group.pk}),
+            {
+                'name': 'Edit Me',
+                'primary_distributor': self.dist_a.pk,
+                'members': [self.dist_a.pk],
+                'notes': '',
+                'next': next_url,
+            },
+        )
+        self.assertRedirects(resp, next_url)
+
+    def test_group_edit_redirects_to_list_when_no_next_url(self):
+        resp = self.client.post(
+            reverse('distributor_group_edit', kwargs={'pk': self.group.pk}),
+            {
+                'name': 'Edit Me',
+                'primary_distributor': self.dist_a.pk,
+                'members': [self.dist_a.pk],
+                'notes': '',
+            },
+        )
+        self.assertRedirects(resp, reverse('distributor_group_list'))
+
+    def test_group_edit_rejects_unsafe_next_url(self):
+        resp = self.client.post(
+            reverse('distributor_group_edit', kwargs={'pk': self.group.pk}),
+            {
+                'name': 'Edit Me',
+                'primary_distributor': self.dist_a.pk,
+                'members': [self.dist_a.pk],
+                'notes': '',
+                'next': '//evil.com/hack',
+            },
+        )
+        self.assertRedirects(resp, reverse('distributor_group_list'))
