@@ -4124,4 +4124,67 @@ The nav system has no submenu/child-item concept — flat list only.
 - **Algorithm suggestions** computed fresh in the modal endpoint via `compute_group_forecast(group)` + `generate_projected_orders(primary, forecast_result)`. Same pattern as individual modal endpoint (re-compute on each open).
 - **Tab labeling:** Non-primary (read-only) tabs labeled by distributor name; editable tabs labeled "Order N".
 - **`_esc()` in group modal JS** uses DOM-based approach (safer than the string-replace version in the individual modal).
+
+---
+
+## Inventory Mapping UX
+
+### Inline Mapping Resolution During CSV Upload
+
+- When the inventory CSV upload detects unmapped item codes, the user is redirected to `/imports/resolve-mappings/` instead of being shown a flat error list.
+- `validate_inventory_import()` now returns a 3-tuple `(resolved_rows, errors, unmapped_by_dist_id)`. Callers: if `errors` → show error page; if `unmapped_by_dist_id` → redirect to resolution UI; otherwise proceed to preview.
+- Other errors (distributor not found, period conflict) still show the error page as before.
+
+### Smart Matching Algorithm (`apps/imports/matching.py`)
+
+- **Priority 1 (high):** Existing MAPPED `ItemMapping` for the same raw code at any other distributor in the company. Short-circuits remaining priorities.
+- **Priority 2 (medium):** `Item.item_code` exact match, case-insensitive.
+- **Priority 3 (low):** Substring match on `item_code`. Not pre-filled — shown as dropdown suggestion only.
+- **Priority 4 (low):** Word tokenisation match on `item.name`. Not pre-filled.
+- `batch_find_best_matches(company, distributor, raw_codes)` uses **exactly 2 DB queries** regardless of batch size: one for existing mappings at other distributors, one for all active items in the company.
+- `build_candidate_list()` surfaces Priority 3 & 4 matches for optional dropdown highlighting.
+
+### Resolution UI
+
+- Template: `templates/imports/resolve_mappings.html`
+- Grouped by distributor; each row: raw code + confidence badge + item dropdown (pre-filled for high/medium) + "Apply to all" checkbox.
+- Save button disabled until every row has a selection.
+- "Apply to all distributors" checkbox propagates item selection to all other rows with the same raw code and creates mappings for all active company distributors via `bulk_create(ignore_conflicts=True)`.
+
+### Bulk Save Endpoint (`POST /imports/mappings/bulk-save/`)
+
+- Accepts JSON array of `{distributor_id, raw_item_name, item_id, apply_to_all}`.
+- All mappings created in a single `transaction.atomic()`. Any validation failure rolls back everything.
+- Uses `update_or_create` for primary mappings (idempotent re-submission).
+- `apply_to_all=true` creates mappings for all active distributors via `bulk_create(ignore_conflicts=True)` — existing mappings at other distributors are never overwritten.
+- Success message: `"N mapping(s) saved. Re-upload your CSV to continue with the import."`
+
+### Permission Gate
+
+- Both `can_import_sales_data` **and** `can_manage_item_mapping` required for `resolve_mappings` and `bulk_save_mappings`.
+- Both are granted to `supplier_admin` (migrations 0004 and 0009).
+- The upload flow (`can_manage_distributor_inventory`) gets the user to the redirect; the mapping permissions gate the save.
+
+### Session Management
+
+- Pending resolution data stored under key `pending_mapping_resolution`: `{unknown_codes: {dist_id: [codes]}, next_url, context}`.
+- Session expiry handled: if `pending_mapping_resolution` is missing on `GET /imports/resolve-mappings/`, redirects to `inventory_upload` with a warning.
+- Session cleared by `bulk_save_mappings` after successful save.
+
+### Re-upload Model
+
+- No CSV file persistence. After saving mappings, user is shown a success flash and directed to re-upload the same CSV. On re-upload all codes now resolve and the normal preview/confirm/execute flow proceeds.
+
+### Existing Manual Mapping Tool
+
+- Unchanged. `ItemMapping` records created via the inline flow are identical to manually created ones and appear in the manual tool at `/imports/item-mappings/`.
+
+### InventorySnapshot Unique Constraint
+
+- `unique_together = [['distributor', 'item', 'year', 'month']]` already existed on the model — no migration was added in this phase.
+
+### Reuse for Sales Import (Future)
+
+- The `resolve_mappings` view, `bulk_save_mappings` endpoint, and `apps/imports/matching.py` are context-agnostic. The `next_url` and `context` fields in the session allow different upload flows to wire in.
+- Future sales import integration: ~20 lines changed in `import_upload()` to detect unmapped codes and store `{context: 'sales', next_url: reverse('import_upload')}` in session before redirecting. No new files or endpoints needed.
 - **~18 new tests** in `apps/distribution/tests_group_po_endpoints.py`. 3 G2 tests in `tests_group_forecast.py` updated to use `saved_orders` key (G3 response shape). All 284 tests pass.

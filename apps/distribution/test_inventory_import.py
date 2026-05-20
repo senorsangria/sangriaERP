@@ -382,23 +382,31 @@ class ValidateInventoryImportTest(TestCase):
 
     def test_validate_unknown_distributor(self):
         rows = self._make_rows(dist_name='Unknown Dist')
-        resolved, errors = validate_inventory_import(rows, self.company, 2026, 4)
+        resolved, errors, unmapped = validate_inventory_import(rows, self.company, 2026, 4)
         self.assertEqual(resolved, [])
         self.assertTrue(any('Unknown Dist' in e for e in errors))
 
     def test_validate_unmapped_item_code(self):
+        # Unmapped codes are now returned in the third value, not in errors.
         rows = self._make_rows(item_code='UNMAPPED')
-        resolved, errors = validate_inventory_import(rows, self.company, 2026, 4)
+        resolved, errors, unmapped = validate_inventory_import(rows, self.company, 2026, 4)
         self.assertEqual(resolved, [])
-        self.assertTrue(any('UNMAPPED' in e for e in errors))
+        self.assertEqual(errors, [])
+        self.assertTrue(unmapped)
+        # All unmapped codes are keyed by distributor ID
+        all_codes = [c for codes in unmapped.values() for c in codes]
+        self.assertIn('UNMAPPED', all_codes)
 
     def test_validate_ignored_item_code(self):
+        # An IGNORED mapping is treated the same as unmapped — goes to resolution UI.
         self.mapping.status = ItemMapping.Status.IGNORED
         self.mapping.save()
         rows = self._make_rows()
-        resolved, errors = validate_inventory_import(rows, self.company, 2026, 4)
+        resolved, errors, unmapped = validate_inventory_import(rows, self.company, 2026, 4)
         self.assertEqual(resolved, [])
-        self.assertTrue(any('RED750' in e for e in errors))
+        self.assertEqual(errors, [])
+        all_codes = [c for codes in unmapped.values() for c in codes]
+        self.assertIn('RED750', all_codes)
 
     def test_validate_period_conflict(self):
         InventorySnapshot.objects.create(
@@ -409,15 +417,16 @@ class ValidateInventoryImportTest(TestCase):
             month=4,
         )
         rows = self._make_rows()
-        resolved, errors = validate_inventory_import(rows, self.company, 2026, 4)
+        resolved, errors, unmapped = validate_inventory_import(rows, self.company, 2026, 4)
         self.assertEqual(resolved, [])
         self.assertTrue(any('already has inventory data' in e for e in errors))
         self.assertTrue(any('April 2026' in e for e in errors))
 
     def test_validate_success_path(self):
         rows = self._make_rows()
-        resolved, errors = validate_inventory_import(rows, self.company, 2026, 4)
+        resolved, errors, unmapped = validate_inventory_import(rows, self.company, 2026, 4)
         self.assertEqual(errors, [])
+        self.assertEqual(unmapped, {})
         self.assertEqual(len(resolved), 1)
         self.assertEqual(resolved[0]['distributor'], self.distributor)
         self.assertEqual(resolved[0]['item'], self.item)
@@ -429,8 +438,9 @@ class ValidateInventoryImportTest(TestCase):
         make_item_mapping(self.company, self.distributor, spritz_item, raw_item_name='SPRITZwht')
         # CSV uses uppercase variant
         rows = self._make_rows(item_code='SPRITZWHT')
-        resolved, errors = validate_inventory_import(rows, self.company, 2026, 4)
+        resolved, errors, unmapped = validate_inventory_import(rows, self.company, 2026, 4)
         self.assertEqual(errors, [])
+        self.assertEqual(unmapped, {})
         self.assertEqual(len(resolved), 1)
         self.assertEqual(resolved[0]['item'], spritz_item)
 

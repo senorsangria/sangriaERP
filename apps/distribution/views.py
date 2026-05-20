@@ -176,13 +176,18 @@ def validate_inventory_import(rows, company, year, month):
 
     Steps:
       1. Resolve each distributor by name (case-insensitive, active only).
-      2. Resolve each item code via ItemMapping (case-insensitive on raw_item_name).
+      2. Detect unmapped item codes (no MAPPED ItemMapping exists).
       3. Check for period conflicts (snapshot already exists for that distributor/period).
 
-    Any error in any step aborts the entire upload.
+    Returns (resolved_rows, errors, unmapped_by_dist_id) where:
+      - resolved_rows: list of {distributor, item, quantity, row_number} on success
+      - errors: non-mapping validation errors (distributor not found, period conflict)
+      - unmapped_by_dist_id: {str(dist_id): [raw_code, ...]} when unmapped codes found
 
-    Returns (resolved_rows, errors) where resolved_rows is a list of dicts:
-        {distributor (Distributor), item (Item), quantity (Decimal), row_number}
+    Callers should:
+      - If errors: show error page
+      - Elif unmapped_by_dist_id: redirect to mapping resolution UI
+      - Else: proceed with resolved_rows
     """
     errors = []
 
@@ -199,11 +204,13 @@ def validate_inventory_import(rows, company, year, month):
             distributor_map[name] = dist
 
     if errors:
-        return [], errors
+        return [], errors, {}
 
     # Step 2: Item code resolution via ItemMapping
     unique_pairs = {(r['distributor_name'], r['item_code']) for r in rows}
     item_map = {}  # {(csv_dist_name, item_code): Item}
+    unmapped_by_dist = {}  # {dist.id: [raw_code, ...]}
+
     for dist_name, item_code in sorted(unique_pairs):
         dist = distributor_map[dist_name]
         mapping = ItemMapping.objects.filter(
@@ -213,16 +220,13 @@ def validate_inventory_import(rows, company, year, month):
         ).first()
 
         if mapping is None or mapping.status != ItemMapping.Status.MAPPED or mapping.mapped_item is None:
-            errors.append(
-                f"Item code '{item_code}' for distributor '{dist_name}' is not mapped. "
-                f"Add the mapping at /imports/item-mappings/ first."
-            )
-            continue
+            unmapped_by_dist.setdefault(dist.id, []).append(item_code)
+        else:
+            item_map[(dist_name, item_code)] = mapping.mapped_item
 
-        item_map[(dist_name, item_code)] = mapping.mapped_item
-
-    if errors:
-        return [], errors
+    if unmapped_by_dist:
+        # Return unmapped codes grouped by distributor ID (string keys for JSON serialisation)
+        return [], [], {str(k): v for k, v in unmapped_by_dist.items()}
 
     # Step 3: Period conflict check
     month_name = calendar.month_name[month]
@@ -234,7 +238,7 @@ def validate_inventory_import(rows, company, year, month):
             )
 
     if errors:
-        return [], errors
+        return [], errors, {}
 
     # Build resolved rows
     resolved_rows = []
@@ -248,7 +252,7 @@ def validate_inventory_import(rows, company, year, month):
             'row_number': row['row_number'],
         })
 
-    return resolved_rows, []
+    return resolved_rows, [], {}
 
 
 # ---------------------------------------------------------------------------
@@ -872,13 +876,24 @@ def inventory_upload(request):
                         'import_errors': ['The CSV file contains no data rows.'],
                     })
 
-                resolved_rows, val_errors = validate_inventory_import(rows, company, year, month)
+                resolved_rows, val_errors, unmapped_by_dist = validate_inventory_import(
+                    rows, company, year, month
+                )
                 if val_errors:
                     _inv_cleanup_temp_file(temp_path)
                     return render(request, 'distribution/inventory_upload.html', {
                         'form': form,
                         'import_errors': val_errors,
                     })
+
+                if unmapped_by_dist:
+                    _inv_cleanup_temp_file(temp_path)
+                    request.session['pending_mapping_resolution'] = {
+                        'unknown_codes': unmapped_by_dist,
+                        'next_url': reverse('inventory_upload'),
+                        'context': 'inventory',
+                    }
+                    return redirect('resolve_mappings')
 
                 # Build per-distributor preview summary
                 dist_summary = {}
@@ -1009,10 +1024,18 @@ def inventory_confirm(request):
         return redirect('inventory_preview')
 
     # Re-validate against fresh DB state
-    resolved_rows, val_errors = validate_inventory_import(rows, company, year, month)
+    resolved_rows, val_errors, unmapped_by_dist = validate_inventory_import(
+        rows, company, year, month
+    )
     if val_errors:
         for err in val_errors:
             messages.error(request, err)
+        return redirect('inventory_preview')
+    if unmapped_by_dist:
+        messages.error(
+            request,
+            'Some item codes are still unmapped. Please resolve all mappings before importing.',
+        )
         return redirect('inventory_preview')
 
     try:

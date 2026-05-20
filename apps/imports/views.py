@@ -27,7 +27,10 @@ from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.db import transaction
 from django.db.models.functions import ExtractYear
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.views.decorators.http import require_POST
 
 from apps.accounts.models import Account, AccountItem
 from apps.catalog.models import Item
@@ -1045,3 +1048,190 @@ def batch_delete(request, pk):
         'deletable_account_count': len(deletable_account_ids),
     }
     return render(request, 'imports/batch_delete.html', context)
+
+
+# ---------------------------------------------------------------------------
+# Inline mapping resolution — reusable for inventory and sales upload flows
+# ---------------------------------------------------------------------------
+
+def resolve_mappings(request):
+    """
+    Display the inline mapping resolution UI for unmapped item codes detected
+    during a CSV upload (inventory or sales).
+
+    Session key 'pending_mapping_resolution' must be set by the calling upload
+    view before redirecting here.  If the session has expired or is missing,
+    redirects to inventory_upload with a warning message.
+
+    Permission: requires both can_import_sales_data AND can_manage_item_mapping.
+    The upload flow already checked the upload permission; this view additionally
+    requires can_manage_item_mapping because it creates new ItemMapping records.
+    """
+    if not request.user.is_authenticated:
+        return redirect('login')
+    if (
+        not request.user.has_permission('can_import_sales_data')
+        or not request.user.has_permission('can_manage_item_mapping')
+    ):
+        return render(request, '403.html', status=403)
+
+    company = request.user.company
+    pending = request.session.get('pending_mapping_resolution')
+
+    if not pending or not pending.get('unknown_codes'):
+        messages.warning(request, 'Your upload session expired. Please re-upload your file.')
+        return redirect('inventory_upload')
+
+    unknown_codes_by_dist_id = pending['unknown_codes']
+    next_url = pending.get('next_url', reverse('inventory_upload'))
+
+    from apps.imports.matching import batch_find_best_matches
+    from apps.distribution.models import Distributor as _Distributor
+
+    distributor_ids = [int(k) for k in unknown_codes_by_dist_id.keys()]
+    distributors = {
+        d.id: d
+        for d in _Distributor.objects.filter(pk__in=distributor_ids, company=company)
+    }
+
+    # Pre-load all items for the dropdown (one query, shared across all groups)
+    all_items = list(
+        Item.objects.filter(brand__company=company, is_active=True)
+        .select_related('brand')
+        .order_by('brand__name', 'name')
+    )
+
+    groups = []
+    for dist_id_str, codes in unknown_codes_by_dist_id.items():
+        distributor = distributors.get(int(dist_id_str))
+        if not distributor:
+            continue
+
+        best_matches = batch_find_best_matches(company, distributor, codes)
+
+        rows = [
+            {
+                'raw_code': code,
+                'best_match': best_matches.get(code),
+            }
+            for code in codes
+        ]
+
+        groups.append({
+            'distributor': distributor,
+            'rows': rows,
+        })
+
+    return render(request, 'imports/resolve_mappings.html', {
+        'groups': groups,
+        'all_items': all_items,
+        'next_url': next_url,
+    })
+
+
+@require_POST
+def bulk_save_mappings(request):
+    """
+    Atomically create ItemMapping records for all resolved codes.
+
+    Accepts JSON body: {"mappings": [
+        {"distributor_id": int, "raw_item_name": str, "item_id": int, "apply_to_all": bool},
+        ...
+    ]}
+
+    Returns JSON: {"ok": true, "redirect_url": "..."} on success.
+
+    apply_to_all=true on any mapping causes that raw_item_name to be mapped to the
+    same item across ALL active distributors in the company (using bulk_create with
+    ignore_conflicts so existing mappings are never overwritten).
+    """
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'Not authenticated'}, status=401)
+    if (
+        not request.user.has_permission('can_import_sales_data')
+        or not request.user.has_permission('can_manage_item_mapping')
+    ):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    company = request.user.company
+
+    try:
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    mappings = payload.get('mappings', [])
+    if not mappings:
+        return JsonResponse({'error': 'No mappings provided'}, status=400)
+
+    # Pre-validate all inputs before touching the database
+    validated = []
+    apply_to_all_codes = {}  # {raw_item_name: item_id}
+
+    from apps.distribution.models import Distributor as _Distributor
+
+    for m in mappings:
+        try:
+            distributor = _Distributor.objects.get(pk=m['distributor_id'], company=company)
+            item = Item.objects.get(pk=m['item_id'], brand__company=company)
+        except (_Distributor.DoesNotExist, Item.DoesNotExist, KeyError, ValueError, TypeError):
+            return JsonResponse({'error': 'Invalid mapping reference'}, status=400)
+
+        validated.append({
+            'distributor': distributor,
+            'raw_item_name': m['raw_item_name'],
+            'item': item,
+        })
+
+        if m.get('apply_to_all'):
+            apply_to_all_codes[m['raw_item_name']] = item.pk
+
+    with transaction.atomic():
+        count = 0
+
+        for v in validated:
+            ItemMapping.objects.update_or_create(
+                company=company,
+                distributor=v['distributor'],
+                raw_item_name=v['raw_item_name'],
+                defaults={
+                    'mapped_item': v['item'],
+                    'status': ItemMapping.Status.MAPPED,
+                },
+            )
+            count += 1
+
+        # Apply-to-all: create mappings for ALL active company distributors
+        if apply_to_all_codes:
+            all_distributors = list(
+                _Distributor.objects.filter(company=company, is_active=True)
+            )
+
+            extra_mappings = []
+            for raw_code, item_id in apply_to_all_codes.items():
+                for dist in all_distributors:
+                    extra_mappings.append(ItemMapping(
+                        company=company,
+                        distributor=dist,
+                        raw_item_name=raw_code,
+                        mapped_item_id=item_id,
+                        status=ItemMapping.Status.MAPPED,
+                    ))
+
+            # ignore_conflicts=True: existing mappings are untouched
+            ItemMapping.objects.bulk_create(extra_mappings, ignore_conflicts=True)
+
+    # Read redirect_url before clearing session
+    pending = request.session.get('pending_mapping_resolution')
+    redirect_url = (pending or {}).get('next_url', reverse('inventory_upload'))
+
+    if 'pending_mapping_resolution' in request.session:
+        del request.session['pending_mapping_resolution']
+
+    plural = 's' if count != 1 else ''
+    messages.success(
+        request,
+        f'{count} mapping{plural} saved. Re-upload your CSV to continue with the import.',
+    )
+
+    return JsonResponse({'ok': True, 'redirect_url': redirect_url})
