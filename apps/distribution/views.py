@@ -22,7 +22,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 
 from apps.catalog.models import Brand as CatalogBrand, Item
 from apps.imports.models import ItemMapping
-from .forecast import compute_distributor_forecast
+from .forecast import compute_distributor_forecast, compute_group_forecast
 from .forms import DistributorForm, DistributorGroupForm, InventoryImportUploadForm
 from .order_generation import generate_projected_orders
 from .models import (
@@ -407,6 +407,7 @@ def distributor_list(request):
     orders_result = None
     forecast_distributor = None
     available_distributors = []
+    available_groups = []
 
     if can_manage_inventory:
         inv_distributor_filter = request.GET.get('inv_distributor', '')
@@ -510,14 +511,20 @@ def distributor_list(request):
         ]
 
         # Forecast tab — compute eagerly so Bootstrap tab-switching shows data
-        available_distributors = list(Distributor.objects.filter(company=company).order_by('name'))
+        available_distributors = list(
+            Distributor.objects.filter(company=company)
+            .select_related('group', 'group__primary_distributor')
+            .order_by('name')
+        )
+        available_groups = list(DistributorGroup.objects.filter(company=company).order_by('name'))
         forecast_dist_pk = request.GET.get('forecast_distributor', '')
         if forecast_dist_pk:
             try:
-                forecast_distributor = Distributor.objects.get(
-                    pk=int(forecast_dist_pk), company=company
+                pk = int(forecast_dist_pk)
+                forecast_distributor = next(
+                    (d for d in available_distributors if d.pk == pk), None
                 )
-            except (ValueError, Distributor.DoesNotExist):
+            except (ValueError, TypeError):
                 forecast_distributor = None
         if forecast_distributor is None and available_distributors:
             forecast_distributor = available_distributors[0]
@@ -573,6 +580,7 @@ def distributor_list(request):
         'orders_result': orders_result,
         'forecast_distributor': forecast_distributor,
         'available_distributors': available_distributors,
+        'available_groups': available_groups,
     })
 
 
@@ -1382,3 +1390,115 @@ def distributor_po_delete(request, dist_pk, po_pk):
     po.delete()
 
     return JsonResponse({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# Group forecast views (Phase G2)
+# ---------------------------------------------------------------------------
+
+@login_required
+def distributor_group_forecast(request, group_pk):
+    """Read-only aggregated forecast for a DistributorGroup."""
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return render(request, '403.html', status=403)
+
+    company = request.user.company
+    group = get_object_or_404(
+        DistributorGroup.objects.select_related('primary_distributor', 'company'),
+        pk=group_pk, company=company,
+    )
+    members = list(group.members.order_by('name'))
+    primary = group.primary_distributor
+
+    # Build po_additions and saved_pos_by_month from all member POs
+    saved_pos = list(
+        DistributorPO.objects.filter(distributor__in=members)
+        .select_related('distributor')
+        .prefetch_related('lines')
+    )
+    po_additions = {}
+    saved_pos_by_month = {}
+    for po in saved_pos:
+        ym = (po.year, po.month)
+        saved_pos_by_month.setdefault(ym, []).append(po)
+        for line in po.lines.all():
+            key = (line.item_id, po.year, po.month)
+            po_additions[key] = po_additions.get(key, 0.0) + float(line.quantity_cases)
+
+    forecast_result = compute_group_forecast(group, po_additions=po_additions or None)
+
+    orders_result = None
+    if forecast_result.get('alignment_status') == 'ok':
+        orders_result = generate_projected_orders(primary, forecast_result)
+        for slot in orders_result.get('orders_per_horizon', []):
+            ym = (slot['year'], slot['month'])
+            slot['saved_count'] = len(saved_pos_by_month.get(ym, []))
+            slot['total_count'] = slot['saved_count'] + slot.get('order_count', 0)
+
+    available_distributors = list(
+        Distributor.objects.filter(company=company)
+        .select_related('group', 'group__primary_distributor')
+        .order_by('name')
+    )
+    available_groups = list(DistributorGroup.objects.filter(company=company).order_by('name'))
+
+    return render(request, 'distribution/distributor_group_forecast.html', {
+        'group': group,
+        'members': members,
+        'primary_distributor': primary,
+        'forecast_result': forecast_result,
+        'orders_result': orders_result,
+        'available_distributors': available_distributors,
+        'available_groups': available_groups,
+    })
+
+
+@login_required
+def distributor_group_orders_modal_data(request, group_pk, year, month):
+    """Return JSON for the read-only multi-PO modal on the group forecast page."""
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    company = request.user.company
+    group = get_object_or_404(DistributorGroup, pk=group_pk, company=company)
+    members = list(group.members.all())
+
+    saved_pos = list(
+        DistributorPO.objects
+        .filter(distributor__in=members, year=year, month=month)
+        .select_related('distributor')
+        .prefetch_related('lines__item__brand')
+        .order_by('distributor__name', 'pk')
+    )
+
+    month_name = calendar.month_name[month]
+    pos_data = [
+        {
+            'po_id': po.pk,
+            'distributor_name': po.distributor.name,
+            'distributor_pk': po.distributor.pk,
+            'is_primary': po.distributor_id == group.primary_distributor_id,
+            'status': po.status,
+            'external_po_number': po.external_po_number or '',
+            'notes': po.notes or '',
+            'generated_by_algorithm': po.generated_by_algorithm,
+            'lines': [
+                {
+                    'item_id': line.item_id,
+                    'item_name': line.item.name,
+                    'brand_name': line.item.brand.name,
+                    'quantity_cases': float(line.quantity_cases),
+                }
+                for line in po.lines.all()
+            ],
+        }
+        for po in saved_pos
+    ]
+
+    return JsonResponse({
+        'group_name': group.name,
+        'year': year,
+        'month': month,
+        'period_label': f'{month_name} {year}',
+        'pos': pos_data,
+    })

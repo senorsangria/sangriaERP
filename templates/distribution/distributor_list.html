@@ -559,17 +559,36 @@
 
     {% else %}
     <!-- Distributor selector header -->
-    <div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
+    <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h4 class="mb-0 fw-semibold">Forecast for</h4>
-      <select id="forecast-distributor-select" class="form-select form-select-sm" style="max-width:260px;">
-        {% for dist in available_distributors %}
-        <option value="{{ dist.pk }}"
-          {% if forecast_distributor and dist.pk == forecast_distributor.pk %}selected{% endif %}>
-          {{ dist.name }}
-        </option>
-        {% endfor %}
+      <select id="forecast-distributor-select" class="form-select form-select-sm" style="max-width:340px;">
+        <optgroup label="Distributors">
+          {% for dist in available_distributors %}
+          <option value="dist-{{ dist.pk }}"
+                  data-url="?tab=forecast&forecast_distributor={{ dist.pk }}"
+                  {% if forecast_distributor and dist.pk == forecast_distributor.pk %}selected{% endif %}>
+            {{ dist.name }}{% if dist.group %} ({% if dist == dist.group.primary_distributor %}Primary - {% endif %}{{ dist.group.name }}){% endif %}
+          </option>
+          {% endfor %}
+        </optgroup>
+        {% if available_groups %}
+        <optgroup label="Groups">
+          {% for g in available_groups %}
+          <option value="group-{{ g.pk }}" data-url="{% url 'distributor_group_forecast' g.pk %}">
+            {{ g.name }}
+          </option>
+          {% endfor %}
+        </optgroup>
+        {% endif %}
       </select>
     </div>
+
+    {% if forecast_distributor and forecast_distributor.group %}
+    <div class="alert alert-info py-2 mb-3 small">
+      This distributor is part of <strong>{{ forecast_distributor.group.name }}</strong>.
+      <a href="{% url 'distributor_group_forecast' forecast_distributor.group.pk %}" class="ms-2">View Group Forecast →</a>
+    </div>
+    {% endif %}
 
     {% if forecast_result %}
       {% if forecast_result.message %}
@@ -807,10 +826,10 @@
   var sel = document.getElementById('forecast-distributor-select');
   if (!sel) return;
   sel.addEventListener('change', function () {
-    var url = new URL(window.location.href);
-    url.searchParams.set('tab', 'forecast');
-    url.searchParams.set('forecast_distributor', sel.value);
-    window.location.href = url.toString();
+    var opt = sel.options[sel.selectedIndex];
+    if (opt && opt.dataset.url) {
+      window.location.href = opt.dataset.url;
+    }
   });
 })();
 

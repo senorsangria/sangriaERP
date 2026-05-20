@@ -4072,9 +4072,41 @@ The nav system has no submenu/child-item concept — flat list only.
 - **Distributor edit group link**: includes `?next={{ request.path }}` so navigating to group edit from the distributor edit page returns to the distributor edit page after save.
 - **~9 new/updated tests** covering conflict blocking, multiple conflicts, conflict context attached to form, no-block for current-group members, no-block for ungrouped members, distributor edit `?next=` redirect (present / absent / unsafe), and conflict display with links.
 
-### Phase G2 (pending)
+### Phase G2 — Group Forecast View (Complete)
 
-Group forecast view with aggregated demand/inventory across all group members.
+- **New URL `/distributors/group/<group_pk>/`** renders a read-only aggregated group forecast
+  (`distributor_group_forecast` view, `distributor_group_forecast.html` template).
+- **Mirrors individual distributor forecast** — same 13-column grid (anchor + 12 projection),
+  same cell coloring (green/yellow/red/no_data), same Orders row. No Inventory or Sales tabs.
+- **Aggregation**: inventory snapshots, sales (SalesRecord), and POs (DistributorPOLine) are
+  summed across all members per item per month. One query each.
+- **Safety stock** = primary distributor's `DistributorItemProfile.safety_stock_cases`.
+  Non-primary safety stock configs are ignored for group projections.
+- **Order generation** uses `group.primary_distributor.order_quantity_value/unit`.
+  Runs `generate_projected_orders(primary, forecast_result)` unchanged.
+- **Item set** = union of active items across all members (mirrors individual forecast logic:
+  `Item.is_active=True` AND NOT `DistributorItemProfile.is_active=False` for each member).
+- **Snapshot alignment rule**: each member must have snapshots for all of their own active
+  items in the same year-month. Most recent such period = anchor. If no aligned period
+  exists, the forecast is blocked with a per-member error listing missing items.
+  Alignment check uses one DB query; error detail computed in Python.
+- **`compute_group_forecast(group, po_additions=None, today=None)`** in `forecast.py`.
+  Returns same shape as `compute_distributor_forecast` plus `alignment_status`, `alignment_errors`,
+  and `anchor_period`.
+- **`_walk_inventory_forward(...)` helper** extracted from `compute_distributor_forecast` and
+  shared by both functions. Individual forecast behavior is unchanged.
+- **"Forecast for" dropdown** enhanced to use `<optgroup>` (Distributors / Groups sections).
+  Each option carries `data-url`; JS routes to group page or distributor query-param accordingly.
+  Grouped distributor labels show "Dist Name (Primary - Group Name)" or "Dist Name (Group Name)".
+- **Banner on individual forecast** when the selected distributor belongs to a group:
+  "This distributor is part of [Group Name]. View Group Forecast →"
+- **Orders row** counts all saved POs across all members per (year, month). Clicking opens a
+  read-only multi-PO modal (no save, no delete, no edit).
+- **Read-only modal endpoint** `GET /distributors/group/<group_pk>/orders/<year>/<month>/`
+  (`distributor_group_orders_modal_data`). Returns JSON; modal tabs labeled by distributor name
+  with Primary badge. Non-primary PO tabs show note directing user to the distributor's
+  individual forecast to edit.
+- **~25 new tests** in `apps/distribution/tests_group_forecast.py`. All existing tests pass.
 
 ### Phase G3 (pending)
 
