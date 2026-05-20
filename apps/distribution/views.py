@@ -1455,50 +1455,310 @@ def distributor_group_forecast(request, group_pk):
 
 @login_required
 def distributor_group_orders_modal_data(request, group_pk, year, month):
-    """Return JSON for the read-only multi-PO modal on the group forecast page."""
+    """Return JSON for the editable multi-PO modal on the group forecast page (G3).
+
+    Replaces the G2 read-only endpoint at the same URL. Expanded response includes
+    items list, algorithm suggestions, and is_primary flag per saved PO.
+    """
     if not request.user.has_permission('can_manage_distributor_inventory'):
         return JsonResponse({'error': 'Permission denied'}, status=403)
 
     company = request.user.company
-    group = get_object_or_404(DistributorGroup, pk=group_pk, company=company)
+    try:
+        group = DistributorGroup.objects.select_related('primary_distributor').get(
+            pk=group_pk, company=company,
+        )
+    except DistributorGroup.DoesNotExist:
+        return JsonResponse({'error': 'Group not found'}, status=404)
+
+    primary = group.primary_distributor
     members = list(group.members.all())
 
-    saved_pos = list(
+    # Saved POs for the month across all members
+    saved_pos_qs = (
         DistributorPO.objects
         .filter(distributor__in=members, year=year, month=month)
         .select_related('distributor')
-        .prefetch_related('lines__item__brand')
+        .prefetch_related('lines__item')
         .order_by('distributor__name', 'pk')
     )
 
-    month_name = calendar.month_name[month]
-    pos_data = [
+    # Items: union of active items across all members (mirrors group forecast logic).
+    # Item is excluded only when ALL members have it explicitly inactive.
+    all_active_item_ids = set(
+        Item.objects.filter(brand__company=company, is_active=True)
+        .values_list('pk', flat=True)
+    )
+    per_member_inactive = [
+        set(
+            DistributorItemProfile.objects.filter(
+                distributor=member, is_active=False,
+            ).values_list('item_id', flat=True)
+        )
+        for member in members
+    ]
+    excluded_ids = set()
+    if per_member_inactive:
+        excluded_ids = per_member_inactive[0].copy()
+        for s in per_member_inactive[1:]:
+            excluded_ids &= s
+    active_group_item_ids = all_active_item_ids - excluded_ids
+    items = list(
+        Item.objects.filter(pk__in=active_group_item_ids)
+        .select_related('brand')
+        .order_by('brand__name', 'sort_order', 'name')
+    )
+
+    items_data = [
         {
-            'po_id': po.pk,
-            'distributor_name': po.distributor.name,
-            'distributor_pk': po.distributor.pk,
-            'is_primary': po.distributor_id == group.primary_distributor_id,
+            'id': item.pk,
+            'name': item.name,
+            'item_code': item.item_code,
+            'cases_per_pallet': item.cases_per_pallet,
+        }
+        for item in items
+    ]
+
+    saved_orders_data = [
+        {
+            'id': po.pk,
+            'year': po.year,
+            'month': po.month,
             'status': po.status,
             'external_po_number': po.external_po_number or '',
             'notes': po.notes or '',
             'generated_by_algorithm': po.generated_by_algorithm,
+            'is_primary': po.distributor_id == primary.pk,
+            'distributor_name': po.distributor.name,
+            'distributor_pk': po.distributor_id,
             'lines': [
                 {
                     'item_id': line.item_id,
                     'item_name': line.item.name,
-                    'brand_name': line.item.brand.name,
                     'quantity_cases': float(line.quantity_cases),
                 }
                 for line in po.lines.all()
             ],
         }
-        for po in saved_pos
+        for po in saved_pos_qs
     ]
 
+    # Algorithm suggestions: computed fresh from the group forecast.
+    # Uses same pattern as distributor_po_modal_data (re-compute on each modal open).
+    suggested_orders_data = []
+    try:
+        forecast_result = compute_group_forecast(group)
+        if forecast_result.get('alignment_status') == 'ok':
+            orders_result = generate_projected_orders(primary, forecast_result)
+            for slot in orders_result.get('orders_per_horizon', []):
+                if (slot.get('year') == year and slot.get('month') == month
+                        and not slot.get('is_snapshot', False)):
+                    for order in slot.get('orders', []):
+                        suggested_orders_data.append({
+                            'order_unit': order.get('order_unit', ''),
+                            'order_quantity': order.get('order_quantity', 0),
+                            'total_cases': order.get('total_cases', 0),
+                            'lines': [
+                                {
+                                    'item_id': line['item'].pk,
+                                    'item_name': line['item'].name,
+                                    'cases': line['cases'],
+                                    'pallets': line.get('pallets'),
+                                }
+                                for line in order.get('lines', [])
+                            ],
+                        })
+    except Exception:
+        suggested_orders_data = []
+
+    month_name = calendar.month_name[month]
     return JsonResponse({
-        'group_name': group.name,
+        'group': {'id': group.pk, 'name': group.name},
+        'primary_distributor': {
+            'id': primary.pk,
+            'name': primary.name,
+            'order_quantity_value': primary.order_quantity_value,
+            'order_quantity_unit': primary.order_quantity_unit,
+        },
         'year': year,
         'month': month,
         'period_label': f'{month_name} {year}',
-        'pos': pos_data,
+        'items': items_data,
+        'saved_orders': saved_orders_data,
+        'suggested_orders': suggested_orders_data,
     })
+
+
+@login_required
+def distributor_group_po_save(request, group_pk):
+    """Atomically create/update/delete POs from the group forecast modal (G3).
+
+    New POs are always created against the group's primary distributor.
+    Edits are only allowed for POs that already belong to the primary distributor.
+    """
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'error': 'AJAX required'}, status=400)
+
+    company = request.user.company
+    try:
+        group = DistributorGroup.objects.select_related('primary_distributor').get(
+            pk=group_pk, company=company,
+        )
+    except DistributorGroup.DoesNotExist:
+        return JsonResponse({'error': 'Group not found'}, status=404)
+
+    primary = group.primary_distributor
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    year = body.get('year')
+    month = body.get('month')
+    orders = body.get('orders', [])
+
+    if not isinstance(year, int) or not isinstance(month, int):
+        return JsonResponse({'error': 'year and month required'}, status=400)
+    if not 1 <= month <= 12:
+        return JsonResponse({'error': 'Invalid month'}, status=400)
+
+    # Full pre-validation before any DB writes
+    errors = []
+    all_item_ids = set()
+    existing_po_ids = []
+
+    for i, order_data in enumerate(orders):
+        label = f'Order {i + 1}'
+        status = order_data.get('status', 'projected')
+        if status not in ('projected', 'actual'):
+            errors.append(f'{label}: invalid status "{status}"')
+            continue
+
+        po_number = (order_data.get('external_po_number') or '').strip()
+        if status == 'actual' and not po_number:
+            errors.append(f'{label}: PO number is required for Actual status')
+
+        lines = order_data.get('lines', [])
+        seen_items = set()
+        for line in lines:
+            item_id = line.get('item_id')
+            if not item_id:
+                errors.append(f'{label}: missing item_id in line')
+                continue
+            if item_id in seen_items:
+                errors.append(f'{label}: duplicate item ID {item_id}')
+                continue
+            seen_items.add(item_id)
+            all_item_ids.add(item_id)
+            qty = line.get('quantity_cases', 0)
+            try:
+                qty = float(qty)
+            except (TypeError, ValueError):
+                errors.append(f'{label}: invalid quantity_cases')
+                continue
+            if qty < 0:
+                errors.append(f'{label}: negative quantity not allowed')
+
+        po_id = order_data.get('id')
+        if po_id is not None:
+            existing_po_ids.append(po_id)
+
+    if errors:
+        return JsonResponse({'error': '; '.join(errors)}, status=400)
+
+    # Validate item IDs belong to this company
+    if all_item_ids:
+        valid_item_ids = set(
+            Item.objects.filter(
+                pk__in=all_item_ids,
+                brand__company=request.user.company,
+            ).values_list('pk', flat=True)
+        )
+        invalid = all_item_ids - valid_item_ids
+        if invalid:
+            return JsonResponse({'error': f'Invalid item IDs: {sorted(invalid)}'}, status=400)
+
+    # Validate existing PO IDs — must belong to primary distributor, year, and month.
+    # This blocks editing non-primary POs from the group view.
+    if existing_po_ids:
+        valid_po_count = DistributorPO.objects.filter(
+            pk__in=existing_po_ids,
+            distributor=primary,
+            year=year,
+            month=month,
+        ).count()
+        if valid_po_count != len(existing_po_ids):
+            return JsonResponse(
+                {'error': 'Invalid PO IDs — only primary distributor POs may be edited from the group view'},
+                status=400,
+            )
+
+    # Atomic save
+    try:
+        with transaction.atomic():
+            for order_data in orders:
+                po_id = order_data.get('id')
+                status = order_data.get('status', 'projected')
+                po_number = (order_data.get('external_po_number') or '').strip()
+                notes = (order_data.get('notes') or '').strip()
+                lines = order_data.get('lines', [])
+
+                nonzero_lines = [
+                    l for l in lines
+                    if float(l.get('quantity_cases', 0)) > 0
+                ]
+
+                if po_id is not None:
+                    po = DistributorPO.objects.get(pk=po_id, distributor=primary)
+                    if not nonzero_lines:
+                        po.delete()
+                    else:
+                        po.status = status
+                        po.external_po_number = po_number
+                        po.notes = notes
+                        po.generated_by_algorithm = False
+                        po.save(update_fields=[
+                            'status', 'external_po_number', 'notes', 'generated_by_algorithm',
+                        ])
+                        po.lines.all().delete()
+                        for line in nonzero_lines:
+                            DistributorPOLine.objects.create(
+                                po=po,
+                                item_id=line['item_id'],
+                                quantity_cases=float(line['quantity_cases']),
+                            )
+                else:
+                    if not nonzero_lines:
+                        continue
+                    po = DistributorPO.objects.create(
+                        distributor=primary,
+                        year=year,
+                        month=month,
+                        status=status,
+                        external_po_number=po_number,
+                        notes=notes,
+                        generated_by_algorithm=False,
+                        created_by=request.user,
+                    )
+                    for line in nonzero_lines:
+                        DistributorPOLine.objects.create(
+                            po=po,
+                            item_id=line['item_id'],
+                            quantity_cases=float(line['quantity_cases']),
+                        )
+    except ValidationError as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=400)
+    except Exception:
+        return JsonResponse(
+            {'success': False, 'error': 'An unexpected error occurred while saving. Please try again.'},
+            status=500,
+        )
+
+    return JsonResponse({'ok': True})

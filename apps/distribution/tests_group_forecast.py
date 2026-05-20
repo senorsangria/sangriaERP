@@ -487,7 +487,7 @@ class GroupOrdersModalTest(TestCase):
         resp = self.client.get(self._url())
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertEqual(len(data['pos']), 2)
+        self.assertEqual(len(data['saved_orders']), 2)
 
     # -----------------------------------------------------------------------
     # 22. Primary flag set correctly
@@ -500,7 +500,7 @@ class GroupOrdersModalTest(TestCase):
 
         resp = self.client.get(self._url())
         data = resp.json()
-        pos_by_dist = {p['distributor_name']: p for p in data['pos']}
+        pos_by_dist = {p['distributor_name']: p for p in data['saved_orders']}
 
         self.assertTrue(pos_by_dist[self.acme.name]['is_primary'])
         self.assertFalse(pos_by_dist[self.bayside.name]['is_primary'])
@@ -514,7 +514,7 @@ class GroupOrdersModalTest(TestCase):
 
         resp = self.client.get(self._url())
         data = resp.json()
-        names = [p['distributor_name'] for p in data['pos']]
+        names = [p['distributor_name'] for p in data['saved_orders']]
         self.assertEqual(names, sorted(names))
 
     # -----------------------------------------------------------------------

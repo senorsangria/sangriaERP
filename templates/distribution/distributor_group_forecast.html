@@ -203,30 +203,46 @@
 </div>
 {% endif %}
 
-<!-- Read-only multi-PO modal -->
-<div class="modal fade" id="groupPoModal" tabindex="-1" aria-labelledby="groupPoModalLabel" aria-hidden="true">
+<!-- G3 editable group PO modal — mirrors individual modal structure with group adaptations -->
+<div class="modal fade" id="groupPoModal" tabindex="-1"
+     aria-labelledby="groupPoModalLabel" aria-hidden="true"
+     data-save-url="{% url 'distributor_group_po_save' group_pk=group.pk %}"
+     data-delete-url-base="/distributors/{{ primary_distributor.pk }}/po/"
+     data-primary-name="{{ primary_distributor.name|escapejs }}"
+     data-group-name="{{ group.name|escapejs }}">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="groupPoModalLabel">
-          Orders &mdash; <span id="group-po-modal-period"></span>
+          Orders &mdash; <span id="po-modal-period"></span>
         </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <div id="group-po-modal-loading" class="text-center py-4">
+        <div id="po-modal-loading" class="text-center py-4">
           <div class="spinner-border text-primary" role="status">
             <span class="visually-hidden">Loading…</span>
           </div>
         </div>
-        <div id="group-po-modal-content" style="display:none;">
-          <ul class="nav nav-pills mb-3 flex-wrap" id="group-po-modal-tabs" role="tablist"></ul>
-          <div class="tab-content" id="group-po-modal-tab-content"></div>
+        <div id="po-modal-content" style="display:none;">
+          <div class="alert alert-info py-2 mb-3 small" id="po-modal-group-banner">
+            New orders will be placed for <strong id="po-modal-primary-name"></strong>
+            (the primary of <span id="po-modal-group-name"></span>)
+          </div>
+          <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+            <ul class="nav nav-pills flex-grow-1 flex-wrap" id="po-order-tabs" role="tablist"></ul>
+            <button type="button" class="btn btn-outline-primary btn-sm" id="po-add-order-btn">
+              + Add Order
+            </button>
+          </div>
+          <div class="tab-content" id="po-order-tab-content"></div>
+          <div id="po-modal-error" class="alert alert-danger mt-3" style="display:none;"></div>
         </div>
-        <div id="group-po-modal-error" class="alert alert-danger mt-3" style="display:none;"></div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+        {% csrf_token %}
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary" id="po-save-all-btn">Save All Orders</button>
       </div>
     </div>
   </div>
@@ -246,39 +262,65 @@
   if (sel) {
     sel.addEventListener('change', function () {
       var opt = sel.options[sel.selectedIndex];
-      if (opt && opt.dataset.url) {
-        window.location.href = opt.dataset.url;
-      }
+      if (opt && opt.dataset.url) window.location.href = opt.dataset.url;
     });
   }
 
-  // Read-only group PO modal
-  var modalEl = document.getElementById('groupPoModal');
-  if (!modalEl) return;
+  // Group PO modal (G3 — editable)
+  var _modalEl = document.getElementById('groupPoModal');
+  if (!_modalEl) return;
 
-  var bsModal = new bootstrap.Modal(modalEl);
+  var _bsModal      = new bootstrap.Modal(_modalEl);
+  var _saveUrl      = _modalEl.dataset.saveUrl;
+  var _deleteUrlBase = _modalEl.dataset.deleteUrlBase;
+  var _primaryName  = _modalEl.dataset.primaryName;
+  var _groupName    = _modalEl.dataset.groupName;
+
+  var _state = {
+    year: null, month: null,
+    items: [], orderUnit: null,
+    tabs: [],        // [{tabId, savedPo, readOnly}]
+    nextTabId: 1,
+  };
+
   var MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+  // Populate static banner text from data-attributes
+  var _pnEl = document.getElementById('po-modal-primary-name');
+  var _gnEl = document.getElementById('po-modal-group-name');
+  if (_pnEl) _pnEl.textContent = _primaryName;
+  if (_gnEl) _gnEl.textContent = _groupName;
+
+  // Wire Orders-row buttons
   document.querySelectorAll('.group-orders-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
-      openGroupPoModal(
-        btn.dataset.url,
-        parseInt(btn.dataset.year, 10),
-        parseInt(btn.dataset.month, 10)
-      );
+      openModal(btn.dataset.url, parseInt(btn.dataset.year, 10), parseInt(btn.dataset.month, 10));
     });
   });
 
-  function openGroupPoModal(dataUrl, year, month) {
-    document.getElementById('group-po-modal-period').textContent =
-      MONTH_NAMES[month - 1] + ' ' + year;
-    document.getElementById('group-po-modal-loading').style.display = '';
-    document.getElementById('group-po-modal-content').style.display = 'none';
-    document.getElementById('group-po-modal-error').style.display = 'none';
-    document.getElementById('group-po-modal-tabs').innerHTML = '';
-    document.getElementById('group-po-modal-tab-content').innerHTML = '';
+  document.getElementById('po-add-order-btn').addEventListener('click', function () {
+    addOrderTab(null, null);
+    activateLastTab();
+  });
 
-    bsModal.show();
+  document.getElementById('po-save-all-btn').addEventListener('click', saveAllOrders);
+
+  // ------------------------------------------------------------------
+
+  function openModal(dataUrl, year, month) {
+    _state.year = year; _state.month = month;
+    _state.tabs = []; _state.nextTabId = 1;
+
+    document.getElementById('po-modal-period').textContent = MONTH_NAMES[month - 1] + ' ' + year;
+    document.getElementById('po-modal-loading').style.display = '';
+    document.getElementById('po-modal-content').style.display = 'none';
+    document.getElementById('po-modal-error').style.display = 'none';
+    document.getElementById('po-order-tabs').innerHTML = '';
+    document.getElementById('po-order-tab-content').innerHTML = '';
+    document.getElementById('po-save-all-btn').disabled = false;
+    document.getElementById('po-save-all-btn').textContent = 'Save All Orders';
+
+    _bsModal.show();
 
     fetch(dataUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
       .then(function (r) {
@@ -286,109 +328,338 @@
         return r.json();
       })
       .then(function (data) {
-        document.getElementById('group-po-modal-loading').style.display = 'none';
-        document.getElementById('group-po-modal-content').style.display = '';
-        renderContent(data);
+        _state.items     = data.items;
+        _state.orderUnit = data.primary_distributor.order_quantity_unit;
+
+        document.getElementById('po-modal-loading').style.display = 'none';
+        document.getElementById('po-modal-content').style.display = '';
+
+        data.saved_orders.forEach(function (po) { addOrderTab(po, null); });
+        data.suggested_orders.forEach(function (s) { addOrderTab(null, s); });
+
+        if (_state.tabs.length === 0) addOrderTab(null, null);
+        activateFirstTab();
       })
       .catch(function (err) {
-        document.getElementById('group-po-modal-loading').style.display = 'none';
-        document.getElementById('group-po-modal-content').style.display = '';
-        showError('Failed to load orders: ' + err.message);
+        document.getElementById('po-modal-loading').style.display = 'none';
+        showError('Failed to load order data: ' + err.message);
+        document.getElementById('po-modal-content').style.display = '';
       });
   }
 
-  function renderContent(data) {
-    var tabs    = document.getElementById('group-po-modal-tabs');
-    var content = document.getElementById('group-po-modal-tab-content');
+  function addOrderTab(savedPo, suggestedOrder) {
+    var readOnly = savedPo !== null && !savedPo.is_primary;
+    var tabId    = 'gpo-tab-' + (_state.nextTabId++);
+    var tabNum   = _state.tabs.filter(function (t) { return !t.readOnly; }).length + 1;
+    _state.tabs.push({ tabId: tabId, savedPo: savedPo, readOnly: readOnly });
 
-    if (!data.pos || data.pos.length === 0) {
-      content.innerHTML = '<p class="text-muted">No orders for this period across all group members.</p>';
-      return;
+    var tabsEl = document.getElementById('po-order-tabs');
+    var li = document.createElement('li');
+    li.className = 'nav-item';
+    li.setAttribute('role', 'presentation');
+    li.id = 'gpo-li-' + tabId;
+
+    var btn = document.createElement('button');
+    btn.className = 'nav-link';
+    btn.id = 'gpo-btn-' + tabId;
+    btn.setAttribute('data-bs-toggle', 'pill');
+    btn.setAttribute('data-bs-target', '#' + tabId);
+    btn.setAttribute('type', 'button');
+    btn.setAttribute('role', 'tab');
+    btn.textContent = readOnly ? savedPo.distributor_name : 'Order ' + tabNum;
+    li.appendChild(btn);
+    tabsEl.appendChild(li);
+
+    var contentEl = document.getElementById('po-order-tab-content');
+    var pane = document.createElement('div');
+    pane.className = 'tab-pane fade';
+    pane.id = tabId;
+    pane.setAttribute('role', 'tabpanel');
+
+    if (readOnly) {
+      pane.innerHTML = buildReadOnlyTabContent(savedPo);
+    } else {
+      pane.innerHTML = buildOrderForm(tabId, savedPo, suggestedOrder);
+
+      pane.querySelectorAll('.po-cases-input').forEach(function (inp) {
+        inp.addEventListener('input', function () { updatePallets(pane, inp); });
+      });
+
+      var delBtn = pane.querySelector('.po-delete-btn');
+      if (delBtn) {
+        delBtn.addEventListener('click', function () {
+          if (!confirm('Delete this saved order? This cannot be undone.')) return;
+          deleteOrder(tabId, savedPo.id);
+        });
+      }
+      var rmBtn = pane.querySelector('.po-remove-btn');
+      if (rmBtn) {
+        rmBtn.addEventListener('click', function () { removeTab(tabId); });
+      }
     }
 
-    data.pos.forEach(function (po, idx) {
-      var paneId = 'gpo-pane-' + idx;
-      var btnId  = 'gpo-btn-'  + idx;
+    contentEl.appendChild(pane);
+  }
 
-      // Tab button
-      var primaryBadge = po.is_primary
-        ? ' <span class="badge bg-primary ms-1" style="font-size:.6rem;">Primary</span>'
-        : '';
-      var li = document.createElement('li');
-      li.className = 'nav-item';
-      li.setAttribute('role', 'presentation');
-      li.innerHTML =
-        '<button class="nav-link' + (idx === 0 ? ' active' : '') + '"'
-        + ' id="' + btnId + '"'
-        + ' data-bs-toggle="pill"'
-        + ' data-bs-target="#' + paneId + '"'
-        + ' type="button" role="tab">'
-        + _esc(po.distributor_name) + primaryBadge
-        + '</button>';
-      tabs.appendChild(li);
+  function buildReadOnlyTabContent(savedPo) {
+    var statusBadge = savedPo.status === 'actual'
+      ? '<span class="badge bg-success">Actual</span>'
+      : '<span class="badge bg-warning text-dark">Projected</span>';
+    var poNum = savedPo.external_po_number
+      ? '<span class="ms-2 text-muted small">PO #: ' + _esc(savedPo.external_po_number) + '</span>'
+      : '';
 
-      // Tab pane
-      var pane = document.createElement('div');
-      pane.className = 'tab-pane fade' + (idx === 0 ? ' show active' : '');
-      pane.id = paneId;
-      pane.setAttribute('role', 'tabpanel');
+    var html = '<div class="mb-3 d-flex align-items-center gap-2 flex-wrap">'
+      + statusBadge + poNum + '</div>';
 
-      var statusBadge = po.status === 'actual'
-        ? '<span class="badge bg-success">Actual</span>'
-        : '<span class="badge bg-warning text-dark">Projected</span>';
-      var poNum = po.external_po_number
-        ? '<span class="ms-2 text-muted small">PO #: ' + _esc(po.external_po_number) + '</span>'
-        : '';
+    if (savedPo.lines && savedPo.lines.length > 0) {
+      html += '<div class="table-responsive">'
+        + '<table class="table table-sm table-bordered mb-0">'
+        + '<thead class="table-light"><tr>'
+        + '<th class="small">Item</th>'
+        + '<th class="small text-end">Cases</th>'
+        + '</tr></thead><tbody>';
+      savedPo.lines.forEach(function (line) {
+        html += '<tr>'
+          + '<td class="small">' + _esc(line.item_name) + '</td>'
+          + '<td class="small text-end fw-medium">' + line.quantity_cases + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table></div>';
+    } else {
+      html += '<p class="text-muted small">No line items.</p>';
+    }
 
-      var html = '<div class="mb-3 d-flex align-items-center gap-2 flex-wrap">'
-        + statusBadge + poNum
-        + '</div>';
+    if (savedPo.notes) {
+      html += '<div class="mt-2 small"><strong>Notes:</strong> ' + _esc(savedPo.notes) + '</div>';
+    }
 
-      if (po.lines && po.lines.length > 0) {
-        html += '<div class="table-responsive">'
-          + '<table class="table table-sm table-bordered mb-0">'
-          + '<thead class="table-light"><tr>'
-          + '<th class="small">Item</th>'
-          + '<th class="small text-end">Cases</th>'
-          + '</tr></thead><tbody>';
-        po.lines.forEach(function (line) {
-          html += '<tr>'
-            + '<td class="small">' + _esc(line.item_name)
-            + ' <span class="text-muted">(' + _esc(line.brand_name) + ')</span></td>'
-            + '<td class="small text-end fw-medium">' + line.quantity_cases + '</td>'
-            + '</tr>';
-        });
-        html += '</tbody></table></div>';
+    html += '<div class="alert alert-info mt-3 mb-0 small">'
+      + 'This PO belongs to <strong>' + _esc(savedPo.distributor_name) + '</strong>. '
+      + 'To edit, go to their <a href="/distributors/?tab=forecast&forecast_distributor='
+      + savedPo.distributor_pk + '">individual forecast</a>.'
+      + '</div>';
+
+    return html;
+  }
+
+  function buildOrderForm(tabId, savedPo, suggestedOrder) {
+    var isPallets = (_state.orderUnit === 'pallets');
+    var html = '';
+
+    html += '<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">';
+    if (savedPo) {
+      html += '<div class="d-flex gap-2">';
+      html += '<span class="badge bg-' + (savedPo.generated_by_algorithm ? 'secondary' : 'primary') + '">';
+      html += savedPo.generated_by_algorithm ? 'Algorithm' : 'Manual';
+      html += '</span>';
+      html += '<span class="badge bg-' + (savedPo.status === 'actual' ? 'success' : 'warning text-dark') + '">';
+      html += savedPo.status === 'actual' ? 'Actual' : 'Projected';
+      html += '</span></div>';
+      html += '<button type="button" class="btn btn-outline-danger btn-sm po-delete-btn">Delete Order</button>';
+    } else {
+      html += suggestedOrder
+        ? '<span class="badge bg-info text-dark">Algorithm suggestion</span>'
+        : '<span class="text-muted small">New order</span>';
+      html += '<button type="button" class="btn btn-outline-secondary btn-sm po-remove-btn">Remove</button>';
+    }
+    html += '</div>';
+
+    var curStatus = savedPo ? savedPo.status : 'projected';
+    var curPoNum  = savedPo ? (savedPo.external_po_number || '') : '';
+    var curNotes  = savedPo ? (savedPo.notes || '') : '';
+    html += '<div class="row g-2 mb-3">';
+    html += '<div class="col-sm-3"><label class="form-label small text-muted mb-1">Status</label>';
+    html += '<select class="form-select form-select-sm po-status-select">';
+    html += '<option value="projected"' + (curStatus === 'projected' ? ' selected' : '') + '>Projected</option>';
+    html += '<option value="actual"' + (curStatus === 'actual' ? ' selected' : '') + '>Actual</option>';
+    html += '</select></div>';
+    html += '<div class="col-sm-4"><label class="form-label small text-muted mb-1">PO Number <span class="text-muted">(required if Actual)</span></label>';
+    html += '<input type="text" class="form-control form-control-sm po-number-input" value="' + _esc(curPoNum) + '"></div>';
+    html += '<div class="col-sm-5"><label class="form-label small text-muted mb-1">Notes</label>';
+    html += '<input type="text" class="form-control form-control-sm po-notes-input" value="' + _esc(curNotes) + '"></div></div>';
+
+    html += '<div class="table-responsive"><table class="table table-sm table-bordered mb-0">';
+    html += '<thead class="table-light"><tr><th class="small">Item</th>';
+    html += '<th class="small text-end" style="width:100px;">Cases</th>';
+    if (isPallets) html += '<th class="small text-end" style="width:80px;">Pallets</th>';
+    html += '</tr></thead><tbody>';
+
+    _state.items.forEach(function (item) {
+      var casesVal = 0;
+      if (savedPo) {
+        var found = (savedPo.lines || []).find(function (l) { return l.item_id === item.id; });
+        if (found) casesVal = found.quantity_cases || 0;
+      } else if (suggestedOrder) {
+        var foundS = (suggestedOrder.lines || []).find(function (l) { return l.item_id === item.id; });
+        if (foundS) casesVal = foundS.cases || 0;
+      }
+      var palletsVal = (isPallets && item.cases_per_pallet && casesVal > 0)
+        ? Math.ceil(casesVal / item.cases_per_pallet) : 0;
+
+      html += '<tr><td class="small">' + _esc(item.name)
+        + ' <code class="small text-muted">' + _esc(item.item_code) + '</code></td>';
+      html += '<td><input type="number" min="0" step="1"'
+        + ' class="form-control form-control-sm po-cases-input text-end"'
+        + ' data-item-id="' + item.id + '"'
+        + ' data-cpp="' + (item.cases_per_pallet || '') + '"'
+        + ' value="' + casesVal + '"></td>';
+      if (isPallets) {
+        html += '<td class="small text-end po-pallets-cell" data-item-id="' + item.id + '">' + palletsVal + '</td>';
+      }
+      html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  function updatePallets(pane, inp) {
+    var cpp = parseFloat(inp.dataset.cpp);
+    if (!cpp) return;
+    var cases = parseFloat(inp.value) || 0;
+    var pallets = cases > 0 ? Math.ceil(cases / cpp) : 0;
+    var cell = pane.querySelector('.po-pallets-cell[data-item-id="' + inp.dataset.itemId + '"]');
+    if (cell) cell.textContent = pallets;
+  }
+
+  function removeTab(tabId) {
+    _state.tabs = _state.tabs.filter(function (t) { return t.tabId !== tabId; });
+    var li   = document.getElementById('gpo-li-' + tabId);
+    var pane = document.getElementById(tabId);
+    if (li)   li.remove();
+    if (pane) pane.remove();
+    var num = 1;
+    _state.tabs.forEach(function (t) {
+      if (!t.readOnly) {
+        var b = document.getElementById('gpo-btn-' + t.tabId);
+        if (b) b.textContent = 'Order ' + num++;
+      }
+    });
+    var firstBtn = document.querySelector('#po-order-tabs .nav-link');
+    if (firstBtn) firstBtn.click();
+  }
+
+  function activateFirstTab() {
+    var b = document.querySelector('#po-order-tabs .nav-link');
+    if (b) b.click();
+  }
+
+  function activateLastTab() {
+    var btns = document.querySelectorAll('#po-order-tabs .nav-link');
+    if (btns.length) btns[btns.length - 1].click();
+  }
+
+  function saveAllOrders() {
+    hideError();
+    var orders = [];
+    var valid = true, errMsg = '';
+    var editableNum = 0;
+
+    for (var i = 0; i < _state.tabs.length; i++) {
+      var tab = _state.tabs[i];
+      if (tab.readOnly) continue;
+      editableNum++;
+      var pane = document.getElementById(tab.tabId);
+      if (!pane) continue;
+
+      var status   = pane.querySelector('.po-status-select').value;
+      var poNumber = pane.querySelector('.po-number-input').value.trim();
+      var notes    = pane.querySelector('.po-notes-input').value.trim();
+
+      if (status === 'actual' && !poNumber) {
+        valid = false;
+        errMsg = 'PO number is required for orders with status "Actual" (Order ' + editableNum + ').';
+        break;
+      }
+
+      var lines = [];
+      pane.querySelectorAll('.po-cases-input').forEach(function (inp) {
+        var cases = parseFloat(inp.value) || 0;
+        if (cases > 0) lines.push({ item_id: parseInt(inp.dataset.itemId, 10), quantity_cases: cases });
+      });
+
+      orders.push({
+        id: tab.savedPo ? tab.savedPo.id : null,
+        status: status,
+        external_po_number: poNumber,
+        notes: notes,
+        lines: lines,
+      });
+    }
+
+    if (!valid) { showError(errMsg); return; }
+
+    var saveBtn = document.getElementById('po-save-all-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+
+    fetch(_saveUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': _csrf(),
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({ year: _state.year, month: _state.month, orders: orders }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.ok) {
+        window.location.reload();
       } else {
-        html += '<p class="text-muted small">No line items.</p>';
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save All Orders';
+        showError(data.error || 'Save failed.');
       }
-
-      if (po.notes) {
-        html += '<div class="mt-2 small"><strong>Notes:</strong> ' + _esc(po.notes) + '</div>';
-      }
-
-      if (!po.is_primary) {
-        html += '<div class="alert alert-info mt-3 mb-0 small">'
-          + 'This PO belongs to <strong>' + _esc(po.distributor_name) + '</strong>. '
-          + 'To edit, go to their individual forecast.'
-          + '</div>';
-      }
-
-      pane.innerHTML = html;
-      content.appendChild(pane);
+    })
+    .catch(function (err) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save All Orders';
+      showError('Network error: ' + err.message);
     });
   }
 
+  function deleteOrder(tabId, poId) {
+    var deleteUrl = _deleteUrlBase + poId + '/delete/';
+    fetch(deleteUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': _csrf(),
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({ po_id: poId }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.ok) { window.location.reload(); }
+      else { showError(data.error || 'Delete failed.'); }
+    })
+    .catch(function (err) { showError('Network error: ' + err.message); });
+  }
+
   function showError(msg) {
-    var el = document.getElementById('group-po-modal-error');
+    var el = document.getElementById('po-modal-error');
     el.textContent = msg;
     el.style.display = '';
+  }
+
+  function hideError() {
+    document.getElementById('po-modal-error').style.display = 'none';
   }
 
   function _esc(s) {
     var d = document.createElement('div');
     d.textContent = s == null ? '' : String(s);
-    return d.innerHTML;
+    return d.innerHTML.replace(/"/g, '&quot;');
+  }
+
+  function _csrf() {
+    var inp = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (inp) return inp.value;
+    var m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
   }
 })();
 </script>

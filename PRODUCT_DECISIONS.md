@@ -4108,6 +4108,20 @@ The nav system has no submenu/child-item concept — flat list only.
   individual forecast to edit.
 - **~25 new tests** in `apps/distribution/tests_group_forecast.py`. All existing tests pass.
 
-### Phase G3 (pending)
+### Phase G3 — Group PO Modal Write Path (Complete)
 
-Group PO modal where saves go to the primary distributor.
+- **Strategy:** Extends the existing individual PO modal pattern via URL-anchored endpoints. The individual modal (in `distributor_list.html`) is unchanged; G3 only adds group-specific endpoints and a new IIFE in the group forecast template.
+- **New endpoint `/distributors/group/<group_pk>/orders/<year>/<month>/`** replaces the G2 read-only endpoint at the same URL. Returns expanded JSON: `items`, `suggested_orders`, `is_primary` flag per saved PO, `primary_distributor` info. No migration needed.
+- **New endpoint `/distributors/group/<group_pk>/orders/save/`** creates new POs against the primary distributor; rejects edits to non-primary POs with 400. Mirrors `distributor_po_save` validation rules (status, PO number, negative qty, item IDs, AJAX header, atomic save).
+- **Primary PO deletion** reuses existing `/distributors/<dist_pk>/po/<po_pk>/delete/` with primary's `dist_pk`. No new delete URL needed.
+- **Group forecast template** (`distributor_group_forecast.html`): G2 read-only modal replaced with G3 editable modal mirroring the individual modal structure (same Bootstrap pill tabs, same "+ Add Order" button, same Save All / Close footer).
+- **Modal banner:** "New orders will be placed for **[Primary Name]** (the primary of [Group Name])". Populated from `data-primary-name` and `data-group-name` on the modal `div` on page load.
+- **Per-tab rendering driven by `is_primary`:**
+  - Primary saved POs → editable form (same fields as individual modal: status, PO number, notes, line item inputs)
+  - Non-primary saved POs → read-only plain text (status badge, cases table) with "edit from [Distributor]'s forecast" info note
+  - Algorithm suggestions → editable form, pre-filled with suggested quantities; saved as new PO against primary
+  - New (+ Add) tabs → editable form, blank; saved as new PO against primary
+- **Algorithm suggestions** computed fresh in the modal endpoint via `compute_group_forecast(group)` + `generate_projected_orders(primary, forecast_result)`. Same pattern as individual modal endpoint (re-compute on each open).
+- **Tab labeling:** Non-primary (read-only) tabs labeled by distributor name; editable tabs labeled "Order N".
+- **`_esc()` in group modal JS** uses DOM-based approach (safer than the string-replace version in the individual modal).
+- **~18 new tests** in `apps/distribution/tests_group_po_endpoints.py`. 3 G2 tests in `tests_group_forecast.py` updated to use `saved_orders` key (G3 response shape). All 284 tests pass.
