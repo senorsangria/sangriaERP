@@ -171,7 +171,7 @@
                         <i class="bi bi-eye d-sm-none"></i>
                         <span class="d-none d-sm-inline">View</span>
                       </a>
-                      <a href="{% url 'distributor_edit' dist.pk %}" class="btn btn-outline-secondary btn-sm">
+                      <a href="{% url 'distributor_edit' dist.pk %}?next={{ request.path|urlencode }}" class="btn btn-outline-secondary btn-sm">
                         <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
                       </a>
                       <form method="post" action="{% url 'distributor_toggle' dist.pk %}" class="d-inline">
@@ -238,7 +238,7 @@
                         <i class="bi bi-eye d-sm-none"></i>
                         <span class="d-none d-sm-inline">View</span>
                       </a>
-                      <a href="{% url 'distributor_edit' dist.pk %}" class="btn btn-outline-secondary btn-sm">
+                      <a href="{% url 'distributor_edit' dist.pk %}?next={{ request.path|urlencode }}" class="btn btn-outline-secondary btn-sm">
                         <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
                       </a>
                       <form method="post" action="{% url 'distributor_toggle' dist.pk %}" class="d-inline">
@@ -301,7 +301,7 @@
                       <i class="bi bi-eye d-sm-none"></i>
                       <span class="d-none d-sm-inline">View</span>
                     </a>
-                    <a href="{% url 'distributor_edit' dist.pk %}" class="btn btn-outline-secondary btn-sm">
+                    <a href="{% url 'distributor_edit' dist.pk %}?next={{ request.path|urlencode }}" class="btn btn-outline-secondary btn-sm">
                       <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
                     </a>
                     <form method="post" action="{% url 'distributor_toggle' dist.pk %}" class="d-inline">

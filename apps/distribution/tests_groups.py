@@ -493,7 +493,7 @@ class DistributorGroupFormG1TweaksTest(TestCase):
         self.assertEqual(field.empty_label, '— Select primary distributor —')
         self.assertTrue(field.required)
 
-    def test_form_save_records_moved_distributors_when_adding_existing_member(self):
+    def test_form_blocks_save_when_member_in_another_group(self):
         other_group = DistributorGroup.objects.create(
             company=self.company, name='Other Group', primary_distributor=self.dist_b
         )
@@ -509,14 +509,81 @@ class DistributorGroupFormG1TweaksTest(TestCase):
             },
             company=self.company,
         )
-        self.assertTrue(form.is_valid(), form.errors)
-        form.save()
-        self.assertEqual(len(form.moved_distributors), 1)
-        moved_name, old_group = form.moved_distributors[0]
-        self.assertEqual(moved_name, 'Dist B')
-        self.assertEqual(old_group, 'Other Group')
+        self.assertFalse(form.is_valid())
 
-    def test_form_save_skips_move_tracking_for_new_members(self):
+    def test_form_blocks_save_with_multiple_conflicts(self):
+        dist_c = make_distributor(self.company, 'Dist C')
+        group1 = DistributorGroup.objects.create(
+            company=self.company, name='Group 1', primary_distributor=self.dist_b
+        )
+        self.dist_b.group = group1
+        self.dist_b.save(update_fields=['group'])
+        group2 = DistributorGroup.objects.create(
+            company=self.company, name='Group 2', primary_distributor=dist_c
+        )
+        dist_c.group = group2
+        dist_c.save(update_fields=['group'])
+
+        form = DistributorGroupForm(
+            data={
+                'name': 'New Group',
+                'primary_distributor': self.dist_a.pk,
+                'members': [self.dist_a.pk, self.dist_b.pk, dist_c.pk],
+                'notes': '',
+            },
+            company=self.company,
+        )
+        self.assertFalse(form.is_valid())
+        conflicts = getattr(form, '_conflicts', None)
+        self.assertIsNotNone(conflicts)
+        self.assertEqual(len(conflicts), 2)
+
+    def test_form_conflicts_attached_to_form_for_view_use(self):
+        other_group = DistributorGroup.objects.create(
+            company=self.company, name='Other Group', primary_distributor=self.dist_b
+        )
+        self.dist_b.group = other_group
+        self.dist_b.save(update_fields=['group'])
+
+        form = DistributorGroupForm(
+            data={
+                'name': 'New Group',
+                'primary_distributor': self.dist_a.pk,
+                'members': [self.dist_a.pk, self.dist_b.pk],
+                'notes': '',
+            },
+            company=self.company,
+        )
+        self.assertFalse(form.is_valid())
+        conflicts = getattr(form, '_conflicts', None)
+        self.assertIsNotNone(conflicts)
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]['distributor_name'], 'Dist B')
+        self.assertEqual(conflicts[0]['group_name'], 'Other Group')
+        self.assertEqual(conflicts[0]['distributor_pk'], self.dist_b.pk)
+        self.assertEqual(conflicts[0]['group_pk'], other_group.pk)
+
+    def test_form_does_not_block_when_member_is_in_current_group(self):
+        group = DistributorGroup.objects.create(
+            company=self.company, name='Existing Group', primary_distributor=self.dist_a
+        )
+        self.dist_a.group = group
+        self.dist_a.save(update_fields=['group'])
+
+        # Edit the group — dist_a is already in this group, no conflict
+        form = DistributorGroupForm(
+            data={
+                'name': 'Existing Group',
+                'primary_distributor': self.dist_a.pk,
+                'members': [self.dist_a.pk],
+                'notes': '',
+            },
+            instance=group,
+            company=self.company,
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_form_does_not_block_when_member_has_no_group(self):
         form = DistributorGroupForm(
             data={
                 'name': 'New Group',
@@ -527,8 +594,6 @@ class DistributorGroupFormG1TweaksTest(TestCase):
             company=self.company,
         )
         self.assertTrue(form.is_valid(), form.errors)
-        form.save()
-        self.assertEqual(form.moved_distributors, [])
 
 
 class DistributorGroupNextUrlTest(TestCase):
@@ -579,3 +644,80 @@ class DistributorGroupNextUrlTest(TestCase):
             },
         )
         self.assertRedirects(resp, reverse('distributor_group_list'))
+
+
+# ---------------------------------------------------------------------------
+# Distributor edit ?next= redirect tests
+# ---------------------------------------------------------------------------
+
+class DistributorEditNextUrlTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company, 'admin')
+        self.dist_a = make_distributor(self.company, 'Dist A')
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_distributor_edit_redirects_to_next_url_when_provided(self):
+        next_url = reverse('distributor_list')
+        resp = self.client.post(
+            reverse('distributor_edit', kwargs={'pk': self.dist_a.pk}),
+            {
+                'name': self.dist_a.name,
+                'next': next_url,
+                'is_active': True,
+            },
+        )
+        self.assertRedirects(resp, next_url)
+
+    def test_distributor_edit_redirects_to_list_when_no_next_url(self):
+        resp = self.client.post(
+            reverse('distributor_edit', kwargs={'pk': self.dist_a.pk}),
+            {
+                'name': self.dist_a.name,
+                'is_active': True,
+            },
+        )
+        self.assertRedirects(resp, reverse('distributor_list'))
+
+    def test_distributor_edit_rejects_unsafe_next_url(self):
+        resp = self.client.post(
+            reverse('distributor_edit', kwargs={'pk': self.dist_a.pk}),
+            {
+                'name': self.dist_a.name,
+                'is_active': True,
+                'next': '//evil.com/hack',
+            },
+        )
+        self.assertRedirects(resp, reverse('distributor_list'))
+
+
+# ---------------------------------------------------------------------------
+# Group conflict display test
+# ---------------------------------------------------------------------------
+
+class DistributorGroupConflictDisplayTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company, 'admin')
+        self.dist_a = make_distributor(self.company, 'Dist A')
+        self.dist_b = make_distributor(self.company, 'Dist B')
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_group_create_displays_conflict_with_links(self):
+        other_group = make_group(self.company, 'Other Group', primary=self.dist_b, members=[self.dist_b])
+
+        resp = self.client.post(reverse('distributor_group_create'), {
+            'name': 'New Group',
+            'primary_distributor': self.dist_a.pk,
+            'members': [self.dist_a.pk, self.dist_b.pk],
+            'notes': '',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Cannot save')
+        self.assertContains(resp, 'Dist B')
+        self.assertContains(resp, 'Other Group')
+        self.assertContains(resp, reverse('distributor_group_edit', kwargs={'pk': other_group.pk}))

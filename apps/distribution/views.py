@@ -281,15 +281,14 @@ def distributor_group_create(request):
         if form.is_valid():
             group = form.save()
             messages.success(request, f'Created distributor group "{group.name}".')
-            if form.moved_distributors:
-                move_list = ', '.join([f'{name} (from {old})' for name, old in form.moved_distributors])
-                messages.info(request, f'Moved distributors to this group: {move_list}')
             return redirect('distributor_group_list')
     else:
         form = DistributorGroupForm(company=company)
+    conflicts = getattr(form, '_conflicts', None)
     return render(request, 'distribution/distributor_group_form.html', {
         'form': form,
         'is_create': True,
+        'conflicts': conflicts,
     })
 
 
@@ -307,19 +306,18 @@ def distributor_group_edit(request, pk):
         if form.is_valid():
             form.save()
             messages.success(request, f'Updated distributor group "{group.name}".')
-            if form.moved_distributors:
-                move_list = ', '.join([f'{name} (from {old})' for name, old in form.moved_distributors])
-                messages.info(request, f'Moved distributors to this group: {move_list}')
             if next_url:
                 return redirect(next_url)
             return redirect('distributor_group_list')
     else:
         form = DistributorGroupForm(instance=group, company=company)
+    conflicts = getattr(form, '_conflicts', None)
     return render(request, 'distribution/distributor_group_form.html', {
         'form': form,
         'group': group,
         'is_create': False,
         'next_url': next_url,
+        'conflicts': conflicts,
     })
 
 
@@ -620,12 +618,18 @@ def distributor_edit(request, pk):
     distributor = get_object_or_404(Distributor, pk=pk, company=request.user.company)
     can_manage_inventory = request.user.has_permission('can_manage_distributor_inventory')
 
+    next_url = request.GET.get('next', '') or request.POST.get('next', '')
+    if next_url and not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
+        next_url = ''
+
     if request.method == 'POST':
         form = DistributorForm(request.POST, instance=distributor, company=request.user.company)
         if form.is_valid():
             form.save()
             messages.success(request, f'Distributor "{distributor.name}" has been updated.')
-            return redirect(reverse('distributor_edit', kwargs={'pk': distributor.pk}) + '?tab=basic')
+            if next_url:
+                return redirect(next_url)
+            return redirect('distributor_list')
     else:
         form = DistributorForm(instance=distributor, company=request.user.company)
 
@@ -660,6 +664,7 @@ def distributor_edit(request, pk):
         'safety_stock_map': safety_stock_map,
         'active_status_map': active_status_map,
         'active_tab': active_tab,
+        'next_url': next_url,
     })
 
 

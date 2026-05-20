@@ -140,6 +140,25 @@ class DistributorGroupForm(forms.ModelForm):
             raise forms.ValidationError({'members': 'A group must have at least one member.'})
         if primary and primary not in members_list:
             raise forms.ValidationError({'primary_distributor': 'Primary distributor must be one of the selected members.'})
+
+        # Block if any member is already in a different group
+        conflicts = []
+        current_group_pk = self.instance.pk if self.instance and self.instance.pk else None
+        for member in members_list:
+            if member.group_id and member.group_id != current_group_pk:
+                conflicts.append({
+                    'distributor_name': member.name,
+                    'distributor_pk': member.pk,
+                    'group_name': member.group.name,
+                    'group_pk': member.group_id,
+                })
+
+        if conflicts:
+            self._conflicts = conflicts
+            raise forms.ValidationError(
+                'Some selected distributors are already in another group. Remove them from their current group first.'
+            )
+
         return cleaned
 
     def save(self, commit=True):
@@ -151,11 +170,7 @@ class DistributorGroupForm(forms.ModelForm):
             new_members = set(self.cleaned_data['members'])
             old_members = set(instance.members.all()) if instance.pk else set()
 
-            self.moved_distributors = []
             for d in new_members - old_members:
-                old_group_name = self.distributor_current_groups.get(str(d.pk))
-                if old_group_name:
-                    self.moved_distributors.append((d.name, old_group_name))
                 d.group = instance
                 d.save(update_fields=['group'])
 

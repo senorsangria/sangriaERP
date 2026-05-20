@@ -15,11 +15,27 @@
 
   <div class="row">
     <div class="col-12 col-lg-8">
+
+      {% if conflicts %}
+      <div class="alert alert-danger">
+        <h6 class="alert-heading mb-2">&#9888; Cannot save &mdash; some selected distributors are already in another group:</h6>
+        <ul class="mb-0">
+          {% for c in conflicts %}
+            <li>
+              <strong>{{ c.distributor_name }}</strong> is currently in
+              <a href="{% url 'distributor_group_edit' pk=c.group_pk %}">{{ c.group_name }}</a>.
+              Remove them from that group first.
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
       <form method="post">
         {% csrf_token %}
         {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
 
-        {% if form.non_field_errors %}
+        {% if form.non_field_errors and not conflicts %}
           <div class="alert alert-danger">{{ form.non_field_errors }}</div>
         {% endif %}
 
@@ -130,33 +146,6 @@
   });
 
   updatePrimaryDropdown();
-
-  document.querySelector('form').addEventListener('submit', function (e) {
-    var movedDistributors = [];
-    memberCheckboxes.forEach(function (cb) {
-      if (cb.checked) {
-        var badge = document.querySelector('span[data-distributor-id="' + cb.value + '"]');
-        if (badge) {
-          movedDistributors.push({
-            name: cb.nextElementSibling.textContent.trim().split('Currently in:')[0].trim(),
-            fromGroup: badge.dataset.otherGroup
-          });
-        }
-      }
-    });
-
-    if (movedDistributors.length > 0) {
-      var msg = 'The following distributors will be moved from their current groups:\n\n';
-      movedDistributors.forEach(function (d) {
-        msg += '• ' + d.name + ' (from ' + d.fromGroup + ')\n';
-      });
-      msg += '\nContinue?';
-
-      if (!confirm(msg)) {
-        e.preventDefault();
-      }
-    }
-  });
 })();
 </script>
 {% endblock %}

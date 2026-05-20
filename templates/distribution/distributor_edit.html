@@ -64,6 +64,7 @@
           <div class="card-body p-4">
             <form method="post" action="{% url 'distributor_edit' distributor.pk %}" novalidate>
               {% csrf_token %}
+              {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
 
               {% if form.non_field_errors %}
               <div class="alert alert-danger">
@@ -147,7 +148,7 @@
                 <button type="submit" class="btn btn-primary">
                   <i class="bi bi-check-lg me-1"></i>Save Basic Info
                 </button>
-                <a href="{% url 'distributor_detail' distributor.pk %}" class="btn btn-outline-secondary">
+                <a href="{% if next_url %}{{ next_url }}{% else %}{% url 'distributor_list' %}{% endif %}" class="btn btn-outline-secondary">
                   Cancel
                 </a>
               </div>

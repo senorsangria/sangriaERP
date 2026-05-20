@@ -4065,11 +4065,12 @@ The nav system has no submenu/child-item concept — flat list only.
 - **Primary distributor dropdown**: no default selection (empty option "— Select primary distributor —"), field is required — blank submission yields a validation error.
 - **Members-first workflow**: JS dynamically filters the primary dropdown to only show currently-checked members; dropdown is disabled when no members are selected.
 - **Distributors in other groups**: member checkboxes show a `bg-warning` "Currently in: [group]" badge for distributors already assigned to a different group, so admins can see the impact before saving.
-- **Move confirmation dialog**: submitting a group that would move distributors from other groups triggers a JS `confirm()` dialog listing each distributor and its current group before the POST proceeds.
-- **Move tracking on save**: `DistributorGroupForm.save()` populates `form.moved_distributors` (list of `(name, old_group)` tuples) for distributors pulled from other groups; views show an `info` flash message listing the moves.
+- **Block on conflict (replaces confirm dialog)**: group create/edit now **blocks** saving when any selected member is already in another group. A conflict error block lists each conflict with a clickable link to the other group so the user can remove the distributor there first. The old JS `confirm()` dialog is removed.
+- **Distributor edit `?next=` support**: `distributor_edit` accepts a `?next=` query param (or hidden POST field); on successful save or Cancel, redirects to that URL instead of the distributor list. Unsafe/off-site URLs are rejected via `url_has_allowed_host_and_scheme`.
+- **All links to distributor edit pass `?next=`**: Edit buttons on the distributor list (grouped, ungrouped, flat-search) and distributor detail page include `?next={{ request.path|urlencode }}` so save/cancel returns to the calling page.
 - **Group edit `?next=` redirect**: `distributor_group_edit` accepts a `?next=` query param (or hidden POST field); on successful save or Cancel, redirects to that URL instead of the group list. Unsafe/off-site URLs are rejected via `url_has_allowed_host_and_scheme`.
 - **Distributor edit group link**: includes `?next={{ request.path }}` so navigating to group edit from the distributor edit page returns to the distributor edit page after save.
-- **~7 new tests** covering primary-required, empty-label, move tracking, skipped tracking for ungrouped additions, and `?next=` redirect (present / absent / unsafe).
+- **~9 new/updated tests** covering conflict blocking, multiple conflicts, conflict context attached to form, no-block for current-group members, no-block for ungrouped members, distributor edit `?next=` redirect (present / absent / unsafe), and conflict display with links.
 
 ### Phase G2 (pending)
 
