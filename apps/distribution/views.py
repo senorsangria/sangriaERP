@@ -17,13 +17,16 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 
+from django.http import HttpResponseForbidden
+from django.utils.http import url_has_allowed_host_and_scheme
+
 from apps.catalog.models import Brand as CatalogBrand, Item
 from apps.imports.models import ItemMapping
-from .forecast import compute_distributor_forecast
-from .forms import DistributorForm, InventoryImportUploadForm
+from .forecast import compute_distributor_forecast, compute_group_forecast
+from .forms import DistributorForm, DistributorGroupForm, InventoryImportUploadForm
 from .order_generation import generate_projected_orders
 from .models import (
-    Distributor, DistributorItemProfile, DistributorPO, DistributorPOLine,
+    Distributor, DistributorGroup, DistributorItemProfile, DistributorPO, DistributorPOLine,
     InventoryImportBatch, InventorySnapshot,
 )
 
@@ -173,13 +176,18 @@ def validate_inventory_import(rows, company, year, month):
 
     Steps:
       1. Resolve each distributor by name (case-insensitive, active only).
-      2. Resolve each item code via ItemMapping (case-insensitive on raw_item_name).
+      2. Detect unmapped item codes (no MAPPED ItemMapping exists).
       3. Check for period conflicts (snapshot already exists for that distributor/period).
 
-    Any error in any step aborts the entire upload.
+    Returns (resolved_rows, errors, unmapped_by_dist_id) where:
+      - resolved_rows: list of {distributor, item, quantity, row_number} on success
+      - errors: non-mapping validation errors (distributor not found, period conflict)
+      - unmapped_by_dist_id: {str(dist_id): [raw_code, ...]} when unmapped codes found
 
-    Returns (resolved_rows, errors) where resolved_rows is a list of dicts:
-        {distributor (Distributor), item (Item), quantity (Decimal), row_number}
+    Callers should:
+      - If errors: show error page
+      - Elif unmapped_by_dist_id: redirect to mapping resolution UI
+      - Else: proceed with resolved_rows
     """
     errors = []
 
@@ -196,11 +204,13 @@ def validate_inventory_import(rows, company, year, month):
             distributor_map[name] = dist
 
     if errors:
-        return [], errors
+        return [], errors, {}
 
     # Step 2: Item code resolution via ItemMapping
     unique_pairs = {(r['distributor_name'], r['item_code']) for r in rows}
     item_map = {}  # {(csv_dist_name, item_code): Item}
+    unmapped_by_dist = {}  # {dist.id: [raw_code, ...]}
+
     for dist_name, item_code in sorted(unique_pairs):
         dist = distributor_map[dist_name]
         mapping = ItemMapping.objects.filter(
@@ -210,16 +220,13 @@ def validate_inventory_import(rows, company, year, month):
         ).first()
 
         if mapping is None or mapping.status != ItemMapping.Status.MAPPED or mapping.mapped_item is None:
-            errors.append(
-                f"Item code '{item_code}' for distributor '{dist_name}' is not mapped. "
-                f"Add the mapping at /imports/item-mappings/ first."
-            )
-            continue
+            unmapped_by_dist.setdefault(dist.id, []).append(item_code)
+        else:
+            item_map[(dist_name, item_code)] = mapping.mapped_item
 
-        item_map[(dist_name, item_code)] = mapping.mapped_item
-
-    if errors:
-        return [], errors
+    if unmapped_by_dist:
+        # Return unmapped codes grouped by distributor ID (string keys for JSON serialisation)
+        return [], [], {str(k): v for k, v in unmapped_by_dist.items()}
 
     # Step 3: Period conflict check
     month_name = calendar.month_name[month]
@@ -231,7 +238,7 @@ def validate_inventory_import(rows, company, year, month):
             )
 
     if errors:
-        return [], errors
+        return [], errors, {}
 
     # Build resolved rows
     resolved_rows = []
@@ -245,7 +252,96 @@ def validate_inventory_import(rows, company, year, month):
             'row_number': row['row_number'],
         })
 
-    return resolved_rows, []
+    return resolved_rows, [], {}
+
+
+# ---------------------------------------------------------------------------
+# Distributor Group CRUD
+# ---------------------------------------------------------------------------
+
+@login_required
+def distributor_group_list(request):
+    if not request.user.has_permission('can_manage_distributor_groups'):
+        return HttpResponseForbidden('You do not have permission to access this page.')
+    company = request.user.company
+    groups = (
+        DistributorGroup.objects.filter(company=company)
+        .select_related('primary_distributor')
+        .prefetch_related('members')
+        .order_by('name')
+    )
+    return render(request, 'distribution/distributor_group_list.html', {
+        'groups': groups,
+    })
+
+
+@login_required
+def distributor_group_create(request):
+    if not request.user.has_permission('can_manage_distributor_groups'):
+        return HttpResponseForbidden('You do not have permission to access this page.')
+    company = request.user.company
+    if request.method == 'POST':
+        form = DistributorGroupForm(request.POST, company=company)
+        if form.is_valid():
+            group = form.save()
+            messages.success(request, f'Created distributor group "{group.name}".')
+            return redirect('distributor_group_list')
+    else:
+        form = DistributorGroupForm(company=company)
+    conflicts = getattr(form, '_conflicts', None)
+    return render(request, 'distribution/distributor_group_form.html', {
+        'form': form,
+        'is_create': True,
+        'conflicts': conflicts,
+    })
+
+
+@login_required
+def distributor_group_edit(request, pk):
+    if not request.user.has_permission('can_manage_distributor_groups'):
+        return HttpResponseForbidden('You do not have permission to access this page.')
+    company = request.user.company
+    group = get_object_or_404(DistributorGroup, pk=pk, company=company)
+    next_url = request.GET.get('next', '') or request.POST.get('next', '')
+    if next_url and not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
+        next_url = ''
+    if request.method == 'POST':
+        form = DistributorGroupForm(request.POST, instance=group, company=company)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f'Updated distributor group "{group.name}".')
+            if next_url:
+                return redirect(next_url)
+            return redirect('distributor_group_list')
+    else:
+        form = DistributorGroupForm(instance=group, company=company)
+    conflicts = getattr(form, '_conflicts', None)
+    return render(request, 'distribution/distributor_group_form.html', {
+        'form': form,
+        'group': group,
+        'is_create': False,
+        'next_url': next_url,
+        'conflicts': conflicts,
+    })
+
+
+@login_required
+def distributor_group_delete(request, pk):
+    if not request.user.has_permission('can_manage_distributor_groups'):
+        return HttpResponseForbidden('You do not have permission to access this page.')
+    company = request.user.company
+    group = get_object_or_404(DistributorGroup, pk=pk, company=company)
+    if request.method == 'POST':
+        name = group.name
+        member_count = group.members.count()
+        with transaction.atomic():
+            group.delete()
+        messages.success(request, f'Deleted distributor group "{name}". {member_count} distributors are now ungrouped.')
+        return redirect('distributor_group_list')
+    return render(request, 'distribution/distributor_group_confirm_delete.html', {
+        'group': group,
+        'member_count': group.members.count(),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -261,11 +357,38 @@ def distributor_list(request):
     can_manage_inventory = request.user.has_permission('can_manage_distributor_inventory')
     company = request.user.company
 
-    distributors = Distributor.objects.filter(company=company).order_by('name')
-    search = request.GET.get('q', '').strip()
-    if search:
-        distributors = distributors.filter(name__icontains=search)
+    q = request.GET.get('q', '').strip()
+    base_qs = Distributor.objects.filter(company=company)
 
+    if q:
+        distributors_flat = list(base_qs.filter(name__icontains=q).order_by('name'))
+        grouped_data = None
+        ungrouped_data = None
+        is_grouped_view = False
+    else:
+        distributors_flat = None
+        from itertools import groupby
+        grouped_qs = (
+            base_qs.filter(group__isnull=False)
+            .select_related('group', 'group__primary_distributor')
+            .order_by('group__name', 'name')
+        )
+        ungrouped_qs = base_qs.filter(group__isnull=True).order_by('name')
+        grouped_data = []
+        for group_obj, members_iter in groupby(grouped_qs, key=lambda d: d.group):
+            grouped_data.append({
+                'group': group_obj,
+                'members': list(members_iter),
+            })
+        ungrouped_data = list(ungrouped_qs)
+        is_grouped_view = True
+
+    if is_grouped_view:
+        total_count = sum(len(g['members']) for g in grouped_data) + len(ungrouped_data)
+    else:
+        total_count = len(distributors_flat)
+
+    search = q
     active_tab = request.GET.get('tab', 'distributors')
     if active_tab not in ('distributors', 'inventory', 'forecast'):
         active_tab = 'distributors'
@@ -288,6 +411,7 @@ def distributor_list(request):
     orders_result = None
     forecast_distributor = None
     available_distributors = []
+    available_groups = []
 
     if can_manage_inventory:
         inv_distributor_filter = request.GET.get('inv_distributor', '')
@@ -391,14 +515,20 @@ def distributor_list(request):
         ]
 
         # Forecast tab — compute eagerly so Bootstrap tab-switching shows data
-        available_distributors = list(Distributor.objects.filter(company=company).order_by('name'))
+        available_distributors = list(
+            Distributor.objects.filter(company=company)
+            .select_related('group', 'group__primary_distributor')
+            .order_by('name')
+        )
+        available_groups = list(DistributorGroup.objects.filter(company=company).order_by('name'))
         forecast_dist_pk = request.GET.get('forecast_distributor', '')
         if forecast_dist_pk:
             try:
-                forecast_distributor = Distributor.objects.get(
-                    pk=int(forecast_dist_pk), company=company
+                pk = int(forecast_dist_pk)
+                forecast_distributor = next(
+                    (d for d in available_distributors if d.pk == pk), None
                 )
-            except (ValueError, Distributor.DoesNotExist):
+            except (ValueError, TypeError):
                 forecast_distributor = None
         if forecast_distributor is None and available_distributors:
             forecast_distributor = available_distributors[0]
@@ -431,7 +561,11 @@ def distributor_list(request):
                 slot['total_count'] = saved_count + slot['order_count']
 
     return render(request, 'distribution/distributor_list.html', {
-        'distributors': distributors,
+        'distributors_flat': distributors_flat,
+        'grouped_data': grouped_data,
+        'ungrouped_data': ungrouped_data,
+        'is_grouped_view': is_grouped_view,
+        'total_count': total_count,
         'search': search,
         'active_tab': active_tab,
         'can_manage_inventory': can_manage_inventory,
@@ -450,6 +584,7 @@ def distributor_list(request):
         'orders_result': orders_result,
         'forecast_distributor': forecast_distributor,
         'available_distributors': available_distributors,
+        'available_groups': available_groups,
     })
 
 
@@ -495,12 +630,18 @@ def distributor_edit(request, pk):
     distributor = get_object_or_404(Distributor, pk=pk, company=request.user.company)
     can_manage_inventory = request.user.has_permission('can_manage_distributor_inventory')
 
+    next_url = request.GET.get('next', '') or request.POST.get('next', '')
+    if next_url and not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
+        next_url = ''
+
     if request.method == 'POST':
         form = DistributorForm(request.POST, instance=distributor, company=request.user.company)
         if form.is_valid():
             form.save()
             messages.success(request, f'Distributor "{distributor.name}" has been updated.')
-            return redirect(reverse('distributor_edit', kwargs={'pk': distributor.pk}) + '?tab=basic')
+            if next_url:
+                return redirect(next_url)
+            return redirect('distributor_list')
     else:
         form = DistributorForm(instance=distributor, company=request.user.company)
 
@@ -535,6 +676,7 @@ def distributor_edit(request, pk):
         'safety_stock_map': safety_stock_map,
         'active_status_map': active_status_map,
         'active_tab': active_tab,
+        'next_url': next_url,
     })
 
 
@@ -734,13 +876,24 @@ def inventory_upload(request):
                         'import_errors': ['The CSV file contains no data rows.'],
                     })
 
-                resolved_rows, val_errors = validate_inventory_import(rows, company, year, month)
+                resolved_rows, val_errors, unmapped_by_dist = validate_inventory_import(
+                    rows, company, year, month
+                )
                 if val_errors:
                     _inv_cleanup_temp_file(temp_path)
                     return render(request, 'distribution/inventory_upload.html', {
                         'form': form,
                         'import_errors': val_errors,
                     })
+
+                if unmapped_by_dist:
+                    _inv_cleanup_temp_file(temp_path)
+                    request.session['pending_mapping_resolution'] = {
+                        'unknown_codes': unmapped_by_dist,
+                        'next_url': reverse('inventory_upload'),
+                        'context': 'inventory',
+                    }
+                    return redirect('resolve_mappings')
 
                 # Build per-distributor preview summary
                 dist_summary = {}
@@ -871,10 +1024,18 @@ def inventory_confirm(request):
         return redirect('inventory_preview')
 
     # Re-validate against fresh DB state
-    resolved_rows, val_errors = validate_inventory_import(rows, company, year, month)
+    resolved_rows, val_errors, unmapped_by_dist = validate_inventory_import(
+        rows, company, year, month
+    )
     if val_errors:
         for err in val_errors:
             messages.error(request, err)
+        return redirect('inventory_preview')
+    if unmapped_by_dist:
+        messages.error(
+            request,
+            'Some item codes are still unmapped. Please resolve all mappings before importing.',
+        )
         return redirect('inventory_preview')
 
     try:
@@ -1250,5 +1411,377 @@ def distributor_po_delete(request, dist_pk, po_pk):
     distributor = get_object_or_404(Distributor, pk=dist_pk, company=request.user.company)
     po = get_object_or_404(DistributorPO, pk=po_pk, distributor=distributor)
     po.delete()
+
+    return JsonResponse({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# Group forecast views (Phase G2)
+# ---------------------------------------------------------------------------
+
+@login_required
+def distributor_group_forecast(request, group_pk):
+    """Read-only aggregated forecast for a DistributorGroup."""
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return render(request, '403.html', status=403)
+
+    company = request.user.company
+    group = get_object_or_404(
+        DistributorGroup.objects.select_related('primary_distributor', 'company'),
+        pk=group_pk, company=company,
+    )
+    members = list(group.members.order_by('name'))
+    primary = group.primary_distributor
+
+    # Build po_additions and saved_pos_by_month from all member POs
+    saved_pos = list(
+        DistributorPO.objects.filter(distributor__in=members)
+        .select_related('distributor')
+        .prefetch_related('lines')
+    )
+    po_additions = {}
+    saved_pos_by_month = {}
+    for po in saved_pos:
+        ym = (po.year, po.month)
+        saved_pos_by_month.setdefault(ym, []).append(po)
+        for line in po.lines.all():
+            key = (line.item_id, po.year, po.month)
+            po_additions[key] = po_additions.get(key, 0.0) + float(line.quantity_cases)
+
+    forecast_result = compute_group_forecast(group, po_additions=po_additions or None)
+
+    orders_result = None
+    if forecast_result.get('alignment_status') == 'ok':
+        orders_result = generate_projected_orders(primary, forecast_result)
+        for slot in orders_result.get('orders_per_horizon', []):
+            ym = (slot['year'], slot['month'])
+            slot['saved_count'] = len(saved_pos_by_month.get(ym, []))
+            slot['total_count'] = slot['saved_count'] + slot.get('order_count', 0)
+
+    available_distributors = list(
+        Distributor.objects.filter(company=company)
+        .select_related('group', 'group__primary_distributor')
+        .order_by('name')
+    )
+    available_groups = list(DistributorGroup.objects.filter(company=company).order_by('name'))
+
+    return render(request, 'distribution/distributor_group_forecast.html', {
+        'group': group,
+        'members': members,
+        'primary_distributor': primary,
+        'forecast_result': forecast_result,
+        'orders_result': orders_result,
+        'available_distributors': available_distributors,
+        'available_groups': available_groups,
+    })
+
+
+@login_required
+def distributor_group_orders_modal_data(request, group_pk, year, month):
+    """Return JSON for the editable multi-PO modal on the group forecast page (G3).
+
+    Replaces the G2 read-only endpoint at the same URL. Expanded response includes
+    items list, algorithm suggestions, and is_primary flag per saved PO.
+    """
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    company = request.user.company
+    try:
+        group = DistributorGroup.objects.select_related('primary_distributor').get(
+            pk=group_pk, company=company,
+        )
+    except DistributorGroup.DoesNotExist:
+        return JsonResponse({'error': 'Group not found'}, status=404)
+
+    primary = group.primary_distributor
+    members = list(group.members.all())
+
+    # Saved POs for the month across all members
+    saved_pos_qs = (
+        DistributorPO.objects
+        .filter(distributor__in=members, year=year, month=month)
+        .select_related('distributor')
+        .prefetch_related('lines__item')
+        .order_by('distributor__name', 'pk')
+    )
+
+    # Items: union of active items across all members (mirrors group forecast logic).
+    # Item is excluded only when ALL members have it explicitly inactive.
+    all_active_item_ids = set(
+        Item.objects.filter(brand__company=company, is_active=True)
+        .values_list('pk', flat=True)
+    )
+    per_member_inactive = [
+        set(
+            DistributorItemProfile.objects.filter(
+                distributor=member, is_active=False,
+            ).values_list('item_id', flat=True)
+        )
+        for member in members
+    ]
+    excluded_ids = set()
+    if per_member_inactive:
+        excluded_ids = per_member_inactive[0].copy()
+        for s in per_member_inactive[1:]:
+            excluded_ids &= s
+    active_group_item_ids = all_active_item_ids - excluded_ids
+    items = list(
+        Item.objects.filter(pk__in=active_group_item_ids)
+        .select_related('brand')
+        .order_by('brand__name', 'sort_order', 'name')
+    )
+
+    items_data = [
+        {
+            'id': item.pk,
+            'name': item.name,
+            'item_code': item.item_code,
+            'cases_per_pallet': item.cases_per_pallet,
+        }
+        for item in items
+    ]
+
+    saved_orders_data = [
+        {
+            'id': po.pk,
+            'year': po.year,
+            'month': po.month,
+            'status': po.status,
+            'external_po_number': po.external_po_number or '',
+            'notes': po.notes or '',
+            'generated_by_algorithm': po.generated_by_algorithm,
+            'is_primary': po.distributor_id == primary.pk,
+            'distributor_name': po.distributor.name,
+            'distributor_pk': po.distributor_id,
+            'lines': [
+                {
+                    'item_id': line.item_id,
+                    'item_name': line.item.name,
+                    'quantity_cases': float(line.quantity_cases),
+                }
+                for line in po.lines.all()
+            ],
+        }
+        for po in saved_pos_qs
+    ]
+
+    # Algorithm suggestions: computed fresh from the group forecast.
+    # Uses same pattern as distributor_po_modal_data (re-compute on each modal open).
+    suggested_orders_data = []
+    try:
+        forecast_result = compute_group_forecast(group)
+        if forecast_result.get('alignment_status') == 'ok':
+            orders_result = generate_projected_orders(primary, forecast_result)
+            for slot in orders_result.get('orders_per_horizon', []):
+                if (slot.get('year') == year and slot.get('month') == month
+                        and not slot.get('is_snapshot', False)):
+                    for order in slot.get('orders', []):
+                        suggested_orders_data.append({
+                            'order_unit': order.get('order_unit', ''),
+                            'order_quantity': order.get('order_quantity', 0),
+                            'total_cases': order.get('total_cases', 0),
+                            'lines': [
+                                {
+                                    'item_id': line['item'].pk,
+                                    'item_name': line['item'].name,
+                                    'cases': line['cases'],
+                                    'pallets': line.get('pallets'),
+                                }
+                                for line in order.get('lines', [])
+                            ],
+                        })
+    except Exception:
+        suggested_orders_data = []
+
+    month_name = calendar.month_name[month]
+    return JsonResponse({
+        'group': {'id': group.pk, 'name': group.name},
+        'primary_distributor': {
+            'id': primary.pk,
+            'name': primary.name,
+            'order_quantity_value': primary.order_quantity_value,
+            'order_quantity_unit': primary.order_quantity_unit,
+        },
+        'year': year,
+        'month': month,
+        'period_label': f'{month_name} {year}',
+        'items': items_data,
+        'saved_orders': saved_orders_data,
+        'suggested_orders': suggested_orders_data,
+    })
+
+
+@login_required
+def distributor_group_po_save(request, group_pk):
+    """Atomically create/update/delete POs from the group forecast modal (G3).
+
+    New POs are always created against the group's primary distributor.
+    Edits are only allowed for POs that already belong to the primary distributor.
+    """
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'error': 'AJAX required'}, status=400)
+
+    company = request.user.company
+    try:
+        group = DistributorGroup.objects.select_related('primary_distributor').get(
+            pk=group_pk, company=company,
+        )
+    except DistributorGroup.DoesNotExist:
+        return JsonResponse({'error': 'Group not found'}, status=404)
+
+    primary = group.primary_distributor
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    year = body.get('year')
+    month = body.get('month')
+    orders = body.get('orders', [])
+
+    if not isinstance(year, int) or not isinstance(month, int):
+        return JsonResponse({'error': 'year and month required'}, status=400)
+    if not 1 <= month <= 12:
+        return JsonResponse({'error': 'Invalid month'}, status=400)
+
+    # Full pre-validation before any DB writes
+    errors = []
+    all_item_ids = set()
+    existing_po_ids = []
+
+    for i, order_data in enumerate(orders):
+        label = f'Order {i + 1}'
+        status = order_data.get('status', 'projected')
+        if status not in ('projected', 'actual'):
+            errors.append(f'{label}: invalid status "{status}"')
+            continue
+
+        po_number = (order_data.get('external_po_number') or '').strip()
+        if status == 'actual' and not po_number:
+            errors.append(f'{label}: PO number is required for Actual status')
+
+        lines = order_data.get('lines', [])
+        seen_items = set()
+        for line in lines:
+            item_id = line.get('item_id')
+            if not item_id:
+                errors.append(f'{label}: missing item_id in line')
+                continue
+            if item_id in seen_items:
+                errors.append(f'{label}: duplicate item ID {item_id}')
+                continue
+            seen_items.add(item_id)
+            all_item_ids.add(item_id)
+            qty = line.get('quantity_cases', 0)
+            try:
+                qty = float(qty)
+            except (TypeError, ValueError):
+                errors.append(f'{label}: invalid quantity_cases')
+                continue
+            if qty < 0:
+                errors.append(f'{label}: negative quantity not allowed')
+
+        po_id = order_data.get('id')
+        if po_id is not None:
+            existing_po_ids.append(po_id)
+
+    if errors:
+        return JsonResponse({'error': '; '.join(errors)}, status=400)
+
+    # Validate item IDs belong to this company
+    if all_item_ids:
+        valid_item_ids = set(
+            Item.objects.filter(
+                pk__in=all_item_ids,
+                brand__company=request.user.company,
+            ).values_list('pk', flat=True)
+        )
+        invalid = all_item_ids - valid_item_ids
+        if invalid:
+            return JsonResponse({'error': f'Invalid item IDs: {sorted(invalid)}'}, status=400)
+
+    # Validate existing PO IDs — must belong to primary distributor, year, and month.
+    # This blocks editing non-primary POs from the group view.
+    if existing_po_ids:
+        valid_po_count = DistributorPO.objects.filter(
+            pk__in=existing_po_ids,
+            distributor=primary,
+            year=year,
+            month=month,
+        ).count()
+        if valid_po_count != len(existing_po_ids):
+            return JsonResponse(
+                {'error': 'Invalid PO IDs — only primary distributor POs may be edited from the group view'},
+                status=400,
+            )
+
+    # Atomic save
+    try:
+        with transaction.atomic():
+            for order_data in orders:
+                po_id = order_data.get('id')
+                status = order_data.get('status', 'projected')
+                po_number = (order_data.get('external_po_number') or '').strip()
+                notes = (order_data.get('notes') or '').strip()
+                lines = order_data.get('lines', [])
+
+                nonzero_lines = [
+                    l for l in lines
+                    if float(l.get('quantity_cases', 0)) > 0
+                ]
+
+                if po_id is not None:
+                    po = DistributorPO.objects.get(pk=po_id, distributor=primary)
+                    if not nonzero_lines:
+                        po.delete()
+                    else:
+                        po.status = status
+                        po.external_po_number = po_number
+                        po.notes = notes
+                        po.generated_by_algorithm = False
+                        po.save(update_fields=[
+                            'status', 'external_po_number', 'notes', 'generated_by_algorithm',
+                        ])
+                        po.lines.all().delete()
+                        for line in nonzero_lines:
+                            DistributorPOLine.objects.create(
+                                po=po,
+                                item_id=line['item_id'],
+                                quantity_cases=float(line['quantity_cases']),
+                            )
+                else:
+                    if not nonzero_lines:
+                        continue
+                    po = DistributorPO.objects.create(
+                        distributor=primary,
+                        year=year,
+                        month=month,
+                        status=status,
+                        external_po_number=po_number,
+                        notes=notes,
+                        generated_by_algorithm=False,
+                        created_by=request.user,
+                    )
+                    for line in nonzero_lines:
+                        DistributorPOLine.objects.create(
+                            po=po,
+                            item_id=line['item_id'],
+                            quantity_cases=float(line['quantity_cases']),
+                        )
+    except ValidationError as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=400)
+    except Exception:
+        return JsonResponse(
+            {'success': False, 'error': 'An unexpected error occurred while saving. Please try again.'},
+            status=500,
+        )
 
     return JsonResponse({'ok': True})

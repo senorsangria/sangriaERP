@@ -17,6 +17,10 @@ urlpatterns = [
     path('imports/item-mappings/create/', views.mapping_create, name='mapping_create'),
     path('imports/item-mappings/<int:pk>/edit/', views.mapping_edit, name='mapping_edit'),
 
+    # Inline mapping resolution (reusable for inventory and sales upload flows)
+    path('imports/resolve-mappings/', views.resolve_mappings, name='resolve_mappings'),
+    path('imports/mappings/bulk-save/', views.bulk_save_mappings, name='bulk_save_mappings'),
+
     # Batch History
     path('imports/batches/', views.batch_list, name='batch_list'),
     path('imports/batches/<int:pk>/', views.batch_detail, name='batch_detail'),

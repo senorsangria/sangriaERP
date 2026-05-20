@@ -1,0 +1,151 @@
+{% extends 'base.html' %}
+{% load rbac %}
+{% block title %}{% if is_create %}Create Distributor Group{% else %}Edit — {{ group.name }}{% endif %}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb mb-0 small">
+      <li class="breadcrumb-item"><a href="{% url 'distributor_group_list' %}">Distributor Groups</a></li>
+      <li class="breadcrumb-item active">{% if is_create %}New Group{% else %}{{ group.name }}{% endif %}</li>
+    </ol>
+  </nav>
+
+  <h1 class="h3 fw-bold mb-4">{% if is_create %}Create Distributor Group{% else %}Edit Distributor Group{% endif %}</h1>
+
+  <div class="row">
+    <div class="col-12 col-lg-8">
+
+      {% if conflicts %}
+      <div class="alert alert-danger">
+        <h6 class="alert-heading mb-2">&#9888; Cannot save &mdash; some selected distributors are already in another group:</h6>
+        <ul class="mb-0">
+          {% for c in conflicts %}
+            <li>
+              <strong>{{ c.distributor_name }}</strong> is currently in
+              <a href="{% url 'distributor_group_edit' pk=c.group_pk %}">{{ c.group_name }}</a>.
+              Remove them from that group first.
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      <form method="post">
+        {% csrf_token %}
+        {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
+
+        {% if form.non_field_errors and not conflicts %}
+          <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+        {% endif %}
+
+        <div class="card border-0 shadow-sm mb-3">
+          <div class="card-body">
+            <div class="mb-3">
+              <label for="{{ form.name.id_for_label }}" class="form-label">Name</label>
+              {{ form.name }}
+              {% if form.name.errors %}<div class="invalid-feedback d-block">{{ form.name.errors|join:', ' }}</div>{% endif %}
+            </div>
+
+            <div class="mb-3">
+              <label for="{{ form.primary_distributor.id_for_label }}" class="form-label">Primary Distributor</label>
+              {{ form.primary_distributor }}
+              {% if form.primary_distributor.errors %}<div class="invalid-feedback d-block">{{ form.primary_distributor.errors|join:', ' }}</div>{% endif %}
+              <small class="form-text text-muted">Select members below first. The primary must be one of the selected members.</small>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Members</label>
+              <div class="border rounded p-3" style="max-height: 400px; overflow-y: auto;">
+                {% for checkbox in form.members %}
+                  <div class="form-check">
+                    {{ checkbox.tag }}
+                    <label class="form-check-label" for="{{ checkbox.id_for_label }}">
+                      {{ checkbox.choice_label }}
+                      {% with cg=form.distributor_current_groups|get_item:checkbox.data.value %}
+                        {% if cg %}
+                          <span class="badge bg-warning text-dark ms-1"
+                                data-distributor-id="{{ checkbox.data.value }}"
+                                data-other-group="{{ cg }}">
+                            Currently in: {{ cg }}
+                          </span>
+                        {% endif %}
+                      {% endwith %}
+                    </label>
+                  </div>
+                {% endfor %}
+              </div>
+              {% if form.members.errors %}<div class="invalid-feedback d-block">{{ form.members.errors|join:', ' }}</div>{% endif %}
+              <small class="form-text text-muted">{{ form.members.help_text }}</small>
+            </div>
+
+            <div class="mb-3">
+              <label for="{{ form.notes.id_for_label }}" class="form-label">Notes</label>
+              {{ form.notes }}
+            </div>
+          </div>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button type="submit" class="btn btn-primary">Save</button>
+          <a href="{% if next_url %}{{ next_url }}{% else %}{% url 'distributor_group_list' %}{% endif %}" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var primarySelect = document.getElementById('{{ form.primary_distributor.id_for_label }}');
+  var memberCheckboxes = document.querySelectorAll('input[type="checkbox"][name="members"]');
+
+  if (!primarySelect || !memberCheckboxes.length) return;
+
+  var allOptions = Array.from(primarySelect.options);
+
+  function updatePrimaryDropdown() {
+    var selectedMemberIds = new Set();
+    memberCheckboxes.forEach(function (cb) {
+      if (cb.checked) {
+        selectedMemberIds.add(cb.value);
+      }
+    });
+
+    var currentValue = primarySelect.value;
+    primarySelect.innerHTML = '';
+
+    var emptyOpt = document.createElement('option');
+    emptyOpt.value = '';
+    emptyOpt.textContent = '— Select primary distributor —';
+    primarySelect.appendChild(emptyOpt);
+
+    allOptions.forEach(function (opt) {
+      if (opt.value && selectedMemberIds.has(opt.value)) {
+        var newOpt = document.createElement('option');
+        newOpt.value = opt.value;
+        newOpt.textContent = opt.textContent;
+        if (opt.value === currentValue) {
+          newOpt.selected = true;
+        }
+        primarySelect.appendChild(newOpt);
+      }
+    });
+
+    if (currentValue && !selectedMemberIds.has(currentValue)) {
+      primarySelect.value = '';
+    }
+
+    primarySelect.disabled = selectedMemberIds.size === 0;
+  }
+
+  memberCheckboxes.forEach(function (cb) {
+    cb.addEventListener('change', updatePrimaryDropdown);
+  });
+
+  updatePrimaryDropdown();
+})();
+</script>
+{% endblock %}

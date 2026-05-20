@@ -64,6 +64,7 @@
           <div class="card-body p-4">
             <form method="post" action="{% url 'distributor_edit' distributor.pk %}" novalidate>
               {% csrf_token %}
+              {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
 
               {% if form.non_field_errors %}
               <div class="alert alert-danger">
@@ -116,6 +117,21 @@
                 {% endif %}
               </div>
 
+              <div class="mb-3">
+                <label class="form-label fw-medium">Group</label>
+                <div class="form-control-plaintext">
+                  {% if distributor.group %}
+                    <a href="{% url 'distributor_group_edit' pk=distributor.group.pk %}?next={{ request.path }}">{{ distributor.group.name }}</a>
+                    {% if distributor == distributor.group.primary_distributor %}
+                      <span class="badge bg-primary ms-1">Primary</span>
+                    {% endif %}
+                  {% else %}
+                    <span class="text-muted">— None —</span>
+                  {% endif %}
+                </div>
+                <small class="form-text text-muted">Group membership is managed via the Distributor Groups admin page.</small>
+              </div>
+
               <div class="mb-4">
                 <div class="form-check">
                   {{ form.is_active }}
@@ -132,7 +148,7 @@
                 <button type="submit" class="btn btn-primary">
                   <i class="bi bi-check-lg me-1"></i>Save Basic Info
                 </button>
-                <a href="{% url 'distributor_detail' distributor.pk %}" class="btn btn-outline-secondary">
+                <a href="{% if next_url %}{{ next_url }}{% else %}{% url 'distributor_list' %}{% endif %}" class="btn btn-outline-secondary">
                   Cancel
                 </a>
               </div>

@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% block title %}Distributor Groups{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h2 fw-bold">Distributor Groups</h1>
+    <a href="{% url 'distributor_group_create' %}" class="btn btn-primary">
+      <i class="bi bi-plus-lg me-1"></i> Add Group
+    </a>
+  </div>
+
+  {% if not groups %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center py-5 text-muted">
+        <i class="bi bi-collection fs-1 d-block mb-2"></i>
+        No distributor groups yet.
+      </div>
+    </div>
+  {% else %}
+    <div class="card border-0 shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Name</th>
+              <th>Primary Distributor</th>
+              <th class="text-end">Members</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for group in groups %}
+              <tr>
+                <td class="fw-semibold">{{ group.name }}</td>
+                <td>{{ group.primary_distributor.name }}</td>
+                <td class="text-end">{{ group.members.count }}</td>
+                <td>
+                  <a href="{% url 'distributor_group_edit' pk=group.pk %}" class="btn btn-outline-secondary btn-sm">Edit</a>
+                  <a href="{% url 'distributor_group_delete' pk=group.pk %}" class="btn btn-outline-danger btn-sm">Delete</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

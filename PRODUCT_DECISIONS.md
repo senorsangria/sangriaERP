@@ -4041,3 +4041,157 @@ The nav system has no submenu/child-item concept — flat list only.
 #### Remaining phases
 
 - **Phase E** — Production algorithm (project batches needed from demand and safety stock)
+
+---
+
+## Distributor Groups
+
+### Phase G1 — Foundation (Complete)
+
+- **New `DistributorGroup` model** (`apps/distribution/models.py`): company-scoped, fields: `name` (unique per company), `notes`, `primary_distributor` (FK → Distributor, PROTECT, `unique=True` so a distributor can only be primary of ONE group). Ordering: alphabetical by name.
+- **New `group` FK on `Distributor`** (SET_NULL on group delete, null/blank). Members are tracked via this reverse FK (`DistributorGroup.members`).
+- **Distributor edit form shows `group` as READ-ONLY** field with a link to the group edit page. Group assignment is exclusively managed via the Distributor Groups admin — intentional design to keep group structure centralized.
+- **New permission `can_manage_distributor_groups`** granted to `supplier_admin` role (migration `core/0015`).
+- **Fixed `active_match` matcher in nav.py** to use most-specific-prefix-wins algorithm: when multiple nav items prefix-match the current URL, only the one with the longest matching `active_match` is marked active. Prevents substring collisions (e.g., `'distributor'` no longer wins over `'distributor_group'` for group pages).
+- **New "Distributor Groups" admin page** in Admin Tools section (positioned after Brands, before Sales Import). Permission-gated by `can_manage_distributor_groups`.
+- **Group form**: name field, primary distributor dropdown (scoped to active company distributors), member checkboxes (CheckboxSelectMultiple, scrollable container), notes. Validates: name unique per company, primary must be in member list, at least one member required.
+- **Group form `save()` syncs member group FKs atomically**: adds `group` FK to newly-added members, clears `group` FK on removed members.
+- **Distributor list restructured**: grouped display by default (groups alphabetical, members alphabetical within each group, primary distributor marked with "Primary" badge, Ungrouped section appears last). Search falls back to flat (non-grouped) list.
+- **Group delete**: sets all members' `group` FK to NULL via Django's SET_NULL; flash message reports how many distributors became ungrouped.
+- **~22 new tests** in `apps/distribution/tests_groups.py` covering models, form validation, view permission gating, list restructure, edit read-only display, permission grants, and nav active_match behavior.
+
+#### G1 Tweaks (follow-up)
+
+- **Primary distributor dropdown**: no default selection (empty option "— Select primary distributor —"), field is required — blank submission yields a validation error.
+- **Members-first workflow**: JS dynamically filters the primary dropdown to only show currently-checked members; dropdown is disabled when no members are selected.
+- **Distributors in other groups**: member checkboxes show a `bg-warning` "Currently in: [group]" badge for distributors already assigned to a different group, so admins can see the impact before saving.
+- **Block on conflict (replaces confirm dialog)**: group create/edit now **blocks** saving when any selected member is already in another group. A conflict error block lists each conflict with a clickable link to the other group so the user can remove the distributor there first. The old JS `confirm()` dialog is removed.
+- **Distributor edit `?next=` support**: `distributor_edit` accepts a `?next=` query param (or hidden POST field); on successful save or Cancel, redirects to that URL instead of the distributor list. Unsafe/off-site URLs are rejected via `url_has_allowed_host_and_scheme`.
+- **All links to distributor edit pass `?next=`**: Edit buttons on the distributor list (grouped, ungrouped, flat-search) and distributor detail page include `?next={{ request.path|urlencode }}` so save/cancel returns to the calling page.
+- **Group edit `?next=` redirect**: `distributor_group_edit` accepts a `?next=` query param (or hidden POST field); on successful save or Cancel, redirects to that URL instead of the group list. Unsafe/off-site URLs are rejected via `url_has_allowed_host_and_scheme`.
+- **Distributor edit group link**: includes `?next={{ request.path }}` so navigating to group edit from the distributor edit page returns to the distributor edit page after save.
+- **~9 new/updated tests** covering conflict blocking, multiple conflicts, conflict context attached to form, no-block for current-group members, no-block for ungrouped members, distributor edit `?next=` redirect (present / absent / unsafe), and conflict display with links.
+
+### Phase G2 — Group Forecast View (Complete)
+
+- **New URL `/distributors/group/<group_pk>/`** renders a read-only aggregated group forecast
+  (`distributor_group_forecast` view, `distributor_group_forecast.html` template).
+- **Mirrors individual distributor forecast** — same 13-column grid (anchor + 12 projection),
+  same cell coloring (green/yellow/red/no_data), same Orders row. No Inventory or Sales tabs.
+- **Aggregation**: inventory snapshots, sales (SalesRecord), and POs (DistributorPOLine) are
+  summed across all members per item per month. One query each.
+- **Safety stock** = primary distributor's `DistributorItemProfile.safety_stock_cases`.
+  Non-primary safety stock configs are ignored for group projections.
+- **Order generation** uses `group.primary_distributor.order_quantity_value/unit`.
+  Runs `generate_projected_orders(primary, forecast_result)` unchanged.
+- **Item set** = union of active items across all members (mirrors individual forecast logic:
+  `Item.is_active=True` AND NOT `DistributorItemProfile.is_active=False` for each member).
+- **Snapshot alignment rule**: each member must have snapshots for all of their own active
+  items in the same year-month. Most recent such period = anchor. If no aligned period
+  exists, the forecast is blocked with a per-member error listing missing items.
+  Alignment check uses one DB query; error detail computed in Python.
+- **`compute_group_forecast(group, po_additions=None, today=None)`** in `forecast.py`.
+  Returns same shape as `compute_distributor_forecast` plus `alignment_status`, `alignment_errors`,
+  and `anchor_period`.
+- **`_walk_inventory_forward(...)` helper** extracted from `compute_distributor_forecast` and
+  shared by both functions. Individual forecast behavior is unchanged.
+- **"Forecast for" dropdown** enhanced to use `<optgroup>` (Distributors / Groups sections).
+  Each option carries `data-url`; JS routes to group page or distributor query-param accordingly.
+  Grouped distributor labels show "Dist Name (Primary - Group Name)" or "Dist Name (Group Name)".
+- **Banner on individual forecast** when the selected distributor belongs to a group:
+  "This distributor is part of [Group Name]. View Group Forecast →"
+- **Orders row** counts all saved POs across all members per (year, month). Clicking opens a
+  read-only multi-PO modal (no save, no delete, no edit).
+- **Read-only modal endpoint** `GET /distributors/group/<group_pk>/orders/<year>/<month>/`
+  (`distributor_group_orders_modal_data`). Returns JSON; modal tabs labeled by distributor name
+  with Primary badge. Non-primary PO tabs show note directing user to the distributor's
+  individual forecast to edit.
+- **~25 new tests** in `apps/distribution/tests_group_forecast.py`. All existing tests pass.
+- **Bug fix (post-G2):** Alignment check was incorrectly treating a missing `DistributorItemProfile`
+  as "item is active for this member," causing false "missing snapshots" errors for items the
+  member doesn't carry. Fixed by introducing `member_required_items` — derived from explicit
+  `DistributorItemProfile.is_active=True` records only — used solely for the alignment check.
+  The display logic (`member_active_items`, union for forecast rows) is unchanged.
+  A member with no explicit active profiles has no required items for alignment purposes.
+  Regression test: `test_alignment_does_not_require_items_inactive_for_member`.
+
+### Phase G3 — Group PO Modal Write Path (Complete)
+
+- **Strategy:** Extends the existing individual PO modal pattern via URL-anchored endpoints. The individual modal (in `distributor_list.html`) is unchanged; G3 only adds group-specific endpoints and a new IIFE in the group forecast template.
+- **New endpoint `/distributors/group/<group_pk>/orders/<year>/<month>/`** replaces the G2 read-only endpoint at the same URL. Returns expanded JSON: `items`, `suggested_orders`, `is_primary` flag per saved PO, `primary_distributor` info. No migration needed.
+- **New endpoint `/distributors/group/<group_pk>/orders/save/`** creates new POs against the primary distributor; rejects edits to non-primary POs with 400. Mirrors `distributor_po_save` validation rules (status, PO number, negative qty, item IDs, AJAX header, atomic save).
+- **Primary PO deletion** reuses existing `/distributors/<dist_pk>/po/<po_pk>/delete/` with primary's `dist_pk`. No new delete URL needed.
+- **Group forecast template** (`distributor_group_forecast.html`): G2 read-only modal replaced with G3 editable modal mirroring the individual modal structure (same Bootstrap pill tabs, same "+ Add Order" button, same Save All / Close footer).
+- **Modal banner:** "New orders will be placed for **[Primary Name]** (the primary of [Group Name])". Populated from `data-primary-name` and `data-group-name` on the modal `div` on page load.
+- **Per-tab rendering driven by `is_primary`:**
+  - Primary saved POs → editable form (same fields as individual modal: status, PO number, notes, line item inputs)
+  - Non-primary saved POs → read-only plain text (status badge, cases table) with "edit from [Distributor]'s forecast" info note
+  - Algorithm suggestions → editable form, pre-filled with suggested quantities; saved as new PO against primary
+  - New (+ Add) tabs → editable form, blank; saved as new PO against primary
+- **Algorithm suggestions** computed fresh in the modal endpoint via `compute_group_forecast(group)` + `generate_projected_orders(primary, forecast_result)`. Same pattern as individual modal endpoint (re-compute on each open).
+- **Tab labeling:** Non-primary (read-only) tabs labeled by distributor name; editable tabs labeled "Order N".
+- **`_esc()` in group modal JS** uses DOM-based approach (safer than the string-replace version in the individual modal).
+
+---
+
+## Inventory Mapping UX
+
+### Inline Mapping Resolution During CSV Upload
+
+- When the inventory CSV upload detects unmapped item codes, the user is redirected to `/imports/resolve-mappings/` instead of being shown a flat error list.
+- `validate_inventory_import()` now returns a 3-tuple `(resolved_rows, errors, unmapped_by_dist_id)`. Callers: if `errors` → show error page; if `unmapped_by_dist_id` → redirect to resolution UI; otherwise proceed to preview.
+- Other errors (distributor not found, period conflict) still show the error page as before.
+
+### Smart Matching Algorithm (`apps/imports/matching.py`)
+
+- **Priority 1 (high):** Existing MAPPED `ItemMapping` for the same raw code at any other distributor in the company. Short-circuits remaining priorities.
+- **Priority 2 (medium):** `Item.item_code` exact match, case-insensitive.
+- **Priority 3 (low):** Substring match on `item_code`. Not pre-filled — shown as dropdown suggestion only.
+- **Priority 4 (low):** Word tokenisation match on `item.name`. Not pre-filled.
+- `batch_find_best_matches(company, distributor, raw_codes)` uses **exactly 2 DB queries** regardless of batch size: one for existing mappings at other distributors, one for all active items in the company.
+- `build_candidate_list()` surfaces Priority 3 & 4 matches for optional dropdown highlighting.
+
+### Resolution UI
+
+- Template: `templates/imports/resolve_mappings.html`
+- Grouped by distributor; each row: raw code + confidence badge + item dropdown (pre-filled for high/medium) + "Apply to all" checkbox.
+- Save button disabled until every row has a selection.
+- "Apply to all distributors" checkbox propagates item selection to all other rows with the same raw code and creates mappings for all active company distributors via `bulk_create(ignore_conflicts=True)`.
+
+### Bulk Save Endpoint (`POST /imports/mappings/bulk-save/`)
+
+- Accepts JSON array of `{distributor_id, raw_item_name, item_id, apply_to_all}`.
+- All mappings created in a single `transaction.atomic()`. Any validation failure rolls back everything.
+- Uses `update_or_create` for primary mappings (idempotent re-submission).
+- `apply_to_all=true` creates mappings for all active distributors via `bulk_create(ignore_conflicts=True)` — existing mappings at other distributors are never overwritten.
+- Success message: `"N mapping(s) saved. Re-upload your CSV to continue with the import."`
+
+### Permission Gate
+
+- Both `can_import_sales_data` **and** `can_manage_item_mapping` required for `resolve_mappings` and `bulk_save_mappings`.
+- Both are granted to `supplier_admin` (migrations 0004 and 0009).
+- The upload flow (`can_manage_distributor_inventory`) gets the user to the redirect; the mapping permissions gate the save.
+
+### Session Management
+
+- Pending resolution data stored under key `pending_mapping_resolution`: `{unknown_codes: {dist_id: [codes]}, next_url, context}`.
+- Session expiry handled: if `pending_mapping_resolution` is missing on `GET /imports/resolve-mappings/`, redirects to `inventory_upload` with a warning.
+- Session cleared by `bulk_save_mappings` after successful save.
+
+### Re-upload Model
+
+- No CSV file persistence. After saving mappings, user is shown a success flash and directed to re-upload the same CSV. On re-upload all codes now resolve and the normal preview/confirm/execute flow proceeds.
+
+### Existing Manual Mapping Tool
+
+- Unchanged. `ItemMapping` records created via the inline flow are identical to manually created ones and appear in the manual tool at `/imports/item-mappings/`.
+
+### InventorySnapshot Unique Constraint
+
+- `unique_together = [['distributor', 'item', 'year', 'month']]` already existed on the model — no migration was added in this phase.
+
+### Reuse for Sales Import (Future)
+
+- The `resolve_mappings` view, `bulk_save_mappings` endpoint, and `apps/imports/matching.py` are context-agnostic. The `next_url` and `context` fields in the session allow different upload flows to wire in.
+- Future sales import integration: ~20 lines changed in `import_upload()` to detect unmapped codes and store `{context: 'sales', next_url: reverse('import_upload')}` in session before redirecting. No new files or endpoints needed.
+- **~18 new tests** in `apps/distribution/tests_group_po_endpoints.py`. 3 G2 tests in `tests_group_forecast.py` updated to use `saved_orders` key (G3 response shape). All 284 tests pass.

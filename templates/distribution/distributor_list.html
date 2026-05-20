@@ -111,7 +111,7 @@
       </div>
     </div>
 
-    {% if distributors %}
+    {% if total_count or search %}
     <div class="card border-0 shadow-sm">
       <div class="table-responsive">
         <table class="table table-hover mb-0 align-middle">
@@ -125,71 +125,211 @@
             </tr>
           </thead>
           <tbody>
-            {% for dist in distributors %}
-            <tr>
-              <td>
-                <div class="fw-medium">
-                  <a href="{% url 'distributor_detail' dist.pk %}" class="text-decoration-none text-dark">
-                    {{ dist.name }}
-                  </a>
-                </div>
-                <!-- Mobile: city/state + status under name -->
-                <div class="d-md-none text-muted small">
-                  {% if dist.city or dist.state %}
-                  {{ dist.city }}{% if dist.city and dist.state %}, {% endif %}{{ dist.state }}
-                  {% endif %}
-                </div>
-                <div class="d-sm-none mt-1">
-                  {% if dist.is_active %}
-                  <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size:.7rem;">Active</span>
-                  {% else %}
-                  <span class="badge bg-secondary bg-opacity-10 text-secondary border" style="font-size:.7rem;">Inactive</span>
-                  {% endif %}
-                </div>
-              </td>
-              <td class="d-none d-md-table-cell text-muted small">{{ dist.city|default:"—" }}</td>
-              <td class="d-none d-md-table-cell text-muted small">{{ dist.state|default:"—" }}</td>
-              <td class="d-none d-sm-table-cell text-center">
-                {% if dist.is_active %}
-                <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
-                {% else %}
-                <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
-                {% endif %}
-              </td>
-              <td class="text-end">
-                <div class="d-flex gap-1 justify-content-end flex-wrap">
-                  <a href="{% url 'distributor_detail' dist.pk %}" class="btn btn-outline-secondary btn-sm">
-                    <i class="bi bi-eye d-sm-none"></i>
-                    <span class="d-none d-sm-inline">View</span>
-                  </a>
-                  <a href="{% url 'distributor_edit' dist.pk %}" class="btn btn-outline-secondary btn-sm">
-                    <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
-                  </a>
-                  <form method="post" action="{% url 'distributor_toggle' dist.pk %}" class="d-inline">
-                    {% csrf_token %}
+            {% if is_grouped_view %}
+              {% for group_data in grouped_data %}
+                <tr class="table-secondary">
+                  <th colspan="5" class="ps-3 fw-semibold small">
+                    <i class="bi bi-collection me-1"></i> {{ group_data.group.name }}
+                  </th>
+                </tr>
+                {% for dist in group_data.members %}
+                <tr>
+                  <td>
+                    <div class="fw-medium">
+                      <a href="{% url 'distributor_detail' dist.pk %}" class="text-decoration-none text-dark">
+                        {{ dist.name }}
+                      </a>
+                      {% if dist == group_data.group.primary_distributor %}
+                        <span class="badge bg-primary ms-1" style="font-size:.65rem;">Primary</span>
+                      {% endif %}
+                    </div>
+                    <div class="d-md-none text-muted small">
+                      {% if dist.city or dist.state %}
+                      {{ dist.city }}{% if dist.city and dist.state %}, {% endif %}{{ dist.state }}
+                      {% endif %}
+                    </div>
+                    <div class="d-sm-none mt-1">
+                      {% if dist.is_active %}
+                      <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size:.7rem;">Active</span>
+                      {% else %}
+                      <span class="badge bg-secondary bg-opacity-10 text-secondary border" style="font-size:.7rem;">Inactive</span>
+                      {% endif %}
+                    </div>
+                  </td>
+                  <td class="d-none d-md-table-cell text-muted small">{{ dist.city|default:"—" }}</td>
+                  <td class="d-none d-md-table-cell text-muted small">{{ dist.state|default:"—" }}</td>
+                  <td class="d-none d-sm-table-cell text-center">
                     {% if dist.is_active %}
-                    <button type="submit" class="btn btn-outline-danger btn-sm"
-                      onclick="return confirm('Deactivate {{ dist.name|escapejs }}?')">
-                      <i class="bi bi-dash-circle d-sm-none"></i>
-                      <span class="d-none d-sm-inline">Deactivate</span>
-                    </button>
+                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
                     {% else %}
-                    <button type="submit" class="btn btn-outline-success btn-sm"
-                      onclick="return confirm('Reactivate {{ dist.name|escapejs }}?')">
-                      <i class="bi bi-check-circle d-sm-none"></i>
-                      <span class="d-none d-sm-inline">Reactivate</span>
-                    </button>
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
                     {% endif %}
-                  </form>
-                </div>
-              </td>
-            </tr>
-            {% endfor %}
+                  </td>
+                  <td class="text-end">
+                    <div class="d-flex gap-1 justify-content-end flex-wrap">
+                      <a href="{% url 'distributor_detail' dist.pk %}" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-eye d-sm-none"></i>
+                        <span class="d-none d-sm-inline">View</span>
+                      </a>
+                      <a href="{% url 'distributor_edit' dist.pk %}?next={{ request.path|urlencode }}" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
+                      </a>
+                      <form method="post" action="{% url 'distributor_toggle' dist.pk %}" class="d-inline">
+                        {% csrf_token %}
+                        {% if dist.is_active %}
+                        <button type="submit" class="btn btn-outline-danger btn-sm"
+                          onclick="return confirm('Deactivate {{ dist.name|escapejs }}?')">
+                          <i class="bi bi-dash-circle d-sm-none"></i>
+                          <span class="d-none d-sm-inline">Deactivate</span>
+                        </button>
+                        {% else %}
+                        <button type="submit" class="btn btn-outline-success btn-sm"
+                          onclick="return confirm('Reactivate {{ dist.name|escapejs }}?')">
+                          <i class="bi bi-check-circle d-sm-none"></i>
+                          <span class="d-none d-sm-inline">Reactivate</span>
+                        </button>
+                        {% endif %}
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+                {% endfor %}
+              {% endfor %}
+
+              {% if ungrouped_data %}
+                <tr class="table-secondary">
+                  <th colspan="5" class="ps-3 fw-semibold small">
+                    <i class="bi bi-dash-square me-1"></i> Ungrouped
+                  </th>
+                </tr>
+                {% for dist in ungrouped_data %}
+                <tr>
+                  <td>
+                    <div class="fw-medium">
+                      <a href="{% url 'distributor_detail' dist.pk %}" class="text-decoration-none text-dark">
+                        {{ dist.name }}
+                      </a>
+                    </div>
+                    <div class="d-md-none text-muted small">
+                      {% if dist.city or dist.state %}
+                      {{ dist.city }}{% if dist.city and dist.state %}, {% endif %}{{ dist.state }}
+                      {% endif %}
+                    </div>
+                    <div class="d-sm-none mt-1">
+                      {% if dist.is_active %}
+                      <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size:.7rem;">Active</span>
+                      {% else %}
+                      <span class="badge bg-secondary bg-opacity-10 text-secondary border" style="font-size:.7rem;">Inactive</span>
+                      {% endif %}
+                    </div>
+                  </td>
+                  <td class="d-none d-md-table-cell text-muted small">{{ dist.city|default:"—" }}</td>
+                  <td class="d-none d-md-table-cell text-muted small">{{ dist.state|default:"—" }}</td>
+                  <td class="d-none d-sm-table-cell text-center">
+                    {% if dist.is_active %}
+                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
+                    {% else %}
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end">
+                    <div class="d-flex gap-1 justify-content-end flex-wrap">
+                      <a href="{% url 'distributor_detail' dist.pk %}" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-eye d-sm-none"></i>
+                        <span class="d-none d-sm-inline">View</span>
+                      </a>
+                      <a href="{% url 'distributor_edit' dist.pk %}?next={{ request.path|urlencode }}" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
+                      </a>
+                      <form method="post" action="{% url 'distributor_toggle' dist.pk %}" class="d-inline">
+                        {% csrf_token %}
+                        {% if dist.is_active %}
+                        <button type="submit" class="btn btn-outline-danger btn-sm"
+                          onclick="return confirm('Deactivate {{ dist.name|escapejs }}?')">
+                          <i class="bi bi-dash-circle d-sm-none"></i>
+                          <span class="d-none d-sm-inline">Deactivate</span>
+                        </button>
+                        {% else %}
+                        <button type="submit" class="btn btn-outline-success btn-sm"
+                          onclick="return confirm('Reactivate {{ dist.name|escapejs }}?')">
+                          <i class="bi bi-check-circle d-sm-none"></i>
+                          <span class="d-none d-sm-inline">Reactivate</span>
+                        </button>
+                        {% endif %}
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+                {% endfor %}
+              {% endif %}
+
+            {% else %}
+              <!-- Flat list (search results) -->
+              {% for dist in distributors_flat %}
+              <tr>
+                <td>
+                  <div class="fw-medium">
+                    <a href="{% url 'distributor_detail' dist.pk %}" class="text-decoration-none text-dark">
+                      {{ dist.name }}
+                    </a>
+                  </div>
+                  <div class="d-md-none text-muted small">
+                    {% if dist.city or dist.state %}
+                    {{ dist.city }}{% if dist.city and dist.state %}, {% endif %}{{ dist.state }}
+                    {% endif %}
+                  </div>
+                  <div class="d-sm-none mt-1">
+                    {% if dist.is_active %}
+                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size:.7rem;">Active</span>
+                    {% else %}
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary border" style="font-size:.7rem;">Inactive</span>
+                    {% endif %}
+                  </div>
+                </td>
+                <td class="d-none d-md-table-cell text-muted small">{{ dist.city|default:"—" }}</td>
+                <td class="d-none d-md-table-cell text-muted small">{{ dist.state|default:"—" }}</td>
+                <td class="d-none d-sm-table-cell text-center">
+                  {% if dist.is_active %}
+                  <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
+                  {% else %}
+                  <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <div class="d-flex gap-1 justify-content-end flex-wrap">
+                    <a href="{% url 'distributor_detail' dist.pk %}" class="btn btn-outline-secondary btn-sm">
+                      <i class="bi bi-eye d-sm-none"></i>
+                      <span class="d-none d-sm-inline">View</span>
+                    </a>
+                    <a href="{% url 'distributor_edit' dist.pk %}?next={{ request.path|urlencode }}" class="btn btn-outline-secondary btn-sm">
+                      <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
+                    </a>
+                    <form method="post" action="{% url 'distributor_toggle' dist.pk %}" class="d-inline">
+                      {% csrf_token %}
+                      {% if dist.is_active %}
+                      <button type="submit" class="btn btn-outline-danger btn-sm"
+                        onclick="return confirm('Deactivate {{ dist.name|escapejs }}?')">
+                        <i class="bi bi-dash-circle d-sm-none"></i>
+                        <span class="d-none d-sm-inline">Deactivate</span>
+                      </button>
+                      {% else %}
+                      <button type="submit" class="btn btn-outline-success btn-sm"
+                        onclick="return confirm('Reactivate {{ dist.name|escapejs }}?')">
+                        <i class="bi bi-check-circle d-sm-none"></i>
+                        <span class="d-none d-sm-inline">Reactivate</span>
+                      </button>
+                      {% endif %}
+                    </form>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            {% endif %}
           </tbody>
         </table>
       </div>
     </div>
-    <p class="text-muted small mt-2">{{ distributors|length }} distributor{{ distributors|length|pluralize }}</p>
+    <p class="text-muted small mt-2">{{ total_count }} distributor{{ total_count|pluralize }}</p>
 
     {% else %}
     <div class="card border-0 shadow-sm">
@@ -419,17 +559,36 @@
 
     {% else %}
     <!-- Distributor selector header -->
-    <div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
+    <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h4 class="mb-0 fw-semibold">Forecast for</h4>
-      <select id="forecast-distributor-select" class="form-select form-select-sm" style="max-width:260px;">
-        {% for dist in available_distributors %}
-        <option value="{{ dist.pk }}"
-          {% if forecast_distributor and dist.pk == forecast_distributor.pk %}selected{% endif %}>
-          {{ dist.name }}
-        </option>
-        {% endfor %}
+      <select id="forecast-distributor-select" class="form-select form-select-sm" style="max-width:340px;">
+        <optgroup label="Distributors">
+          {% for dist in available_distributors %}
+          <option value="dist-{{ dist.pk }}"
+                  data-url="?tab=forecast&forecast_distributor={{ dist.pk }}"
+                  {% if forecast_distributor and dist.pk == forecast_distributor.pk %}selected{% endif %}>
+            {{ dist.name }}{% if dist.group %} ({% if dist == dist.group.primary_distributor %}Primary - {% endif %}{{ dist.group.name }}){% endif %}
+          </option>
+          {% endfor %}
+        </optgroup>
+        {% if available_groups %}
+        <optgroup label="Groups">
+          {% for g in available_groups %}
+          <option value="group-{{ g.pk }}" data-url="{% url 'distributor_group_forecast' g.pk %}">
+            {{ g.name }}
+          </option>
+          {% endfor %}
+        </optgroup>
+        {% endif %}
       </select>
     </div>
+
+    {% if forecast_distributor and forecast_distributor.group %}
+    <div class="alert alert-info py-2 mb-3 small">
+      This distributor is part of <strong>{{ forecast_distributor.group.name }}</strong>.
+      <a href="{% url 'distributor_group_forecast' forecast_distributor.group.pk %}" class="ms-2">View Group Forecast →</a>
+    </div>
+    {% endif %}
 
     {% if forecast_result %}
       {% if forecast_result.message %}
@@ -667,10 +826,10 @@
   var sel = document.getElementById('forecast-distributor-select');
   if (!sel) return;
   sel.addEventListener('change', function () {
-    var url = new URL(window.location.href);
-    url.searchParams.set('tab', 'forecast');
-    url.searchParams.set('forecast_distributor', sel.value);
-    window.location.href = url.toString();
+    var opt = sel.options[sel.selectedIndex];
+    if (opt && opt.dataset.url) {
+      window.location.href = opt.dataset.url;
+    }
   });
 })();
 

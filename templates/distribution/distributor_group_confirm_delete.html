@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block title %}Delete Distributor Group{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <h1 class="h3 fw-bold mb-4">Delete Distributor Group</h1>
+
+  <div class="card border-danger shadow-sm" style="max-width: 600px;">
+    <div class="card-body">
+      <h5 class="card-title">{{ group.name }}</h5>
+      <p>Are you sure you want to delete this distributor group?</p>
+      {% if member_count > 0 %}
+        <div class="alert alert-warning">
+          <strong>{{ member_count }} distributor{{ member_count|pluralize }}</strong> will be removed from this group (their group assignment will be cleared).
+        </div>
+      {% endif %}
+      <form method="post">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-danger">Delete Group</button>
+        <a href="{% url 'distributor_group_list' %}" class="btn btn-outline-secondary">Cancel</a>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

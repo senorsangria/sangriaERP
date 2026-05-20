@@ -1,0 +1,666 @@
+{% extends "base.html" %}
+
+{% block title %}{{ group.name }} — Group Forecast{% endblock %}
+
+{% block extra_css %}
+<style>
+.forecast-table tbody td.forecast-green    { background-color: #d4edda !important; }
+.forecast-table tbody td.forecast-yellow   { background-color: #fff3cd !important; }
+.forecast-table tbody td.forecast-red      { background-color: #f8d7da !important; color: #842029; }
+.forecast-table tbody td.forecast-no_data  { background-color: #f5f5f5 !important; color: #aaa; }
+.forecast-table tbody td.forecast-snapshot { background-color: #cfe2ff !important; }
+.forecast-table th, .forecast-table td { padding: 0.2rem 0.4rem; }
+.forecast-cell { white-space: nowrap; min-width: 42px; }
+.forecast-orders-row td { background-color: #e8f4f8 !important; border-top: 2px solid #b8d4e0 !important; border-bottom: 2px solid #b8d4e0 !important; }
+.forecast-order-btn { font-size: .75rem; line-height: 1; text-decoration: none; }
+.forecast-order-btn:hover { background-color: rgba(0,0,0,.04); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1 fw-bold">
+      {{ group.name }}
+      <small class="text-muted fs-6 fw-normal">{{ members|length }} member{{ members|pluralize }}</small>
+    </h1>
+    <div class="text-muted small">
+      Members:
+      {% for m in members %}
+        {{ m.name }}{% if m == primary_distributor %} <span class="badge bg-primary" style="font-size:.65rem;">Primary</span>{% endif %}{% if not forloop.last %}, {% endif %}
+      {% endfor %}
+    </div>
+    {% if forecast_result.alignment_status == 'ok' %}
+    <div class="text-muted small mt-1">
+      Safety stock from <strong>{{ primary_distributor.name }}</strong> (primary distributor)
+    </div>
+    {% endif %}
+  </div>
+  <a href="{% url 'distributor_group_list' %}" class="btn btn-outline-secondary btn-sm">← All Groups</a>
+</div>
+
+<!-- Forecast for dropdown -->
+<div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
+  <h4 class="mb-0 fw-semibold">Forecast for</h4>
+  <select id="forecast-distributor-select" class="form-select form-select-sm" style="max-width:340px;">
+    <optgroup label="Distributors">
+      {% for dist in available_distributors %}
+      <option value="dist-{{ dist.pk }}" data-url="{% url 'distributor_list' %}?tab=forecast&forecast_distributor={{ dist.pk }}">
+        {{ dist.name }}{% if dist.group %} ({% if dist == dist.group.primary_distributor %}Primary - {% endif %}{{ dist.group.name }}){% endif %}
+      </option>
+      {% endfor %}
+    </optgroup>
+    {% if available_groups %}
+    <optgroup label="Groups">
+      {% for g in available_groups %}
+      <option value="group-{{ g.pk }}"
+              data-url="{% url 'distributor_group_forecast' g.pk %}"
+              {% if g.pk == group.pk %}selected{% endif %}>
+        {{ g.name }}
+      </option>
+      {% endfor %}
+    </optgroup>
+    {% endif %}
+  </select>
+</div>
+
+{% if forecast_result.alignment_status == 'misaligned' %}
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="alert alert-warning mb-0">
+      <h6 class="alert-heading fw-semibold">Cannot generate group forecast — snapshots not aligned</h6>
+      <p class="mb-2 small">Each member must have inventory snapshots for all their active items in the same period.</p>
+      <ul class="mb-2 small">
+        {% for err in forecast_result.alignment_errors %}
+        <li>
+          <strong>{{ err.distributor }}</strong>:
+          {% if err.missing_items %}
+            missing snapshots for {{ err.missing_items|join:", " }}
+          {% else %}
+            snapshots present for all active items
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      <hr class="my-2">
+      <p class="mb-0 small text-muted">
+        Upload the missing inventory snapshots via <a href="{% url 'inventory_upload' %}">Inventory Upload</a>.
+      </p>
+    </div>
+  </div>
+</div>
+
+{% elif forecast_result.alignment_status == 'no_data' %}
+
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-inbox fs-1 d-block mb-3"></i>
+    <p>{{ forecast_result.message }}</p>
+  </div>
+</div>
+
+{% else %}
+
+{% if orders_result and orders_result.skipped_items %}
+<div class="alert alert-warning small mb-3">
+  <strong>⚠ Some items were excluded from order projections:</strong>
+  <ul class="mb-0 mt-1">
+    {% for skipped in orders_result.skipped_items %}
+    <li>
+      <strong>{{ skipped.item.name }}</strong> ({{ skipped.item.item_code }}):
+      {% if skipped.reason == 'no_cases_per_pallet' %}
+        Missing "cases per pallet" — set this on the
+        <a href="{% url 'item_edit' skipped.item.brand.pk skipped.item.pk %}">item edit page</a>.
+      {% elif skipped.reason == 'no_depletion_data' %}
+        No prior year sales data available to project depletion.
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if not forecast_result.rows %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-4 text-muted">
+    No active items configured for this group.
+  </div>
+</div>
+{% else %}
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-sm table-bordered forecast-table mb-0">
+      <thead class="table-light">
+        <tr>
+          <th rowspan="2" class="align-middle small fw-semibold" style="min-width:130px;">Item</th>
+          {% for span in forecast_result.year_spans %}
+          <th colspan="{{ span.colspan }}" class="text-center small fw-semibold border-start">{{ span.year }}</th>
+          {% endfor %}
+        </tr>
+        <tr>
+          {% for h in forecast_result.horizon %}
+          <th class="text-center small border-start forecast-cell"
+              {% if h.is_snapshot %}title="Aggregated on-hand inventory across all group members"{% endif %}>
+            {{ h.month_short }}{% if h.is_snapshot %} *{% endif %}
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        <!-- Orders row -->
+        {% if orders_result %}
+        <tr class="forecast-orders-row">
+          <td class="small fw-semibold">Orders</td>
+          {% if not orders_result.has_order_profile %}
+            <td colspan="13" class="text-center small text-warning">
+              ⚠ No order profile configured for {{ primary_distributor.name }} —
+              <a href="{% url 'distributor_edit' primary_distributor.pk %}?tab=order-profile">configure order quantity</a>.
+            </td>
+          {% else %}
+            {% for slot in orders_result.orders_per_horizon %}
+              {% if slot.is_snapshot %}
+                <td class="text-center small text-muted">—</td>
+              {% else %}
+                <td class="text-center small p-0 forecast-order-cell">
+                  <button type="button"
+                          class="btn btn-link p-1 w-100 forecast-order-btn group-orders-btn"
+                          data-url="{% url 'distributor_group_orders_modal_data' group_pk=group.pk year=slot.year month=slot.month %}"
+                          data-year="{{ slot.year }}"
+                          data-month="{{ slot.month }}">
+                    {% if slot.total_count > 0 %}
+                      <span class="badge {% if slot.saved_count > 0 %}bg-primary{% else %}bg-info text-dark{% endif %}">{{ slot.total_count }}</span>
+                    {% else %}<span class="text-muted">—</span>{% endif %}
+                  </button>
+                </td>
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+        </tr>
+        {% endif %}
+        <!-- Item rows -->
+        {% for row in forecast_result.rows %}
+        <tr>
+          <td class="small fw-medium">{{ row.item.name }}</td>
+          {% for cell in row.monthly_data %}
+          <td class="text-center small forecast-cell forecast-{{ cell.status }}"
+              {% if cell.reason %}title="{{ cell.reason }}"{% endif %}>
+            {% if cell.status == 'no_data' %}
+              —
+            {% elif cell.inventory < 0 %}
+              <strong>{{ cell.inventory_display }}</strong>
+            {% else %}
+              {{ cell.inventory_display }}
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- G3 editable group PO modal — mirrors individual modal structure with group adaptations -->
+<div class="modal fade" id="groupPoModal" tabindex="-1"
+     aria-labelledby="groupPoModalLabel" aria-hidden="true"
+     data-save-url="{% url 'distributor_group_po_save' group_pk=group.pk %}"
+     data-delete-url-base="/distributors/{{ primary_distributor.pk }}/po/"
+     data-primary-name="{{ primary_distributor.name|escapejs }}"
+     data-group-name="{{ group.name|escapejs }}">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="groupPoModalLabel">
+          Orders &mdash; <span id="po-modal-period"></span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="po-modal-loading" class="text-center py-4">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading…</span>
+          </div>
+        </div>
+        <div id="po-modal-content" style="display:none;">
+          <div class="alert alert-info py-2 mb-3 small" id="po-modal-group-banner">
+            New orders will be placed for <strong id="po-modal-primary-name"></strong>
+            (the primary of <span id="po-modal-group-name"></span>)
+          </div>
+          <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+            <ul class="nav nav-pills flex-grow-1 flex-wrap" id="po-order-tabs" role="tablist"></ul>
+            <button type="button" class="btn btn-outline-primary btn-sm" id="po-add-order-btn">
+              + Add Order
+            </button>
+          </div>
+          <div class="tab-content" id="po-order-tab-content"></div>
+          <div id="po-modal-error" class="alert alert-danger mt-3" style="display:none;"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        {% csrf_token %}
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary" id="po-save-all-btn">Save All Orders</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+
+  // Forecast for dropdown navigation
+  var sel = document.getElementById('forecast-distributor-select');
+  if (sel) {
+    sel.addEventListener('change', function () {
+      var opt = sel.options[sel.selectedIndex];
+      if (opt && opt.dataset.url) window.location.href = opt.dataset.url;
+    });
+  }
+
+  // Group PO modal (G3 — editable)
+  var _modalEl = document.getElementById('groupPoModal');
+  if (!_modalEl) return;
+
+  var _bsModal      = new bootstrap.Modal(_modalEl);
+  var _saveUrl      = _modalEl.dataset.saveUrl;
+  var _deleteUrlBase = _modalEl.dataset.deleteUrlBase;
+  var _primaryName  = _modalEl.dataset.primaryName;
+  var _groupName    = _modalEl.dataset.groupName;
+
+  var _state = {
+    year: null, month: null,
+    items: [], orderUnit: null,
+    tabs: [],        // [{tabId, savedPo, readOnly}]
+    nextTabId: 1,
+  };
+
+  var MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // Populate static banner text from data-attributes
+  var _pnEl = document.getElementById('po-modal-primary-name');
+  var _gnEl = document.getElementById('po-modal-group-name');
+  if (_pnEl) _pnEl.textContent = _primaryName;
+  if (_gnEl) _gnEl.textContent = _groupName;
+
+  // Wire Orders-row buttons
+  document.querySelectorAll('.group-orders-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      openModal(btn.dataset.url, parseInt(btn.dataset.year, 10), parseInt(btn.dataset.month, 10));
+    });
+  });
+
+  document.getElementById('po-add-order-btn').addEventListener('click', function () {
+    addOrderTab(null, null);
+    activateLastTab();
+  });
+
+  document.getElementById('po-save-all-btn').addEventListener('click', saveAllOrders);
+
+  // ------------------------------------------------------------------
+
+  function openModal(dataUrl, year, month) {
+    _state.year = year; _state.month = month;
+    _state.tabs = []; _state.nextTabId = 1;
+
+    document.getElementById('po-modal-period').textContent = MONTH_NAMES[month - 1] + ' ' + year;
+    document.getElementById('po-modal-loading').style.display = '';
+    document.getElementById('po-modal-content').style.display = 'none';
+    document.getElementById('po-modal-error').style.display = 'none';
+    document.getElementById('po-order-tabs').innerHTML = '';
+    document.getElementById('po-order-tab-content').innerHTML = '';
+    document.getElementById('po-save-all-btn').disabled = false;
+    document.getElementById('po-save-all-btn').textContent = 'Save All Orders';
+
+    _bsModal.show();
+
+    fetch(dataUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        _state.items     = data.items;
+        _state.orderUnit = data.primary_distributor.order_quantity_unit;
+
+        document.getElementById('po-modal-loading').style.display = 'none';
+        document.getElementById('po-modal-content').style.display = '';
+
+        data.saved_orders.forEach(function (po) { addOrderTab(po, null); });
+        data.suggested_orders.forEach(function (s) { addOrderTab(null, s); });
+
+        if (_state.tabs.length === 0) addOrderTab(null, null);
+        activateFirstTab();
+      })
+      .catch(function (err) {
+        document.getElementById('po-modal-loading').style.display = 'none';
+        showError('Failed to load order data: ' + err.message);
+        document.getElementById('po-modal-content').style.display = '';
+      });
+  }
+
+  function addOrderTab(savedPo, suggestedOrder) {
+    var readOnly = savedPo !== null && !savedPo.is_primary;
+    var tabId    = 'gpo-tab-' + (_state.nextTabId++);
+    var tabNum   = _state.tabs.filter(function (t) { return !t.readOnly; }).length + 1;
+    _state.tabs.push({ tabId: tabId, savedPo: savedPo, readOnly: readOnly });
+
+    var tabsEl = document.getElementById('po-order-tabs');
+    var li = document.createElement('li');
+    li.className = 'nav-item';
+    li.setAttribute('role', 'presentation');
+    li.id = 'gpo-li-' + tabId;
+
+    var btn = document.createElement('button');
+    btn.className = 'nav-link';
+    btn.id = 'gpo-btn-' + tabId;
+    btn.setAttribute('data-bs-toggle', 'pill');
+    btn.setAttribute('data-bs-target', '#' + tabId);
+    btn.setAttribute('type', 'button');
+    btn.setAttribute('role', 'tab');
+    btn.textContent = readOnly ? savedPo.distributor_name : 'Order ' + tabNum;
+    li.appendChild(btn);
+    tabsEl.appendChild(li);
+
+    var contentEl = document.getElementById('po-order-tab-content');
+    var pane = document.createElement('div');
+    pane.className = 'tab-pane fade';
+    pane.id = tabId;
+    pane.setAttribute('role', 'tabpanel');
+
+    if (readOnly) {
+      pane.innerHTML = buildReadOnlyTabContent(savedPo);
+    } else {
+      pane.innerHTML = buildOrderForm(tabId, savedPo, suggestedOrder);
+
+      pane.querySelectorAll('.po-cases-input').forEach(function (inp) {
+        inp.addEventListener('input', function () { updatePallets(pane, inp); });
+      });
+
+      var delBtn = pane.querySelector('.po-delete-btn');
+      if (delBtn) {
+        delBtn.addEventListener('click', function () {
+          if (!confirm('Delete this saved order? This cannot be undone.')) return;
+          deleteOrder(tabId, savedPo.id);
+        });
+      }
+      var rmBtn = pane.querySelector('.po-remove-btn');
+      if (rmBtn) {
+        rmBtn.addEventListener('click', function () { removeTab(tabId); });
+      }
+    }
+
+    contentEl.appendChild(pane);
+  }
+
+  function buildReadOnlyTabContent(savedPo) {
+    var statusBadge = savedPo.status === 'actual'
+      ? '<span class="badge bg-success">Actual</span>'
+      : '<span class="badge bg-warning text-dark">Projected</span>';
+    var poNum = savedPo.external_po_number
+      ? '<span class="ms-2 text-muted small">PO #: ' + _esc(savedPo.external_po_number) + '</span>'
+      : '';
+
+    var html = '<div class="mb-3 d-flex align-items-center gap-2 flex-wrap">'
+      + statusBadge + poNum + '</div>';
+
+    if (savedPo.lines && savedPo.lines.length > 0) {
+      html += '<div class="table-responsive">'
+        + '<table class="table table-sm table-bordered mb-0">'
+        + '<thead class="table-light"><tr>'
+        + '<th class="small">Item</th>'
+        + '<th class="small text-end">Cases</th>'
+        + '</tr></thead><tbody>';
+      savedPo.lines.forEach(function (line) {
+        html += '<tr>'
+          + '<td class="small">' + _esc(line.item_name) + '</td>'
+          + '<td class="small text-end fw-medium">' + line.quantity_cases + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table></div>';
+    } else {
+      html += '<p class="text-muted small">No line items.</p>';
+    }
+
+    if (savedPo.notes) {
+      html += '<div class="mt-2 small"><strong>Notes:</strong> ' + _esc(savedPo.notes) + '</div>';
+    }
+
+    html += '<div class="alert alert-info mt-3 mb-0 small">'
+      + 'This PO belongs to <strong>' + _esc(savedPo.distributor_name) + '</strong>. '
+      + 'To edit, go to their <a href="/distributors/?tab=forecast&forecast_distributor='
+      + savedPo.distributor_pk + '">individual forecast</a>.'
+      + '</div>';
+
+    return html;
+  }
+
+  function buildOrderForm(tabId, savedPo, suggestedOrder) {
+    var isPallets = (_state.orderUnit === 'pallets');
+    var html = '';
+
+    html += '<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">';
+    if (savedPo) {
+      html += '<div class="d-flex gap-2">';
+      html += '<span class="badge bg-' + (savedPo.generated_by_algorithm ? 'secondary' : 'primary') + '">';
+      html += savedPo.generated_by_algorithm ? 'Algorithm' : 'Manual';
+      html += '</span>';
+      html += '<span class="badge bg-' + (savedPo.status === 'actual' ? 'success' : 'warning text-dark') + '">';
+      html += savedPo.status === 'actual' ? 'Actual' : 'Projected';
+      html += '</span></div>';
+      html += '<button type="button" class="btn btn-outline-danger btn-sm po-delete-btn">Delete Order</button>';
+    } else {
+      html += suggestedOrder
+        ? '<span class="badge bg-info text-dark">Algorithm suggestion</span>'
+        : '<span class="text-muted small">New order</span>';
+      html += '<button type="button" class="btn btn-outline-secondary btn-sm po-remove-btn">Remove</button>';
+    }
+    html += '</div>';
+
+    var curStatus = savedPo ? savedPo.status : 'projected';
+    var curPoNum  = savedPo ? (savedPo.external_po_number || '') : '';
+    var curNotes  = savedPo ? (savedPo.notes || '') : '';
+    html += '<div class="row g-2 mb-3">';
+    html += '<div class="col-sm-3"><label class="form-label small text-muted mb-1">Status</label>';
+    html += '<select class="form-select form-select-sm po-status-select">';
+    html += '<option value="projected"' + (curStatus === 'projected' ? ' selected' : '') + '>Projected</option>';
+    html += '<option value="actual"' + (curStatus === 'actual' ? ' selected' : '') + '>Actual</option>';
+    html += '</select></div>';
+    html += '<div class="col-sm-4"><label class="form-label small text-muted mb-1">PO Number <span class="text-muted">(required if Actual)</span></label>';
+    html += '<input type="text" class="form-control form-control-sm po-number-input" value="' + _esc(curPoNum) + '"></div>';
+    html += '<div class="col-sm-5"><label class="form-label small text-muted mb-1">Notes</label>';
+    html += '<input type="text" class="form-control form-control-sm po-notes-input" value="' + _esc(curNotes) + '"></div></div>';
+
+    html += '<div class="table-responsive"><table class="table table-sm table-bordered mb-0">';
+    html += '<thead class="table-light"><tr><th class="small">Item</th>';
+    html += '<th class="small text-end" style="width:100px;">Cases</th>';
+    if (isPallets) html += '<th class="small text-end" style="width:80px;">Pallets</th>';
+    html += '</tr></thead><tbody>';
+
+    _state.items.forEach(function (item) {
+      var casesVal = 0;
+      if (savedPo) {
+        var found = (savedPo.lines || []).find(function (l) { return l.item_id === item.id; });
+        if (found) casesVal = found.quantity_cases || 0;
+      } else if (suggestedOrder) {
+        var foundS = (suggestedOrder.lines || []).find(function (l) { return l.item_id === item.id; });
+        if (foundS) casesVal = foundS.cases || 0;
+      }
+      var palletsVal = (isPallets && item.cases_per_pallet && casesVal > 0)
+        ? Math.ceil(casesVal / item.cases_per_pallet) : 0;
+
+      html += '<tr><td class="small">' + _esc(item.name)
+        + ' <code class="small text-muted">' + _esc(item.item_code) + '</code></td>';
+      html += '<td><input type="number" min="0" step="1"'
+        + ' class="form-control form-control-sm po-cases-input text-end"'
+        + ' data-item-id="' + item.id + '"'
+        + ' data-cpp="' + (item.cases_per_pallet || '') + '"'
+        + ' value="' + casesVal + '"></td>';
+      if (isPallets) {
+        html += '<td class="small text-end po-pallets-cell" data-item-id="' + item.id + '">' + palletsVal + '</td>';
+      }
+      html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  function updatePallets(pane, inp) {
+    var cpp = parseFloat(inp.dataset.cpp);
+    if (!cpp) return;
+    var cases = parseFloat(inp.value) || 0;
+    var pallets = cases > 0 ? Math.ceil(cases / cpp) : 0;
+    var cell = pane.querySelector('.po-pallets-cell[data-item-id="' + inp.dataset.itemId + '"]');
+    if (cell) cell.textContent = pallets;
+  }
+
+  function removeTab(tabId) {
+    _state.tabs = _state.tabs.filter(function (t) { return t.tabId !== tabId; });
+    var li   = document.getElementById('gpo-li-' + tabId);
+    var pane = document.getElementById(tabId);
+    if (li)   li.remove();
+    if (pane) pane.remove();
+    var num = 1;
+    _state.tabs.forEach(function (t) {
+      if (!t.readOnly) {
+        var b = document.getElementById('gpo-btn-' + t.tabId);
+        if (b) b.textContent = 'Order ' + num++;
+      }
+    });
+    var firstBtn = document.querySelector('#po-order-tabs .nav-link');
+    if (firstBtn) firstBtn.click();
+  }
+
+  function activateFirstTab() {
+    var b = document.querySelector('#po-order-tabs .nav-link');
+    if (b) b.click();
+  }
+
+  function activateLastTab() {
+    var btns = document.querySelectorAll('#po-order-tabs .nav-link');
+    if (btns.length) btns[btns.length - 1].click();
+  }
+
+  function saveAllOrders() {
+    hideError();
+    var orders = [];
+    var valid = true, errMsg = '';
+    var editableNum = 0;
+
+    for (var i = 0; i < _state.tabs.length; i++) {
+      var tab = _state.tabs[i];
+      if (tab.readOnly) continue;
+      editableNum++;
+      var pane = document.getElementById(tab.tabId);
+      if (!pane) continue;
+
+      var status   = pane.querySelector('.po-status-select').value;
+      var poNumber = pane.querySelector('.po-number-input').value.trim();
+      var notes    = pane.querySelector('.po-notes-input').value.trim();
+
+      if (status === 'actual' && !poNumber) {
+        valid = false;
+        errMsg = 'PO number is required for orders with status "Actual" (Order ' + editableNum + ').';
+        break;
+      }
+
+      var lines = [];
+      pane.querySelectorAll('.po-cases-input').forEach(function (inp) {
+        var cases = parseFloat(inp.value) || 0;
+        if (cases > 0) lines.push({ item_id: parseInt(inp.dataset.itemId, 10), quantity_cases: cases });
+      });
+
+      orders.push({
+        id: tab.savedPo ? tab.savedPo.id : null,
+        status: status,
+        external_po_number: poNumber,
+        notes: notes,
+        lines: lines,
+      });
+    }
+
+    if (!valid) { showError(errMsg); return; }
+
+    var saveBtn = document.getElementById('po-save-all-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+
+    fetch(_saveUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': _csrf(),
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({ year: _state.year, month: _state.month, orders: orders }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.ok) {
+        window.location.reload();
+      } else {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save All Orders';
+        showError(data.error || 'Save failed.');
+      }
+    })
+    .catch(function (err) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save All Orders';
+      showError('Network error: ' + err.message);
+    });
+  }
+
+  function deleteOrder(tabId, poId) {
+    var deleteUrl = _deleteUrlBase + poId + '/delete/';
+    fetch(deleteUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': _csrf(),
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({ po_id: poId }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.ok) { window.location.reload(); }
+      else { showError(data.error || 'Delete failed.'); }
+    })
+    .catch(function (err) { showError('Network error: ' + err.message); });
+  }
+
+  function showError(msg) {
+    var el = document.getElementById('po-modal-error');
+    el.textContent = msg;
+    el.style.display = '';
+  }
+
+  function hideError() {
+    document.getElementById('po-modal-error').style.display = 'none';
+  }
+
+  function _esc(s) {
+    var d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML.replace(/"/g, '&quot;');
+  }
+
+  function _csrf() {
+    var inp = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (inp) return inp.value;
+    var m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+  }
+})();
+</script>
+{% endblock %}
