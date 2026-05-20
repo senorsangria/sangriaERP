@@ -190,14 +190,17 @@ class GroupForecastComputeTest(TestCase):
         self.assertEqual(result['rows'], [])
 
     # -----------------------------------------------------------------------
-    # 6. Block when members have same period but one is missing an item
+    # 6. Block when members have same period but one is missing a required item
     # -----------------------------------------------------------------------
     def test_compute_group_forecast_blocks_when_misaligned_items(self):
-        # Acme has both items at March; Bayside only has item_a (but item_b is active for Bayside)
+        # Bayside has an explicit is_active=True profile for item_b — it is required.
+        DistributorItemProfile.objects.create(
+            distributor=self.bayside, item=self.item_b, is_active=True
+        )
         _make_snapshot(self.acme, self.item_a, 2026, 3, quantity=100)
         _make_snapshot(self.acme, self.item_b, 2026, 3, quantity=100)
         _make_snapshot(self.bayside, self.item_a, 2026, 3, quantity=80)
-        # Bayside missing item_b snapshot — item_b is active (no explicit inactive profile)
+        # Bayside is missing item_b snapshot despite having an active profile for it.
 
         result = compute_group_forecast(self.group, today=date(2026, 5, 1))
 
@@ -273,10 +276,14 @@ class GroupForecastComputeTest(TestCase):
     # 10. Alignment errors list missing items per member
     # -----------------------------------------------------------------------
     def test_compute_group_forecast_alignment_errors_list_missing_items_per_member(self):
+        # Bayside has an explicit is_active=True profile for item_b — it is required.
+        DistributorItemProfile.objects.create(
+            distributor=self.bayside, item=self.item_b, is_active=True
+        )
         # Acme: both items at Mar 2026
         _make_snapshot(self.acme, self.item_a, 2026, 3, quantity=100)
         _make_snapshot(self.acme, self.item_b, 2026, 3, quantity=100)
-        # Bayside: only item_a at Mar 2026
+        # Bayside: only item_a at Mar 2026; item_b is missing despite active profile
         _make_snapshot(self.bayside, self.item_a, 2026, 3, quantity=80)
 
         result = compute_group_forecast(self.group, today=date(2026, 5, 1))
@@ -287,11 +294,45 @@ class GroupForecastComputeTest(TestCase):
         self.assertIn(self.bayside.name, errors_by_dist)
         self.assertIn(self.item_b.name, errors_by_dist[self.bayside.name]['missing_items'])
 
-        # Acme has all items; missing_items should be empty
+        # Acme has no explicit is_active=True profiles — nothing required, no missing items.
         self.assertEqual(errors_by_dist[self.acme.name]['missing_items'], [])
 
     # -----------------------------------------------------------------------
-    # 11. Walker refactor: individual forecast results unchanged
+    # 11. Regression: alignment must not require items inactive for a member
+    # -----------------------------------------------------------------------
+    def test_alignment_does_not_require_items_inactive_for_member(self):
+        """
+        Regression test for the group-forecast alignment bug.
+
+        Members should only need snapshots for items where THEY have an explicit
+        is_active=True DistributorItemProfile. Items active for other members, or
+        items with no profile at all, must not be required from a given member.
+        """
+        item_c = _make_item(self.brand, name='Item C', item_code='ITMC', sort_order=3)
+
+        # Acme carries items A and B (explicit active profiles)
+        DistributorItemProfile.objects.create(distributor=self.acme, item=self.item_a, is_active=True)
+        DistributorItemProfile.objects.create(distributor=self.acme, item=self.item_b, is_active=True)
+
+        # Bayside carries items A and C — NOT item B (different set from Acme)
+        DistributorItemProfile.objects.create(distributor=self.bayside, item=self.item_a, is_active=True)
+        DistributorItemProfile.objects.create(distributor=self.bayside, item=item_c, is_active=True)
+
+        # Each member snapshots only their own required items at the same period
+        _make_snapshot(self.acme, self.item_a, 2026, 3, quantity=100)
+        _make_snapshot(self.acme, self.item_b, 2026, 3, quantity=100)
+        _make_snapshot(self.bayside, self.item_a, 2026, 3, quantity=80)
+        _make_snapshot(self.bayside, item_c, 2026, 3, quantity=60)
+        # Notably: Bayside has NO snapshot for item_b, and that must not block alignment.
+
+        result = compute_group_forecast(self.group, today=date(2026, 5, 1))
+
+        self.assertEqual(result['alignment_status'], 'ok',
+                         msg='Alignment should pass when each member has all their own active items.')
+        self.assertEqual(result['anchor_period'], (2026, 3))
+
+    # -----------------------------------------------------------------------
+    # 12 (renumbered). Walker refactor: individual forecast results unchanged
     # -----------------------------------------------------------------------
     def test_walker_extracted_correctly(self):
         """Confirm individual forecast result matches expected value after refactor."""

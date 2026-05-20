@@ -4107,6 +4107,13 @@ The nav system has no submenu/child-item concept — flat list only.
   with Primary badge. Non-primary PO tabs show note directing user to the distributor's
   individual forecast to edit.
 - **~25 new tests** in `apps/distribution/tests_group_forecast.py`. All existing tests pass.
+- **Bug fix (post-G2):** Alignment check was incorrectly treating a missing `DistributorItemProfile`
+  as "item is active for this member," causing false "missing snapshots" errors for items the
+  member doesn't carry. Fixed by introducing `member_required_items` — derived from explicit
+  `DistributorItemProfile.is_active=True` records only — used solely for the alignment check.
+  The display logic (`member_active_items`, union for forecast rows) is unchanged.
+  A member with no explicit active profiles has no required items for alignment purposes.
+  Regression test: `test_alignment_does_not_require_items_inactive_for_member`.
 
 ### Phase G3 — Group PO Modal Write Path (Complete)
 

@@ -337,9 +337,8 @@ def compute_group_forecast(group, po_additions=None, today=None):
     if not members:
         return {**_base, 'alignment_status': 'no_data', 'message': 'Group has no members.'}
 
-    # Determine active items per member: all active company items minus
-    # those explicitly marked inactive in the member's DistributorItemProfile.
-    # This mirrors compute_distributor_forecast's item selection logic exactly.
+    # member_active_items: all active catalog items minus those explicitly marked
+    # inactive — used for union display logic (mirrors compute_distributor_forecast).
     all_active_item_ids = set(
         Item.objects.filter(brand__company=company, is_active=True)
         .values_list('pk', flat=True)
@@ -352,6 +351,18 @@ def compute_group_forecast(group, po_additions=None, today=None):
             ).values_list('item_id', flat=True)
         )
         member_active_items[member.id] = all_active_item_ids - explicitly_inactive
+
+    # member_required_items: only items with an explicit is_active=True profile for
+    # that member. Used for the alignment check — a missing profile means the item
+    # is not required from that member. This prevents members from being penalised
+    # for not snapshotting items they don't carry (i.e. items with no profile at all).
+    member_required_items = {}
+    for member in members:
+        member_required_items[member.id] = set(
+            DistributorItemProfile.objects.filter(
+                distributor=member, is_active=True
+            ).values_list('item_id', flat=True)
+        )
 
     # Fetch all member snapshots in one query
     all_snaps = list(
@@ -369,14 +380,14 @@ def compute_group_forecast(group, po_additions=None, today=None):
         ).add(s['item_id'])
 
     # Find most-recent aligned period: all members present AND each member has
-    # snapshots for all of their own active items.
+    # snapshots for all of their own required items (explicit is_active=True profiles).
     anchor_period = None
     for ym in sorted(period_member_items.keys(), reverse=True):
         per_member = period_member_items[ym]
         if not all(m.id in per_member for m in members):
             continue
         if all(
-            member_active_items[m.id].issubset(per_member.get(m.id, set()))
+            member_required_items[m.id].issubset(per_member.get(m.id, set()))
             for m in members
         ):
             anchor_period = ym
@@ -388,9 +399,9 @@ def compute_group_forecast(group, po_additions=None, today=None):
         for member in members:
             if candidate:
                 snapshotted = period_member_items.get(candidate, {}).get(member.id, set())
-                missing_ids = member_active_items[member.id] - snapshotted
+                missing_ids = member_required_items[member.id] - snapshotted
             else:
-                missing_ids = member_active_items[member.id]
+                missing_ids = member_required_items[member.id]
             missing_names = list(
                 Item.objects.filter(pk__in=missing_ids)
                 .order_by('brand__name', 'name')
