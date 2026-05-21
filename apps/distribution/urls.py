@@ -22,9 +22,13 @@ urlpatterns = [
          views.distributor_group_po_save, name='distributor_group_po_save'),
     path('distributors/group/<int:group_pk>/orders/<int:year>/<int:month>/',
          views.distributor_group_orders_modal_data, name='distributor_group_orders_modal_data'),
+    path('distributors/group/<int:group_pk>/orders/<int:year>/<int:month>/suggest/',
+         views.distributor_group_po_suggest, name='distributor_group_po_suggest'),
     # PO modal endpoints (Phase 4-step-2b) — static sub-paths before <int:pk>
     path('distributors/<int:dist_pk>/po/<int:year>/<int:month>/',
          views.distributor_po_modal_data, name='distributor_po_modal_data'),
+    path('distributors/<int:dist_pk>/po/<int:year>/<int:month>/suggest/',
+         views.distributor_po_suggest, name='distributor_po_suggest'),
     path('distributors/<int:dist_pk>/po/save/',
          views.distributor_po_save, name='distributor_po_save'),
     path('distributors/<int:dist_pk>/po/<int:po_pk>/delete/',

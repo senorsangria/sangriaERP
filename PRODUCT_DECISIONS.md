@@ -726,6 +726,28 @@ into `compute_distributor_forecast` in 4-step-2b).
 
 ---
 
+### Algorithm UX Change — Suggestions On-Demand (replaces auto-suggest)
+
+- Modal open now shows only saved POs; no algorithm-generated tabs are pre-populated
+- Orders row count = saved POs only (previously inflated by auto-generated suggestion count)
+- "+ Add Order" button triggers async fetch to one-month-lookahead suggest endpoint; button
+  shows a spinner during fetch and prevents double-clicks; falls back to blank tab on error
+- New `suggest_po_for_month(distributor, year, month, forecast_result)` function in
+  `apps/distribution/order_generation.py` — evaluates projected inventory at the END of
+  the month AFTER the modal month; rounds shortage up to the distributor's order quantity
+  multiple (cases or pallets)
+- New endpoints:
+  - `GET /distributors/<pk>/po/<year>/<month>/suggest/` — individual distributor
+  - `GET /distributors/group/<pk>/orders/<year>/<month>/suggest/` — group forecast
+- Suggestions now correctly consider already-saved POs (previously the auto-suggest used
+  a raw forecast that ignored saved POs)
+- Applies to both individual distributor modal and group forecast modal
+- `bg-info` badge path removed from Orders row template; only saved-PO `bg-primary` badge remains
+- `generate_projected_orders` is unchanged; still drives the Orders row per-month button
+  structure (but its count no longer contributes to `total_count`)
+
+---
+
 ## Phase 10.7 — Historical Event Import: Stage 3
 
 ### HistoricalImportBatch model (`apps/event_import/models.py`)

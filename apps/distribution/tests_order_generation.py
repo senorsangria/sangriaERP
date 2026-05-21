@@ -10,7 +10,7 @@ from django.urls import reverse
 
 from apps.distribution.forecast import compute_distributor_forecast
 from apps.distribution.models import Distributor, DistributorItemProfile, InventorySnapshot
-from apps.distribution.order_generation import generate_projected_orders
+from apps.distribution.order_generation import generate_projected_orders, suggest_po_for_month
 from apps.distribution.tests_forecast import (
     _make_company, _make_supplier_admin, _make_distributor,
     _make_brand, _make_item, _make_account, _make_batch,
@@ -494,7 +494,7 @@ class OrderGenerationViewTest(TestCase):
         return dist, item
 
     # -----------------------------------------------------------------------
-    # 13. Orders row renders with badge counts
+    # 13. Orders row renders; total_count equals saved_count (not inflated by algorithm)
     # -----------------------------------------------------------------------
     def test_orders_row_renders_with_counts(self):
         dist, item = self._make_setup()
@@ -503,8 +503,12 @@ class OrderGenerationViewTest(TestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'forecast-orders-row')
-        # At least one badge should appear (item triggers in month 1)
-        self.assertContains(resp, 'bg-info')
+        # No saved POs → total_count = 0 for all slots (not inflated by algorithm)
+        orders_result = resp.context['orders_result']
+        for slot in orders_result['orders_per_horizon']:
+            if not slot['is_snapshot']:
+                self.assertEqual(slot['total_count'], slot['saved_count'],
+                                 f'total_count should equal saved_count for {slot["year"]}-{slot["month"]}')
 
     # -----------------------------------------------------------------------
     # 14. Orders row warning when no profile
@@ -551,10 +555,10 @@ class OrderGenerationViewTest(TestCase):
         self.assertNotContains(resp, 'forecast-skipped-banner')
 
     # -----------------------------------------------------------------------
-    # 17. Month with no orders shows dash
+    # 17. Month with no saved POs shows dash (no badge)
     # -----------------------------------------------------------------------
     def test_orders_row_no_orders_shows_dash(self):
-        # Item stays safe through whole horizon → all months show dash
+        # Item stays safe through whole horizon and no saved POs → all months show dash
         dist = _make_distributor_with_profile(
             self.company, name='Safe Dist', order_value=100, order_unit='cases'
         )
@@ -571,7 +575,11 @@ class OrderGenerationViewTest(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'forecast-orders-row')
         self.assertContains(resp, 'forecast-order-btn')  # buttons always render
-        self.assertContains(resp, 'bg-info')             # 0-order cells use bg-info badge
+        # No saved POs → all total_count values are 0
+        orders_result = resp.context['orders_result']
+        for slot in orders_result['orders_per_horizon']:
+            if not slot['is_snapshot']:
+                self.assertEqual(slot['total_count'], 0)
 
 
 # ---------------------------------------------------------------------------
@@ -638,3 +646,176 @@ class ForecastDepletionExposureTest(TestCase):
         result = compute_distributor_forecast(self.distributor, today=date(2026, 5, 1))
         self.assertIn('safety_stock_map', result)
         self.assertEqual(result['safety_stock_map'].get(self.item.pk), 75)
+
+
+# ---------------------------------------------------------------------------
+# suggest_po_for_month unit tests
+# ---------------------------------------------------------------------------
+
+class SuggestPoForMonthTest(TestCase):
+
+    def setUp(self):
+        self.company = _make_company('Suggest Co')
+        self.brand = _make_brand(self.company)
+
+    def _dist_cases(self, order_value=10):
+        return Distributor.objects.create(
+            company=self.company, name='Cases Dist',
+            order_quantity_value=order_value, order_quantity_unit='cases',
+        )
+
+    def _dist_pallets(self, order_value=2):
+        dist = Distributor.objects.create(
+            company=self.company, name='Pallet Dist',
+            order_quantity_value=order_value, order_quantity_unit='pallets',
+        )
+        return dist
+
+    def _item(self, name='Item A', code='A001', cpp=None):
+        item = _make_item(self.brand, name=name, item_code=code)
+        if cpp is not None:
+            item.cases_per_pallet = cpp
+            item.save()
+        return item
+
+    def _forecast(self, item, cells, safety_stock=None):
+        """Build a minimal forecast_result with one item and given (year, month, inventory) cells."""
+        ss_map = {}
+        if safety_stock is not None:
+            ss_map[item.pk] = safety_stock
+        monthly_data = [
+            {
+                'year': y, 'month': m,
+                'inventory': inv,
+                'inventory_display': '' if inv is None else str(inv),
+                'depletion': None, 'status': 'green', 'is_snapshot': False,
+            }
+            for y, m, inv in cells
+        ]
+        return {'safety_stock_map': ss_map, 'rows': [{'item': item, 'monthly_data': monthly_data}]}
+
+    # 1. Item below safety stock → suggestion returned
+    def test_suggests_for_item_below_safety_stock(self):
+        dist = self._dist_cases(order_value=10)
+        item = self._item()
+        # Modal month=May 2026 → lookahead=June 2026; inv=15, ss=50 → shortage=35
+        fr = self._forecast(item, [(2026, 6, 15.0)], safety_stock=50)
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(len(result['lines']), 1)
+        self.assertEqual(result['lines'][0]['item_id'], item.pk)
+        self.assertEqual(result['lines'][0]['cases'], 40.0)
+        self.assertIsNone(result['lines'][0]['pallets'])
+
+    # 2. Item exactly at safety stock → no suggestion
+    def test_does_not_suggest_for_item_at_safety_stock(self):
+        dist = self._dist_cases()
+        item = self._item()
+        fr = self._forecast(item, [(2026, 6, 50.0)], safety_stock=50)
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(result['lines'], [])
+
+    # 3. Item above safety stock → no suggestion
+    def test_does_not_suggest_for_item_above_safety_stock(self):
+        dist = self._dist_cases()
+        item = self._item()
+        fr = self._forecast(item, [(2026, 6, 80.0)], safety_stock=50)
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(result['lines'], [])
+
+    # 4. No items below safety stock → empty lines
+    def test_empty_lines_when_no_shortages(self):
+        dist = self._dist_cases()
+        item_a = self._item('Item A', 'A001')
+        item_b = self._item('Item B', 'B001')
+        fr = {
+            'safety_stock_map': {item_a.pk: 20, item_b.pk: 30},
+            'rows': [
+                {'item': item_a, 'monthly_data': [{'year': 2026, 'month': 6, 'inventory': 100.0, 'inventory_display': '100', 'depletion': None, 'status': 'green', 'is_snapshot': False}]},
+                {'item': item_b, 'monthly_data': [{'year': 2026, 'month': 6, 'inventory': 100.0, 'inventory_display': '100', 'depletion': None, 'status': 'green', 'is_snapshot': False}]},
+            ],
+        }
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(result['lines'], [])
+
+    # 5. Saved POs in forecast_result reduce projected inv → fewer/no suggestions
+    def test_considers_saved_pos_in_lookahead(self):
+        dist = self._dist_cases(order_value=100)
+        item = self._item('Item PO', 'PO01')
+        acc = _make_account(self.company, dist)
+        batch = _make_batch(self.company, dist)
+        _make_snapshot(dist, item, 2026, 4, quantity=50)
+        _make_sale(self.company, batch, acc, item, 2025, 5, 100)
+
+        # Without saved PO: May inv = 50 - 100 = -50 → shortage below ss=0 by 50
+        fr_no_po = compute_distributor_forecast(dist, today=date(2026, 4, 20))
+        result_no_po = suggest_po_for_month(dist, 2026, 4, fr_no_po)
+        self.assertGreater(len(result_no_po['lines']), 0)
+
+        # With saved PO of 200 cases in May → May inv = 50 + 200 - 100 = 150 ≥ 0 → no shortage
+        po_additions = {(item.pk, 2026, 5): 200.0}
+        fr_with_po = compute_distributor_forecast(dist, today=date(2026, 4, 20), po_additions=po_additions)
+        result_with_po = suggest_po_for_month(dist, 2026, 4, fr_with_po)
+        self.assertEqual(result_with_po['lines'], [])
+
+    # 6. Cases mode rounding: shortage=35, order_qty=10 → 40 cases
+    def test_cases_mode_rounding(self):
+        dist = self._dist_cases(order_value=10)
+        item = self._item()
+        fr = self._forecast(item, [(2026, 6, 15.0)], safety_stock=50)
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(result['lines'][0]['cases'], 40.0)
+
+    # 7. Pallets mode: shortage=35, order_qty=2, cpp=12 → 48 cases, 4 pallets
+    def test_pallets_mode_rounding(self):
+        dist = self._dist_pallets(order_value=2)
+        item = self._item(cpp=12)
+        fr = self._forecast(item, [(2026, 6, 15.0)], safety_stock=50)
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(len(result['lines']), 1)
+        self.assertEqual(result['lines'][0]['cases'], 48.0)
+        self.assertEqual(result['lines'][0]['pallets'], 4)
+
+    # 8. December → January rollover
+    def test_december_january_rollover(self):
+        dist = self._dist_cases(order_value=10)
+        item = self._item()
+        # modal month=Dec 2026 → lookahead=Jan 2027
+        fr = self._forecast(item, [(2027, 1, 5.0)], safety_stock=50)
+        result = suggest_po_for_month(dist, 2026, 12, fr)
+        self.assertEqual(len(result['lines']), 1)
+        self.assertEqual(result['lines'][0]['cases'], 50.0)
+
+    # 9. Null safety stock treated as zero
+    def test_null_safety_stock_treated_as_zero(self):
+        dist = self._dist_cases(order_value=10)
+        item = self._item()
+        # No safety stock → ss=0; inv=-10 → shortage=10
+        fr = self._forecast(item, [(2026, 6, -10.0)], safety_stock=None)
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(len(result['lines']), 1)
+        self.assertEqual(result['lines'][0]['cases'], 10.0)
+
+    # 10. Pallet mode item missing cases_per_pallet → skipped
+    def test_skips_pallet_mode_item_missing_cases_per_pallet(self):
+        dist = self._dist_pallets()
+        item = self._item(cpp=None)  # no cpp
+        fr = self._forecast(item, [(2026, 6, 5.0)], safety_stock=50)
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(result['lines'], [])
+
+    # 11. No order profile → empty lines
+    def test_empty_lines_when_no_order_profile(self):
+        dist = _make_distributor(self.company, 'No Profile')
+        item = self._item()
+        fr = self._forecast(item, [(2026, 6, 5.0)], safety_stock=50)
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(result['lines'], [])
+
+    # 12. Lookahead month outside horizon → skip item (empty lines)
+    def test_empty_lines_when_lookahead_outside_horizon(self):
+        dist = self._dist_cases()
+        item = self._item()
+        # Forecast horizon ends at May 2026; modal month=May, lookahead=June not in horizon
+        fr = self._forecast(item, [(2026, 5, 5.0)], safety_stock=50)
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(result['lines'], [])

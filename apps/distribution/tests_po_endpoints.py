@@ -181,7 +181,7 @@ class DistributorPOModalDataTest(TestCase):
         self.assertEqual(len(data['saved_orders'][0]['lines']), 1)
         self.assertEqual(data['saved_orders'][0]['lines'][0]['item_id'], self.item.pk)
 
-    # 9. Includes suggested orders from algorithm
+    # 9. Modal data does NOT include suggested_orders (suggestions are now on-demand)
     def test_modal_data_includes_suggested_orders_structure(self):
         self.dist.order_quantity_value = 2
         self.dist.order_quantity_unit = 'pallets'
@@ -191,7 +191,7 @@ class DistributorPOModalDataTest(TestCase):
         resp = self.client.get(self.url)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertIn('suggested_orders', data)
+        self.assertNotIn('suggested_orders', data)
         self.assertIn('saved_orders', data)
         self.assertIn('items', data)
         self.assertIn('distributor', data)
@@ -503,3 +503,74 @@ class DistributorPOIntegrationTest(TestCase):
         self.assertIsNotNone(may_slot)
         self.assertEqual(may_slot['saved_count'], 1)
         self.assertGreaterEqual(may_slot['total_count'], 1)
+
+
+# ---------------------------------------------------------------------------
+# 6. distributor_po_suggest endpoint
+# ---------------------------------------------------------------------------
+
+class SuggestEndpointTest(TestCase):
+
+    def setUp(self):
+        self.company = _make_company('Suggest EP Co')
+        self.admin = _make_inventory_user(self.company, 'sug_admin')
+        self.dist = Distributor.objects.create(
+            company=self.company, name='Sug Dist',
+            order_quantity_value=10, order_quantity_unit='cases',
+        )
+        self.brand = _make_brand(self.company)
+        self.item = _make_item(self.brand, item_code='SUGA')
+        self.account = _make_account(self.company, self.dist)
+        self.batch = _make_batch(self.company, self.dist)
+        # Snapshot anchor = April 2026, item below safety stock in May 2026
+        _make_snapshot(self.dist, self.item, 2026, 4, quantity=10)
+        # Prior year May 2025 depletion = 100 → May 2026 projected inv = 10 - 100 = -90
+        _make_sale(self.company, self.batch, self.account, self.item, 2025, 5, 100)
+        DistributorItemProfile.objects.create(
+            distributor=self.dist, item=self.item, safety_stock_cases=0
+        )
+        self.client = Client()
+        self.client.login(username='sug_admin', password='testpass123')
+        # Modal month = April 2026 → lookahead = May 2026
+        self.url = reverse('distributor_po_suggest',
+                           kwargs={'dist_pk': self.dist.pk, 'year': 2026, 'month': 4})
+
+    # 13. Suggest endpoint returns correct lines when shortage exists
+    def test_suggest_endpoint_returns_correct_lines(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('lines', data)
+        self.assertGreater(len(data['lines']), 0)
+        line = data['lines'][0]
+        self.assertEqual(line['item_id'], self.item.pk)
+        self.assertIn('cases', line)
+        self.assertIsNone(line['pallets'])
+
+    # 14. Returns empty lines when no shortage
+    def test_suggest_endpoint_returns_empty_when_no_shortage(self):
+        # Update the snapshot to a large quantity so May projected inv stays above 0
+        InventorySnapshot.objects.filter(
+            distributor=self.dist, item=self.item, year=2026, month=4
+        ).update(quantity_cases=9999)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['lines'], [])
+
+    # 15. Returns 403 without permission
+    def test_suggest_endpoint_requires_permission(self):
+        limited = _make_limited_user(self.company, 'sug_limited')
+        c = Client()
+        c.login(username='sug_limited', password='testpass123')
+        resp = c.get(self.url)
+        self.assertEqual(resp.status_code, 403)
+
+    # 16. Returns 404 for distributor belonging to wrong company
+    def test_suggest_endpoint_404_for_wrong_company(self):
+        other_co = _make_company('Other Sug Co')
+        other_dist = _make_distributor(other_co, 'Other Sug Dist')
+        url = reverse('distributor_po_suggest',
+                      kwargs={'dist_pk': other_dist.pk, 'year': 2026, 'month': 4})
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 404)

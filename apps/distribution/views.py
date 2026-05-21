@@ -24,7 +24,7 @@ from apps.catalog.models import Brand as CatalogBrand, Item
 from apps.imports.models import ItemMapping
 from .forecast import compute_distributor_forecast, compute_group_forecast
 from .forms import DistributorForm, DistributorGroupForm, InventoryImportUploadForm
-from .order_generation import generate_projected_orders
+from .order_generation import generate_projected_orders, suggest_po_for_month
 from .models import (
     Distributor, DistributorGroup, DistributorItemProfile, DistributorPO, DistributorPOLine,
     InventoryImportBatch, InventorySnapshot,
@@ -558,7 +558,7 @@ def distributor_list(request):
                 ym = (slot['year'], slot['month'])
                 saved_count = len(saved_pos_by_month.get(ym, []))
                 slot['saved_count'] = saved_count
-                slot['total_count'] = saved_count + slot['order_count']
+                slot['total_count'] = saved_count
 
     return render(request, 'distribution/distributor_list.html', {
         'distributors_flat': distributors_flat,
@@ -1166,15 +1166,6 @@ def distributor_po_modal_data(request, dist_pk, year, month):
         .order_by('pk')
     )
 
-    # Raw algorithm suggestions (no saved POs applied — baseline recommendation)
-    raw_forecast = compute_distributor_forecast(distributor)
-    raw_orders = generate_projected_orders(distributor, raw_forecast)
-    suggested_orders = []
-    for slot in raw_orders.get('orders_per_horizon', []):
-        if slot['year'] == year and slot['month'] == month and not slot['is_snapshot']:
-            suggested_orders = slot.get('orders', [])
-            break
-
     items_data = [
         {
             'id': item.pk,
@@ -1206,24 +1197,6 @@ def distributor_po_modal_data(request, dist_pk, year, month):
         for po in saved_pos
     ]
 
-    suggested_orders_data = [
-        {
-            'order_unit': order['order_unit'],
-            'order_quantity': order['order_quantity'],
-            'total_cases': order['total_cases'],
-            'lines': [
-                {
-                    'item_id': line['item'].pk,
-                    'item_name': line['item'].name,
-                    'cases': line['cases'],
-                    'pallets': line.get('pallets'),
-                }
-                for line in order['lines']
-            ],
-        }
-        for order in suggested_orders
-    ]
-
     return JsonResponse({
         'distributor': {
             'id': distributor.pk,
@@ -1233,7 +1206,6 @@ def distributor_po_modal_data(request, dist_pk, year, month):
         },
         'items': items_data,
         'saved_orders': saved_orders_data,
-        'suggested_orders': suggested_orders_data,
     })
 
 
@@ -1456,7 +1428,7 @@ def distributor_group_forecast(request, group_pk):
         for slot in orders_result.get('orders_per_horizon', []):
             ym = (slot['year'], slot['month'])
             slot['saved_count'] = len(saved_pos_by_month.get(ym, []))
-            slot['total_count'] = slot['saved_count'] + slot.get('order_count', 0)
+            slot['total_count'] = slot['saved_count']
 
     available_distributors = list(
         Distributor.objects.filter(company=company)
@@ -1566,34 +1538,6 @@ def distributor_group_orders_modal_data(request, group_pk, year, month):
         for po in saved_pos_qs
     ]
 
-    # Algorithm suggestions: computed fresh from the group forecast.
-    # Uses same pattern as distributor_po_modal_data (re-compute on each modal open).
-    suggested_orders_data = []
-    try:
-        forecast_result = compute_group_forecast(group)
-        if forecast_result.get('alignment_status') == 'ok':
-            orders_result = generate_projected_orders(primary, forecast_result)
-            for slot in orders_result.get('orders_per_horizon', []):
-                if (slot.get('year') == year and slot.get('month') == month
-                        and not slot.get('is_snapshot', False)):
-                    for order in slot.get('orders', []):
-                        suggested_orders_data.append({
-                            'order_unit': order.get('order_unit', ''),
-                            'order_quantity': order.get('order_quantity', 0),
-                            'total_cases': order.get('total_cases', 0),
-                            'lines': [
-                                {
-                                    'item_id': line['item'].pk,
-                                    'item_name': line['item'].name,
-                                    'cases': line['cases'],
-                                    'pallets': line.get('pallets'),
-                                }
-                                for line in order.get('lines', [])
-                            ],
-                        })
-    except Exception:
-        suggested_orders_data = []
-
     month_name = calendar.month_name[month]
     return JsonResponse({
         'group': {'id': group.pk, 'name': group.name},
@@ -1608,8 +1552,60 @@ def distributor_group_orders_modal_data(request, group_pk, year, month):
         'period_label': f'{month_name} {year}',
         'items': items_data,
         'saved_orders': saved_orders_data,
-        'suggested_orders': suggested_orders_data,
     })
+
+
+@login_required
+def distributor_po_suggest(request, dist_pk, year, month):
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    company = request.user.company
+    distributor = get_object_or_404(Distributor, pk=dist_pk, company=company)
+
+    saved_pos = list(
+        DistributorPO.objects.filter(distributor=distributor)
+        .prefetch_related('lines')
+    )
+    po_additions = {}
+    for po in saved_pos:
+        for line in po.lines.all():
+            key = (line.item_id, po.year, po.month)
+            po_additions[key] = po_additions.get(key, 0.0) + float(line.quantity_cases)
+
+    forecast_result = compute_distributor_forecast(distributor, po_additions=po_additions or None)
+    suggestion = suggest_po_for_month(distributor, year, month, forecast_result)
+    return JsonResponse(suggestion)
+
+
+@login_required
+def distributor_group_po_suggest(request, group_pk, year, month):
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    company = request.user.company
+    try:
+        group = DistributorGroup.objects.select_related('primary_distributor').get(
+            pk=group_pk, company=company,
+        )
+    except DistributorGroup.DoesNotExist:
+        return JsonResponse({'error': 'Group not found'}, status=404)
+
+    primary = group.primary_distributor
+    members = list(group.members.all())
+
+    po_additions = {}
+    for line in DistributorPOLine.objects.filter(po__distributor__in=members).select_related('po'):
+        key = (line.item_id, line.po.year, line.po.month)
+        po_additions[key] = po_additions.get(key, 0.0) + float(line.quantity_cases)
+
+    forecast_result = compute_group_forecast(group, po_additions=po_additions or None)
+
+    if forecast_result.get('alignment_status') != 'ok':
+        return JsonResponse({'lines': []})
+
+    suggestion = suggest_po_for_month(primary, year, month, forecast_result)
+    return JsonResponse(suggestion)
 
 
 @login_required

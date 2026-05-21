@@ -309,3 +309,84 @@ def _add_line(lines, item, cases_added, pallets_added):
             'cases': cases_added,
             'pallets': pallets_added,
         }
+
+
+# ---------------------------------------------------------------------------
+# On-demand single-month suggestion
+# ---------------------------------------------------------------------------
+
+def suggest_po_for_month(distributor, year, month, forecast_result):
+    """
+    One-month-lookahead PO suggestion.
+
+    Evaluates projected inventory at the END of the month AFTER (year, month).
+    For each item projected below safety stock, computes shortage, rounds up
+    to the distributor's order quantity multiple, and adds to lines.
+
+    Returns: {'lines': [{'item_id': int, 'item_name': str, 'cases': float, 'pallets': int|None}]}
+
+    Returns empty lines if:
+    - Distributor has no order profile (order_quantity_value or order_quantity_unit is None)
+    - No items are projected below safety stock at lookahead month
+    - Lookahead month is outside the forecast horizon
+    """
+    if distributor.order_quantity_value is None or distributor.order_quantity_unit is None:
+        return {'lines': []}
+
+    is_pallets = (distributor.order_quantity_unit == 'pallets')
+    order_qty = distributor.order_quantity_value
+
+    lookahead_year, lookahead_month = _month_add(year, month, 1)
+
+    safety_stock_map = forecast_result.get('safety_stock_map', {})
+    rows = forecast_result.get('rows', [])
+
+    lines = []
+
+    for row in rows:
+        item = row['item']
+
+        cell = None
+        for monthly in row['monthly_data']:
+            if monthly['year'] == lookahead_year and monthly['month'] == lookahead_month:
+                cell = monthly
+                break
+
+        if cell is None:
+            continue
+
+        if cell['inventory'] is None:
+            continue
+
+        safety_stock = safety_stock_map.get(item.pk, 0)
+        projected_inv = cell['inventory']
+
+        if projected_inv >= safety_stock:
+            continue
+
+        shortage = safety_stock - projected_inv
+
+        if is_pallets:
+            cpp = item.cases_per_pallet
+            if cpp is None or cpp <= 0:
+                continue
+            unit_cases = order_qty * cpp
+        else:
+            unit_cases = order_qty
+            cpp = None
+
+        if unit_cases <= 0:
+            continue
+
+        units_needed = math.ceil(shortage / unit_cases)
+        cases_suggested = units_needed * unit_cases
+        pallets_suggested = (cases_suggested // cpp) if is_pallets else None
+
+        lines.append({
+            'item_id': item.pk,
+            'item_name': item.name,
+            'cases': float(cases_suggested),
+            'pallets': pallets_suggested,
+        })
+
+    return {'lines': lines}

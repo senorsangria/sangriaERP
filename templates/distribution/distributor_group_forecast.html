@@ -169,8 +169,8 @@
                           data-url="{% url 'distributor_group_orders_modal_data' group_pk=group.pk year=slot.year month=slot.month %}"
                           data-year="{{ slot.year }}"
                           data-month="{{ slot.month }}">
-                    {% if slot.total_count > 0 %}
-                      <span class="badge {% if slot.saved_count > 0 %}bg-primary{% else %}bg-info text-dark{% endif %}">{{ slot.total_count }}</span>
+                    {% if slot.saved_count > 0 %}
+                      <span class="badge bg-primary">{{ slot.total_count }}</span>
                     {% else %}<span class="text-muted">—</span>{% endif %}
                   </button>
                 </td>
@@ -209,7 +209,8 @@
      data-save-url="{% url 'distributor_group_po_save' group_pk=group.pk %}"
      data-delete-url-base="/distributors/{{ primary_distributor.pk }}/po/"
      data-primary-name="{{ primary_distributor.name|escapejs }}"
-     data-group-name="{{ group.name|escapejs }}">
+     data-group-name="{{ group.name|escapejs }}"
+     data-suggest-url-pattern="/distributors/group/{{ group.pk }}/orders/YEAR/MONTH/suggest/">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
@@ -299,8 +300,37 @@
   });
 
   document.getElementById('po-add-order-btn').addEventListener('click', function () {
-    addOrderTab(null, null);
-    activateLastTab();
+    var addBtn = this;
+    var originalHtml = addBtn.innerHTML;
+    addBtn.disabled = true;
+    addBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Loading...';
+
+    var modalEl = document.getElementById('groupPoModal');
+    var urlPattern = modalEl.dataset.suggestUrlPattern;
+    var suggestUrl = urlPattern.replace('YEAR', _state.year).replace('MONTH', _state.month);
+
+    fetch(suggestUrl, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      credentials: 'same-origin'
+    })
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      var suggestion = (data.lines && data.lines.length > 0) ? data : null;
+      addOrderTab(null, suggestion);
+      activateLastTab();
+    })
+    .catch(function (err) {
+      console.error('Suggestion fetch failed:', err);
+      addOrderTab(null, null);
+      activateLastTab();
+    })
+    .finally(function () {
+      addBtn.disabled = false;
+      addBtn.innerHTML = originalHtml;
+    });
   });
 
   document.getElementById('po-save-all-btn').addEventListener('click', saveAllOrders);
@@ -335,7 +365,6 @@
         document.getElementById('po-modal-content').style.display = '';
 
         data.saved_orders.forEach(function (po) { addOrderTab(po, null); });
-        data.suggested_orders.forEach(function (s) { addOrderTab(null, s); });
 
         if (_state.tabs.length === 0) addOrderTab(null, null);
         activateFirstTab();
