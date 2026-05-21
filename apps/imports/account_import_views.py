@@ -1,16 +1,20 @@
 """
-Account Import views — Phase 10.6.
+Account Import views.
 
 Flow:
   1. account_import_upload  — upload CSV, parse, store preview in session
   2. account_import_preview — review summary and first 20 rows
   3. account_import_execute — execute the import from session data
 
+Distributor is read per-row from the required "Distributors" CSV column.
+Case-insensitive name matching against active distributors in company.
+
 Access: Supplier Admin only (has_permission('can_import_sales_data')).
 All queries scoped to request.user.company.
 """
 import csv
 import io
+from collections import defaultdict
 
 from django.contrib import messages
 from django.db import transaction
@@ -69,6 +73,7 @@ def _parse_county(raw):
 # ---------------------------------------------------------------------------
 
 _ACCOUNT_CSV_COLUMN_MAP = {
+    'Distributors':       'distributor_name',
     'Counties':           'counties',
     'OnOff Premises':     'on_off',
     'Classes of Trade':   'classes_of_trade',
@@ -81,7 +86,7 @@ _ACCOUNT_CSV_COLUMN_MAP = {
     'Distributor Routes': 'dist_routes',
 }
 
-_REQUIRED_COLUMNS = {'Retail Accounts', 'Address', 'City', 'State'}
+_REQUIRED_COLUMNS = {'Retail Accounts', 'Address', 'City', 'State', 'Distributors'}
 
 
 def _detect_columns(header_row):
@@ -109,9 +114,9 @@ def _parse_account_csv(file_obj):
     Parse account import CSV from a file-like object.
 
     Returns (rows, skipped_count) where rows is a list of dicts with keys:
-        name, street, city, state, zip_code, county, on_off_premise,
-        account_type, third_party_id, distributor_route
-    Rows missing any of the four key fields are silently skipped.
+        distributor_name, name, street, city, state, zip_code, county,
+        on_off_premise, account_type, third_party_id, distributor_route
+    Rows missing any of the four required account fields are silently skipped.
     """
     text = file_obj.read()
     if isinstance(text, bytes):
@@ -143,7 +148,7 @@ def _parse_account_csv(file_obj):
         city   = _get(row, 'city')
         state  = _get(row, 'state')
 
-        # All four key fields must be present
+        # All four key account fields must be present
         if not (name and street and city and state):
             skipped += 1
             continue
@@ -152,15 +157,16 @@ def _parse_account_csv(file_obj):
         on_off = on_off_raw if on_off_raw in ('ON', 'OFF') else 'Unknown'
 
         rows.append({
-            'name':             name,
-            'street':           street,
-            'city':             city,
-            'state':            state,
-            'zip_code':         _strip_excel_zip(_get(row, 'zip')),
-            'county':           _parse_county(_get(row, 'counties')),
-            'on_off_premise':   on_off,
-            'account_type':     _get(row, 'classes_of_trade'),
-            'third_party_id':   _get(row, 'vip'),
+            'distributor_name':  _get(row, 'distributor_name'),
+            'name':              name,
+            'street':            street,
+            'city':              city,
+            'state':             state,
+            'zip_code':          _strip_excel_zip(_get(row, 'zip')),
+            'county':            _parse_county(_get(row, 'counties')),
+            'on_off_premise':    on_off,
+            'account_type':      _get(row, 'classes_of_trade'),
+            'third_party_id':    _get(row, 'vip'),
             'distributor_route': _get(row, 'dist_routes'),
         })
 
@@ -171,34 +177,33 @@ def _parse_account_csv(file_obj):
 # Match existing accounts
 # ---------------------------------------------------------------------------
 
-def _categorize_rows(rows, company, distributor):
+def _categorize_rows(rows, company):
     """
-    For each parsed row, determine whether it is a CREATE or UPDATE.
+    For each parsed row determine whether it is a CREATE or UPDATE.
 
-    Match key: distributor + name + street + city + state (all normalized).
-    Only accounts belonging to the selected distributor are considered for
-    matching — accounts under a different distributor with the same address
-    are treated as CREATE, not UPDATE.
-
-    Returns list of dicts adding 'action': 'CREATE' | 'UPDATE' and
-    'existing_pk': int|None.
+    Match key: (distributor_id, name, street, city, state) — all normalized.
+    Uses the per-row 'distributor' object attached by _resolve_distributors.
     """
-    # Build lookup of existing accounts for this distributor keyed by normalized tuple
-    existing = {
-        (
+    dist_ids = {row['distributor'].pk for row in rows if row.get('distributor')}
+
+    existing = {}
+    for a in Account.objects.filter(
+        company=company, distributor_id__in=dist_ids
+    ).only('pk', 'distributor_id', 'name', 'street', 'city', 'state'):
+        key = (
+            a.distributor_id,
             _normalize_key(a.name),
             normalize_address(a.street),
             _normalize_key(a.city),
             _normalize_key(a.state),
-        ): a.pk
-        for a in Account.objects.filter(
-            company=company, distributor=distributor
-        ).only('pk', 'name', 'street', 'city', 'state')
-    }
+        )
+        existing[key] = a.pk
 
     result = []
     for row in rows:
+        dist = row.get('distributor')
         key = (
+            dist.pk if dist else None,
             _normalize_key(row['name']),
             normalize_address(row['street']),
             _normalize_key(row['city']),
@@ -222,59 +227,55 @@ def account_import_upload(request):
         return denied
 
     company = request.user.company
-    distributors = Distributor.objects.filter(company=company, is_active=True).order_by('name')
 
-    def _render_upload(error=None, selected_distributor_pk=''):
-        return render(request, 'imports/account_import_upload.html', {
-            'distributors': distributors,
-            'error': error,
-            'selected_distributor_pk': selected_distributor_pk,
-        })
+    def _render_upload(error=None):
+        return render(request, 'imports/account_import_upload.html', {'error': error})
 
     if request.method == 'POST':
-        distributor_pk = request.POST.get('distributor_pk', '').strip()
-        if not distributor_pk:
-            return _render_upload(error='Please select a distributor.')
-
-        try:
-            distributor = Distributor.objects.get(pk=distributor_pk, company=company, is_active=True)
-        except Distributor.DoesNotExist:
-            return _render_upload(error='Invalid distributor selected.')
-
         uploaded = request.FILES.get('csv_file')
         if not uploaded:
-            return _render_upload(
-                error='Please select a CSV file to upload.',
-                selected_distributor_pk=distributor_pk,
-            )
+            return _render_upload(error='Please select a CSV file to upload.')
 
         try:
             rows, skipped = _parse_account_csv(uploaded)
         except ValueError as exc:
-            return _render_upload(
-                error=str(exc),
-                selected_distributor_pk=distributor_pk,
-            )
+            return _render_upload(error=str(exc))
         except Exception as exc:
-            return _render_upload(
-                error=f'Could not parse CSV: {exc}',
-                selected_distributor_pk=distributor_pk,
-            )
+            return _render_upload(error=f'Could not parse CSV: {exc}')
 
         if not rows and skipped == 0:
-            return _render_upload(
-                error='The CSV file appears to be empty.',
-                selected_distributor_pk=distributor_pk,
-            )
+            return _render_upload(error='The CSV file appears to be empty.')
 
-        categorized = _categorize_rows(rows, company, distributor)
+        # Resolve and validate distributor names (case-insensitive, active only)
+        from apps.imports.utils import _resolve_distributors
+        rows, errors = _resolve_distributors(rows, company)
+        if errors:
+            return _render_upload(error=errors[0])
 
-        # Store in session for the preview/execute steps
+        categorized = _categorize_rows(rows, company)
+
+        # Per-distributor summary for the preview page
+        dist_summary: dict = defaultdict(lambda: {'creates': 0, 'updates': 0})
+        for row in categorized:
+            dist = row.get('distributor')
+            name = dist.name if dist else 'Unknown'
+            if row['action'] == 'CREATE':
+                dist_summary[name]['creates'] += 1
+            else:
+                dist_summary[name]['updates'] += 1
+        distributor_summaries = [
+            {'name': name, 'creates': counts['creates'], 'updates': counts['updates']}
+            for name, counts in sorted(dist_summary.items())
+        ]
+
+        # Strip non-serializable distributor objects before session storage
+        for row in categorized:
+            row.pop('distributor', None)
+
         request.session['account_import_preview'] = {
             'rows': categorized,
             'skipped': skipped,
-            'distributor_pk': distributor.pk,
-            'distributor_name': distributor.name,
+            'distributor_summaries': distributor_summaries,
         }
 
         return redirect('account_import_preview')
@@ -296,19 +297,19 @@ def account_import_preview(request):
         messages.warning(request, 'No import in progress. Please upload a CSV file.')
         return redirect('account_import_upload')
 
-    rows             = preview_data['rows']
-    skipped          = preview_data['skipped']
-    distributor_name = preview_data.get('distributor_name', '')
+    rows                  = preview_data['rows']
+    skipped               = preview_data['skipped']
+    distributor_summaries = preview_data.get('distributor_summaries', [])
     creates = sum(1 for r in rows if r['action'] == 'CREATE')
     updates = sum(1 for r in rows if r['action'] == 'UPDATE')
 
     return render(request, 'imports/account_import_preview.html', {
-        'total':            len(rows),
-        'creates':          creates,
-        'updates':          updates,
-        'skipped':          skipped,
-        'preview_rows':     rows[:20],
-        'distributor_name': distributor_name,
+        'total':                len(rows),
+        'creates':              creates,
+        'updates':              updates,
+        'skipped':              skipped,
+        'preview_rows':         rows[:20],
+        'distributor_summaries': distributor_summaries,
     })
 
 
@@ -329,23 +330,23 @@ def account_import_execute(request):
         messages.warning(request, 'No import in progress. Please upload a CSV file.')
         return redirect('account_import_upload')
 
-    rows             = preview_data['rows']
-    distributor_pk   = preview_data.get('distributor_pk')
-    company          = request.user.company
+    rows    = preview_data['rows']
+    company = request.user.company
 
-    # Resolve distributor — fall back to None if session data is stale
-    distributor = None
-    if distributor_pk:
-        try:
-            distributor = Distributor.objects.get(pk=distributor_pk, company=company)
-        except Distributor.DoesNotExist:
-            pass
+    # Re-fetch distributor objects from stored PKs (session only holds serializable ints)
+    dist_pks = {row.get('distributor_pk') for row in rows if row.get('distributor_pk')}
+    dist_map = {
+        d.pk: d
+        for d in Distributor.objects.filter(pk__in=dist_pks, company=company)
+    }
 
     created_count = 0
     updated_count = 0
 
     with transaction.atomic():
         for row in rows:
+            distributor = dist_map.get(row.get('distributor_pk'))
+
             if row['action'] == 'CREATE':
                 Account.objects.create(
                     company=company,
@@ -362,7 +363,6 @@ def account_import_execute(request):
                     distributor_route=row['distributor_route'],
                     is_active=True,
                     auto_created=True,
-                    # Normalized fields
                     address_normalized=normalize_address(row['street']),
                     city_normalized=_normalize_key(row['city']),
                     state_normalized=_normalize_key(row['state']),
@@ -370,7 +370,9 @@ def account_import_execute(request):
                 created_count += 1
 
             elif row['action'] == 'UPDATE' and row.get('existing_pk'):
-                update_fields = {'distributor': distributor}
+                update_fields = {}
+                if distributor is not None:
+                    update_fields['distributor'] = distributor
                 if row['zip_code']:
                     update_fields['zip_code'] = row['zip_code']
                 if row['county']:
@@ -384,12 +386,12 @@ def account_import_execute(request):
                 if row['distributor_route']:
                     update_fields['distributor_route'] = row['distributor_route']
 
-                Account.objects.filter(
-                    pk=row['existing_pk'], company=company
-                ).update(**update_fields)
+                if update_fields:
+                    Account.objects.filter(
+                        pk=row['existing_pk'], company=company
+                    ).update(**update_fields)
                 updated_count += 1
 
-    # Clear session
     del request.session['account_import_preview']
 
     msg = f'Import complete: {created_count} account(s) created, {updated_count} account(s) updated.'

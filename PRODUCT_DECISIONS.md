@@ -218,38 +218,62 @@ Searchable list for one-off or exception assignments
 - Import timing is ad hoc (not scheduled)
 - Report format is consistent — pre-configured in VIP,
   user just changes the date
-- Sometimes exports are limited to one distributor at a time —
-  the import tool must allow the user to tag which distributor
-  a file belongs to before importing
 - Both sales data and inventory data come from VIP
-- Sample CSV files will be provided when this feature is built
 
-### Import Behavior
-- If unrecognized item codes are present, the import is aborted
-  and nothing is written to the database
-- If any sale date in the file already exists for that distributor,
-  the import is aborted and nothing is written to the database
-- The user receives a clear error message in both cases
-- A clean file with all items pre-mapped is required before
-  an import will be accepted
-- Sales import accepts multiple CSV files in a single upload;
-  all files must be for the same distributor
-- Rows from all uploaded files are combined and sorted by date
-  before validation and import run
-- Validation (duplicate date check, unknown item code check) is
-  all-or-none across all uploaded files — if any file fails,
-  the entire import is aborted
-- The combined rows from all files are written to a single temp
-  file before being committed; `ImportBatch.filename` stores the
-  original filenames as a JSON list (e.g. `["jan.csv", "feb.csv"]`)
-- `ImportBatch.filename_display` is a property that formats the
-  filename field for display — handles both the new JSON list
-  format and legacy plain-string filenames from older imports
+### Multi-Distributor Imports
+
+Both the sales import and account import support uploading CSVs that contain
+rows for multiple distributors in a single file.
+
+**Distributor column**
+- Both import types require a `Distributors` column in every CSV
+- The distributor selection dropdown has been removed from both upload forms
+- Distributor name matching is case-insensitive (`"colonial beverage"` matches
+  `"Colonial Beverage"`)
+- Only active distributors (`is_active=True`) are valid; inactive distributors
+  are treated as unknown
+- If any row contains an unrecognised distributor name the entire upload is
+  aborted before any data is written; the error message lists all unknown names
+
+**Sales import specifics**
+- Duplicate detection is per `(distributor, date)` pair, not just per
+  distributor — importing the same distributor+date combination twice is
+  blocked, but the same date for a different distributor is allowed
+- Unknown item codes (Item Name ID values not present in ItemMapping) trigger
+  a redirect to `/imports/resolve-mappings/` with `next_url` pointing back to
+  the sales upload page; after saving mappings the user re-uploads the CSV
+- One `ImportBatch` record is created per unique distributor in the CSV; all
+  batches are created in a single `transaction.atomic()` call so the upload is
+  all-or-nothing across all distributors
+- Rows from all uploaded files are combined and sorted by date before
+  validation; the combined rows are written to a single temp file for the
+  preview/confirm step
+
+**Account import specifics**
+- No item code mapping is involved; no redirect to resolve_mappings
+- Account matching is scoped per-row by distributor — the same name and address
+  under a different distributor is treated as a new account (CREATE), not an
+  UPDATE of an existing account
+
+**Inventory Mapping UX reuse**
+- The `/imports/resolve-mappings/` and `/imports/mappings/bulk-save/` views are
+  reusable across upload types via the `next_url` key in the
+  `pending_mapping_resolution` session dict
+- The sales import sets `context: 'sales'` and `next_url: reverse('import_upload')`
+- The inventory upload sets `context: 'inventory'` and `next_url: reverse('inventory_upload')`
+- Neither view reads `context`; the `next_url` drives the post-save redirect
+
+**ImportBatch model**
+- `ImportBatch.filename` stores the original uploaded filenames as a JSON list
+  (e.g. `["jan.csv", "feb.csv"]`)
+- `ImportBatch.filename_display` is a property that formats the filename field
+  for display — handles both the JSON list format and legacy plain strings
+- `ImportBatch.distributor` is a non-nullable FK; one batch per distributor
+  preserves this constraint without a schema migration
 
 ### Account Import
-- Account lists also come from distributors
-- Field definitions will be refined when sample CSV files
-  are provided
+- Account lists come from distributors
+- The `Distributors` column is required; see Multi-Distributor Imports above
 
 ---
 
@@ -985,14 +1009,15 @@ VIP Import — renamed to reflect that the format
 is platform-agnostic)
 - Import type is called "Sales Data Import"
 - Supplier Admin only
-- Distributor is selected before file upload
+- Distributor is read per-row from the required `Distributors` CSV column
+  (the distributor selection dropdown has been removed)
+- Multiple distributors can appear in a single CSV upload
 - Performance approach: bulk_create in batches
   of 500-1000 rows, all account matching done
-  in memory, single database transaction
+  in memory, single database transaction per distributor
 - Expected volume: 5,000 to 30,000 records per file
 - Historical data: 2-3 years imported across
   multiple files, oldest to newest
-- One distributor at a time
 
 ### Account Unique Identifier (Composite Key)
 - Unique key for account matching during import:
@@ -1457,12 +1482,10 @@ Admin:
 ## Phase 2.2 — Improvements
 
 ### Default Distributor on Re-Import
-- After a successful import, the "Import Another File" button passes
-  the distributor ID as a URL parameter (`?distributor=<pk>`)
-- The upload form view reads this parameter and pre-selects the
-  distributor in the dropdown via Django's `initial` dict on the form
-- Eliminates the need to re-select the same distributor when importing
-  multiple files from the same distributor in sequence
+- Superseded by multi-distributor import. The distributor dropdown has been
+  removed from the sales import upload form; distributor is now read per-row
+  from the `Distributors` CSV column. The `?distributor=<pk>` URL parameter
+  and pre-selection logic have been removed.
 
 ### Item Mapping List — Mapped To Column
 - The "Mapped To" column now shows the productERP item name on the

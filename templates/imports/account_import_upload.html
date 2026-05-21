@@ -9,7 +9,7 @@
   </a>
   <div>
     <h1 class="h3 mb-0 fw-bold">Account Import</h1>
-    <p class="text-muted small mb-0">Upload a CSV file to create or update accounts</p>
+    <p class="text-muted small mb-0">Upload a CSV file to create or update accounts. Each row must include a <strong>Distributors</strong> column.</p>
   </div>
 </div>
 
@@ -31,22 +31,6 @@
           {% csrf_token %}
 
           <div class="mb-3">
-            <label class="form-label fw-medium" for="distributor_pk">
-              Distributor <span class="text-danger">*</span>
-            </label>
-            <select class="form-select" id="distributor_pk" name="distributor_pk" required>
-              <option value="">— Select a distributor —</option>
-              {% for dist in distributors %}
-              <option value="{{ dist.pk }}"
-                {% if selected_distributor_pk == dist.pk|stringformat:"s" %}selected{% endif %}>
-                {{ dist.name }}
-              </option>
-              {% endfor %}
-            </select>
-            <div class="form-text">All accounts in this CSV will be associated with the selected distributor.</div>
-          </div>
-
-          <div class="mb-3">
             <label class="form-label fw-medium" for="csv_file">
               CSV File <span class="text-danger">*</span>
             </label>
@@ -58,7 +42,7 @@
               accept=".csv"
               required
             >
-            <div class="form-text">Accepted format: CSV exported from your account management system.</div>
+            <div class="form-text">CSV must include a <strong>Distributors</strong> column. Names are matched case-insensitively against active distributors in your account.</div>
           </div>
           <button type="submit" class="btn btn-primary">
             <i class="bi bi-cloud-upload me-1"></i>Upload &amp; Preview
@@ -81,6 +65,7 @@
             </tr>
           </thead>
           <tbody class="small">
+            <tr><td class="px-3"><code>Distributors</code></td><td class="px-3">Distributor (case-insensitive match)</td><td class="px-3"><span class="badge bg-danger">Required</span></td></tr>
             <tr><td class="px-3"><code>Retail Accounts</code></td><td class="px-3">Account Name</td><td class="px-3"><span class="badge bg-danger">Required</span></td></tr>
             <tr><td class="px-3"><code>Address</code></td><td class="px-3">Street Address</td><td class="px-3"><span class="badge bg-danger">Required</span></td></tr>
             <tr><td class="px-3"><code>City</code></td><td class="px-3">City</td><td class="px-3"><span class="badge bg-danger">Required</span></td></tr>
@@ -96,11 +81,11 @@
       </div>
       <div class="card-footer bg-white small text-muted">
         <i class="bi bi-lightbulb me-1"></i>
-        Rows with missing required fields are skipped. Zip codes in Excel format
+        Rows with missing required account fields are skipped. Zip codes in Excel format
         (<code>="07030"</code>) are automatically stripped. County state suffixes
         (e.g. <code>UNION, NJ</code>) are stripped to county name only.
-        Account matching is scoped to the selected distributor — the same
-        name and address under a different distributor will be treated as a new account.
+        Account matching uses distributor + name + address — the same address under
+        a different distributor is treated as a new account.
       </div>
     </div>
 

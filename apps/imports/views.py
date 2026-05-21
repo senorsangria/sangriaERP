@@ -4,10 +4,13 @@ Imports app views: sales data import, item mapping, and batch history.
 All views require Supplier Admin role. All data is scoped to the logged-in
 user's company.
 
-Import flow (two-step):
-  1. import_upload  — select distributor, upload CSV, validate, build preview
+Import flow (multi-distributor, two-step):
+  1. import_upload  — upload CSV(s) with Distributors column, validate, build preview
   2. import_preview — review summary, confirm to execute or cancel
   3. import_success — summary after successful import
+
+Distributor is read per-row from the CSV "Distributors" column.
+One ImportBatch per unique distributor; all created in one transaction.
 
 Item mapping:
   mapping_list / mapping_create / mapping_edit
@@ -91,11 +94,14 @@ def _write_combined_csv(rows):
     """
     Write pre-parsed rows (list of dicts from _read_csv_rows) to a canonical
     temp CSV file that _execute_import can re-parse.  Returns the file path.
+
+    Distributors column is written second-to-last so Quantity remains last
+    (preserving the len(headers)-1 quantity detection in _parse_csv_headers).
     """
     headers = [
         'Retail Accounts', 'Address', 'City', 'State', 'Zip Code',
         'VIP Outlet ID', 'Counties', 'OnOff Premises', 'Dates',
-        'Item Names', 'Item Name ID', 'Price', 'Quantity',
+        'Item Names', 'Item Name ID', 'Price', 'Distributors', 'Quantity',
     ]
     tmp = tempfile.NamedTemporaryFile(
         mode='w', suffix='.csv', delete=False,
@@ -117,7 +123,8 @@ def _write_combined_csv(rows):
             '',                          # Item Names — not used during execution
             r['item_id'],
             '' if r.get('price') is None else str(r['price']),
-            r['quantity'],
+            r['distributor'].name,       # Distributor name per row
+            r['quantity'],               # Quantity always last
         ])
     tmp.flush()
     tmp.close()
@@ -136,25 +143,27 @@ def _parse_csv_headers(headers):
     required_cols = [
         'Retail Accounts', 'Address', 'City', 'State',
         'Zip Code', 'VIP Outlet ID', 'Dates', 'Item Names', 'Item Name ID',
+        'Distributors',
     ]
     for col in required_cols:
         if col not in headers:
             raise ValueError(f'Required column missing: "{col}"')
 
     return {
-        'account':    headers.index('Retail Accounts'),
-        'address':    headers.index('Address'),
-        'city':       headers.index('City'),
-        'state':      headers.index('State'),
-        'zip':        headers.index('Zip Code'),
-        'vip':        headers.index('VIP Outlet ID'),
-        'counties':   headers.index('Counties') if 'Counties' in headers else None,
-        'on_off':     headers.index('OnOff Premises') if 'OnOff Premises' in headers else None,
-        'dates':      headers.index('Dates'),
-        'item_names': headers.index('Item Names'),
-        'item_id':    headers.index('Item Name ID'),
-        'price':      headers.index('Price') if 'Price' in headers else None,
-        'quantity':   len(headers) - 1,     # always last column
+        'account':          headers.index('Retail Accounts'),
+        'address':          headers.index('Address'),
+        'city':             headers.index('City'),
+        'state':            headers.index('State'),
+        'zip':              headers.index('Zip Code'),
+        'vip':              headers.index('VIP Outlet ID'),
+        'counties':         headers.index('Counties') if 'Counties' in headers else None,
+        'on_off':           headers.index('OnOff Premises') if 'OnOff Premises' in headers else None,
+        'dates':            headers.index('Dates'),
+        'item_names':       headers.index('Item Names'),
+        'item_id':          headers.index('Item Name ID'),
+        'price':            headers.index('Price') if 'Price' in headers else None,
+        'distributor_name': headers.index('Distributors'),
+        'quantity':         len(headers) - 1,     # always last column
     }
 
 
@@ -255,18 +264,19 @@ def _read_csv_rows(filepath, cols):
                         price = None
 
                 rows.append({
-                    'account_name':  row[cols['account']].strip(),
-                    'address':       row[cols['address']].strip(),
-                    'city':          row[cols['city']].strip(),
-                    'state':         row[cols['state']].strip(),
-                    'zip_code':      _strip_excel_zip(row[cols['zip']].strip()),
-                    'vip_outlet_id': row[cols['vip']].strip(),
-                    'county':        county,
-                    'on_off_premise': on_off,
-                    'sale_date':     _parse_date(row[cols['dates']]),
-                    'item_id':       row[cols['item_id']].strip(),
-                    'quantity':      quantity,
-                    'price':         price,
+                    'account_name':     row[cols['account']].strip(),
+                    'address':          row[cols['address']].strip(),
+                    'city':             row[cols['city']].strip(),
+                    'state':            row[cols['state']].strip(),
+                    'zip_code':         _strip_excel_zip(row[cols['zip']].strip()),
+                    'vip_outlet_id':    row[cols['vip']].strip(),
+                    'county':           county,
+                    'on_off_premise':   on_off,
+                    'sale_date':        _parse_date(row[cols['dates']]),
+                    'item_id':          row[cols['item_id']].strip(),
+                    'quantity':         quantity,
+                    'price':            price,
+                    'distributor_name': row[cols['distributor_name']].strip(),
                 })
             except Exception as exc:
                 errors.append(f'Line {line_num}: {exc}')
@@ -284,19 +294,11 @@ def import_upload(request):
         return denied
 
     company = request.user.company
-
-    # Pre-select distributor if passed as a URL param (e.g. from the success page)
-    initial = {}
-    distributor_param = request.GET.get('distributor')
-    if distributor_param:
-        initial['distributor'] = distributor_param
-
-    form = ImportUploadForm(company=company, initial=initial)
+    form = ImportUploadForm()
 
     if request.method == 'POST':
-        form = ImportUploadForm(request.POST, request.FILES, company=company)
+        form = ImportUploadForm(request.POST, request.FILES)
         if form.is_valid():
-            distributor = form.cleaned_data['distributor']
             uploaded_files = request.FILES.getlist('csv_file')
 
             temp_filepaths = []
@@ -309,6 +311,7 @@ def import_upload(request):
                 _required_cols = [
                     'Retail Accounts', 'Address', 'City', 'State',
                     'Zip Code', 'VIP Outlet ID', 'Dates', 'Item Names', 'Item Name ID',
+                    'Distributors',
                 ]
 
                 for uploaded_file in uploaded_files:
@@ -353,63 +356,97 @@ def import_upload(request):
                 # Sort combined rows by date before validation
                 all_rows = sorted(all_rows, key=lambda r: r['sale_date'])
 
-                # --- Validation 1: Duplicate date check ---
-                all_dates = {r['sale_date'] for r in all_rows}
-                conflicting_dates = set(
-                    SalesRecord.objects.filter(
+                # --- Distributor validation (case-insensitive, active only) ---
+                from apps.imports.utils import _resolve_distributors
+                all_rows, dist_errors = _resolve_distributors(all_rows, company)
+                if dist_errors:
+                    messages.error(request, dist_errors[0])
+                    return render(request, 'imports/upload.html', {'form': form})
+
+                # --- Validation 1: Per-(distributor, date) duplicate check ---
+                csv_pairs = {(r['distributor'].pk, r['sale_date']) for r in all_rows}
+                dist_ids_set = {pk for pk, _ in csv_pairs}
+                dates_set = {d for _, d in csv_pairs}
+
+                existing_pairs = set(
+                    SalesRecord.objects
+                    .filter(
                         company=company,
-                        import_batch__distributor=distributor,
-                        sale_date__in=all_dates,
-                    ).values_list('sale_date', flat=True).distinct()
+                        account__distributor_id__in=dist_ids_set,
+                        sale_date__in=dates_set,
+                    )
+                    .values_list('account__distributor_id', 'sale_date')
+                    .distinct()
                 )
-                if conflicting_dates:
-                    sorted_dates = sorted(conflicting_dates)
-                    date_list = ', '.join(d.strftime('%m/%d/%Y') for d in sorted_dates)
+                conflicts = csv_pairs & existing_pairs
+                if conflicts:
+                    dist_name_map = {r['distributor'].pk: r['distributor'].name for r in all_rows}
+                    conflict_lines = sorted(
+                        f"{dist_name_map.get(pk, 'Unknown')} — {dt.strftime('%m/%d/%Y')}"
+                        for pk, dt in conflicts
+                    )
                     messages.error(
                         request,
-                        f'Import aborted. Sales records already exist for {distributor.name} '
-                        f'on the following dates: {date_list}. '
-                        f'These dates cannot be imported again.',
+                        'Import aborted. Sales records already exist for the following '
+                        'distributor + date combinations: '
+                        + ', '.join(conflict_lines)
+                        + '. These dates cannot be imported again.',
                     )
                     return render(request, 'imports/upload.html', {'form': form})
 
-                # --- Validation 2: Unknown item code check ---
-                all_item_ids = {r['item_id'] for r in all_rows}
-                known_codes = set(
+                # --- Validation 2: Unknown item codes → redirect to resolve_mappings ---
+                from collections import defaultdict
+                csv_dist_items = {(r['distributor'].pk, r['item_id']) for r in all_rows}
+                all_dist_ids = {pk for pk, _ in csv_dist_items}
+                all_item_ids = {item_id for _, item_id in csv_dist_items}
+
+                existing_mappings = set(
                     ItemMapping.objects.filter(
                         company=company,
-                        distributor=distributor,
+                        distributor_id__in=all_dist_ids,
                         status__in=[ItemMapping.Status.MAPPED, ItemMapping.Status.IGNORED],
                         raw_item_name__in=all_item_ids,
-                    ).values_list('raw_item_name', flat=True)
+                    ).values_list('distributor_id', 'raw_item_name')
                 )
-                unknown_codes = all_item_ids - known_codes
-                if unknown_codes:
-                    code_list = ', '.join(sorted(unknown_codes))
-                    messages.error(
-                        request,
-                        f'Import aborted. The following item codes from {distributor.name} '
-                        f'are not recognized: {code_list}. '
-                        f'Please create these items in Brand Management and set up their '
-                        f'mappings before importing.',
-                    )
-                    return render(request, 'imports/upload.html', {'form': form})
+                unknown_pairs = csv_dist_items - existing_mappings
+                if unknown_pairs:
+                    unknown_by_dist_id = defaultdict(set)
+                    for dist_id, raw_code in unknown_pairs:
+                        unknown_by_dist_id[dist_id].add(raw_code)
+                    request.session['pending_mapping_resolution'] = {
+                        'unknown_codes': {
+                            str(dist_id): sorted(codes)
+                            for dist_id, codes in unknown_by_dist_id.items()
+                        },
+                        'next_url': reverse('import_upload'),
+                        'context': 'sales',
+                    }
+                    return redirect('resolve_mappings')
 
                 # --- Build preview data ---
+                all_dates = {r['sale_date'] for r in all_rows}
                 min_date = min(all_dates)
                 max_date = max(all_dates)
 
-                existing_accounts = list(
-                    Account.active_accounts.filter(
-                        company=company,
-                        distributor=distributor,
-                    ).values('address_normalized', 'city_normalized', 'state_normalized')
-                )
-                existing_keys = {
-                    (a['address_normalized'], a['city_normalized'], a['state_normalized'])
-                    for a in existing_accounts
-                }
+                # Per-distributor row summary
+                dist_row_counts = defaultdict(int)
+                for r in all_rows:
+                    dist_row_counts[r['distributor'].name] += 1
+                distributor_summaries = [
+                    {'name': name, 'row_count': count}
+                    for name, count in sorted(dist_row_counts.items())
+                ]
 
+                # Account existence check (scoped per-distributor)
+                existing_account_qs = Account.active_accounts.filter(
+                    company=company,
+                    distributor_id__in=all_dist_ids,
+                ).values('address_normalized', 'city_normalized', 'state_normalized', 'distributor_id')
+                existing_keys = {
+                    (a['address_normalized'], a['city_normalized'],
+                     a['state_normalized'], a['distributor_id'])
+                    for a in existing_account_qs
+                }
                 unique_account_keys = set()
                 new_account_keys = set()
                 for r in all_rows:
@@ -417,41 +454,44 @@ def import_upload(request):
                         normalize_address(r['address']),
                         normalize_address(r['city']),
                         normalize_address(r['state']),
+                        r['distributor'].pk,
                     )
                     unique_account_keys.add(key)
                     if key not in existing_keys:
                         new_account_keys.add(key)
-
                 existing_count = len(unique_account_keys) - len(new_account_keys)
 
+                # Item mappings preview (all distributors, all item codes)
                 mapping_qs = ItemMapping.objects.filter(
                     company=company,
-                    distributor=distributor,
+                    distributor_id__in=all_dist_ids,
                     raw_item_name__in=all_item_ids,
-                ).select_related('mapped_item', 'mapped_item__brand')
+                ).select_related('mapped_item', 'mapped_item__brand', 'distributor')
 
                 item_mappings = []
                 for m in mapping_qs:
                     if m.status == ItemMapping.Status.MAPPED and m.mapped_item:
-                        mapped_label = f'{m.mapped_item.brand.name} — {m.mapped_item.name} ({m.mapped_item.item_code})'
+                        mapped_label = (
+                            f'{m.mapped_item.brand.name} — '
+                            f'{m.mapped_item.name} ({m.mapped_item.item_code})'
+                        )
                     elif m.status == ItemMapping.Status.IGNORED:
                         mapped_label = '(Ignored — will be skipped)'
                     else:
                         mapped_label = '(Not mapped)'
                     item_mappings.append({
+                        'distributor': m.distributor.name,
                         'code': m.raw_item_name,
                         'mapped_to': mapped_label,
                         'status': m.status,
                     })
-                item_mappings.sort(key=lambda x: x['code'])
+                item_mappings.sort(key=lambda x: (x['distributor'], x['code']))
 
                 # Write all combined rows to a single temp file
                 combined_filepath = _write_combined_csv(all_rows)
 
                 filenames = [f.name for f in uploaded_files]
                 request.session['pending_import'] = {
-                    'distributor_id': distributor.pk,
-                    'distributor_name': distributor.name,
                     'filename': json.dumps(filenames),
                     'files_count': len(uploaded_files),
                     'temp_file_path': combined_filepath,
@@ -462,6 +502,7 @@ def import_upload(request):
                         'unique_accounts': len(unique_account_keys),
                         'existing_accounts': existing_count,
                         'new_accounts': len(new_account_keys),
+                        'distributor_summaries': distributor_summaries,
                         'item_mappings': item_mappings,
                     },
                 }
@@ -516,18 +557,43 @@ def import_preview(request):
                 return redirect('import_upload')
 
             try:
-                distributor = Distributor.objects.get(
-                    pk=pending['distributor_id'], company=company
-                )
-            except Distributor.DoesNotExist:
-                messages.error(request, 'Distributor not found.')
-                return redirect('import_upload')
+                # Re-parse the combined CSV (distributor names are in the file)
+                with open(filepath, newline='', encoding='utf-8-sig') as f:
+                    reader = csv.reader(f)
+                    header_row = next(reader)
+                cols = _parse_csv_headers(header_row)
+                all_rows, _ = _read_csv_rows(filepath, cols)
 
-            try:
-                batch = _execute_import(request, company, distributor, filepath, pending['filename'])
+                # Re-resolve distributor names → objects
+                from apps.imports.utils import _resolve_distributors
+                all_rows, errors = _resolve_distributors(all_rows, company)
+                if errors:
+                    _cleanup_temp_file(filepath)
+                    del request.session['pending_import']
+                    messages.error(request, errors[0])
+                    return redirect('import_upload')
+
+                # Group rows by distributor
+                from collections import defaultdict
+                dist_rows: dict = defaultdict(list)
+                for row in all_rows:
+                    dist_rows[row['distributor']].append(row)
+
+                created_batches = []
+                with transaction.atomic():
+                    for dist in sorted(dist_rows.keys(), key=lambda d: d.name):
+                        batch = _execute_import(
+                            request, company, dist,
+                            dist_rows[dist], pending['filename'],
+                        )
+                        created_batches.append(batch)
+
                 _cleanup_temp_file(filepath)
                 del request.session['pending_import']
-                return redirect('import_success', batch_pk=batch.pk)
+
+                # Store all batch PKs for the success page
+                request.session['import_success_batch_pks'] = [b.pk for b in created_batches]
+                return redirect('import_success', batch_pk=created_batches[0].pk)
 
             except Exception as exc:
                 _cleanup_temp_file(filepath)
@@ -553,24 +619,19 @@ def import_preview(request):
     return render(request, 'imports/preview.html', context)
 
 
-def _execute_import(request, company, distributor, filepath, filename):
+def _execute_import(request, company, distributor, rows, filename):
     """
-    Execute the full import inside a single database transaction.
+    Execute the full import for one distributor's rows.
+
+    rows: pre-parsed dicts filtered to this distributor (from _read_csv_rows +
+          _resolve_distributors).  All rows are for the same distributor.
 
     Performance strategy:
-    - Read entire CSV into memory first
+    - rows are already in memory
     - Build all account lookups as in-memory dicts before touching the database
     - Use bulk_create for new Account records (batches of 500)
     - Use bulk_create for all SalesRecord rows (batches of 1000)
     """
-    # Re-parse the file
-    with open(filepath, newline='', encoding='utf-8-sig') as f:
-        reader = csv.reader(f)
-        header_row = next(reader)
-
-    cols = _parse_csv_headers(header_row)
-    rows, _ = _read_csv_rows(filepath, cols)
-
     # Pre-load item mappings into memory (item_id → Item)
     item_mapping_qs = ItemMapping.objects.filter(
         company=company,
@@ -746,10 +807,24 @@ def import_success(request, batch_pk):
     if denied:
         return denied
 
-    batch = get_object_or_404(
-        ImportBatch, pk=batch_pk, company=request.user.company
+    company = request.user.company
+    primary_batch = get_object_or_404(ImportBatch, pk=batch_pk, company=company)
+
+    # Collect all batches created in this upload (may be multiple for multi-distributor)
+    batch_pks = request.session.pop('import_success_batch_pks', None) or [batch_pk]
+    batches = list(
+        ImportBatch.objects
+        .filter(pk__in=batch_pks, company=company)
+        .select_related('distributor')
+        .order_by('distributor__name')
     )
-    return render(request, 'imports/success.html', {'batch': batch})
+    if not batches:
+        batches = [primary_batch]
+
+    return render(request, 'imports/success.html', {
+        'batch': primary_batch,
+        'batches': batches,
+    })
 
 
 # ---------------------------------------------------------------------------

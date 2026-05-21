@@ -20,11 +20,7 @@
       <table class="table table-sm mb-0">
         <tbody>
           <tr>
-            <th class="ps-3 text-muted fw-normal" style="width:45%">Distributor</th>
-            <td class="fw-semibold">{{ pending.distributor_name }}</td>
-          </tr>
-          <tr>
-            <th class="ps-3 text-muted fw-normal">File</th>
+            <th class="ps-3 text-muted fw-normal" style="width:45%">File</th>
             <td>{{ filename_display }}</td>
           </tr>
           <tr>
@@ -37,6 +33,27 @@
           </tr>
         </tbody>
       </table>
+      {% if preview.distributor_summaries %}
+      <div class="card-header fw-semibold border-top">
+        <i class="bi bi-building me-2"></i>Distributors
+      </div>
+      <table class="table table-sm mb-0">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3" style="width:70%">Distributor</th>
+            <th class="ps-3 text-end pe-3">Rows</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in preview.distributor_summaries %}
+          <tr>
+            <td class="ps-3">{{ s.name }}</td>
+            <td class="ps-3 text-end pe-3">{{ s.row_count }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
     </div>
 
     <!-- Account breakdown -->
@@ -100,6 +117,7 @@
         <table class="table table-sm table-hover mb-0">
           <thead class="table-light">
             <tr>
+              <th>Distributor</th>
               <th>Raw Item Code</th>
               <th>Maps To</th>
               <th>Status</th>
@@ -108,6 +126,7 @@
           <tbody>
             {% for m in preview.item_mappings %}
             <tr>
+              <td class="small text-muted">{{ m.distributor }}</td>
               <td><code>{{ m.code }}</code></td>
               <td class="small">{{ m.mapped_to }}</td>
               <td>

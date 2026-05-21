@@ -2,8 +2,8 @@
 Forms for the imports app: sales data upload and item mapping.
 """
 from django import forms
-from apps.distribution.models import Distributor
 from apps.catalog.models import Brand, Item
+from apps.distribution.models import Distributor
 from apps.imports.models import ItemMapping
 
 
@@ -22,19 +22,13 @@ class MultipleFileInput(forms.FileInput):
 
 
 class ImportUploadForm(forms.Form):
-    """Step 1 of sales data import: select distributor and upload CSV."""
+    """Step 1 of sales data import: upload CSV(s) with a Distributors column."""
 
-    distributor = forms.ModelChoiceField(
-        queryset=Distributor.objects.none(),
-        label='Distributor',
-        empty_label='Select a distributor...',
-        widget=forms.Select(attrs={'class': 'form-select'}),
-    )
     csv_file = forms.FileField(
         label='CSV Files',
         help_text=(
             'You may select multiple CSV files. '
-            'All files must be for the same distributor.'
+            'All files must include a Distributors column with valid distributor names.'
         ),
         widget=MultipleFileInput(
             attrs={'class': 'form-control', 'accept': '.csv', 'multiple': True}
@@ -42,12 +36,8 @@ class ImportUploadForm(forms.Form):
     )
 
     def __init__(self, *args, company=None, **kwargs):
+        # company param accepted but no longer used (distributor comes from CSV)
         super().__init__(*args, **kwargs)
-        if company:
-            self.fields['distributor'].queryset = (
-                Distributor.objects.filter(company=company, is_active=True)
-                .order_by('name')
-            )
 
     def clean_csv_file(self):
         files = self.files.getlist('csv_file')

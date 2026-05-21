@@ -5,7 +5,7 @@
 <div class="d-flex align-items-center mb-4">
   <div>
     <h2 class="mb-0 fw-bold">Sales Data Import</h2>
-    <p class="text-muted mb-0">Select a distributor and upload a VIP sales data CSV export.</p>
+    <p class="text-muted mb-0">Upload one or more VIP sales data CSV exports. Each file must include a <strong>Distributors</strong> column.</p>
   </div>
 </div>
 
@@ -52,10 +52,11 @@
         <i class="bi bi-info-circle me-2"></i>Before You Import
       </div>
       <div class="card-body small">
-        <p class="mb-2">The import tool will validate your file before writing any data. Two checks are run:</p>
+        <p class="mb-2">The import tool will validate your file before writing any data. Three checks are run:</p>
         <ol class="mb-3">
-          <li class="mb-1"><strong>Duplicate dates</strong> — if any sale dates in the file already exist for this distributor, the import is aborted.</li>
-          <li class="mb-1"><strong>Unknown item codes</strong> — if any Item Name ID values are not mapped, the import is aborted. Go to <a href="{% url 'mapping_list' %}">Item Mapping</a> to create mappings first.</li>
+          <li class="mb-1"><strong>Distributor names</strong> — every value in the Distributors column must exactly match (case-insensitive) an active distributor in your account. Unknown names cause an immediate abort.</li>
+          <li class="mb-1"><strong>Duplicate dates</strong> — if any (distributor, date) combination in the file already exists in the database, the import is aborted.</li>
+          <li class="mb-1"><strong>Unknown item codes</strong> — if any Item Name ID values are not mapped, you will be redirected to <a href="{% url 'resolve_mappings' %}">Map Item Codes</a> to resolve them before re-uploading.</li>
         </ol>
         <p class="mb-0 text-muted">Nothing is written to the database until you confirm on the preview screen.</p>
       </div>
@@ -74,6 +75,7 @@
             </tr>
           </thead>
           <tbody>
+            <tr><td>Distributors</td><td><span class="badge bg-danger">Required</span></td></tr>
             <tr><td>Retail Accounts</td><td><span class="badge bg-danger">Required</span></td></tr>
             <tr><td>Address</td><td><span class="badge bg-danger">Required</span></td></tr>
             <tr><td>City</td><td><span class="badge bg-danger">Required</span></td></tr>
