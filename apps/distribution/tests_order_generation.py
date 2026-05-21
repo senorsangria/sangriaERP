@@ -699,11 +699,12 @@ class SuggestPoForMonthTest(TestCase):
         dist = self._dist_cases(order_value=10)
         item = self._item()
         # Modal month=May 2026 → lookahead=June 2026; inv=15, ss=50 → shortage=35
+        # Capacity=10 cases total; allocate min(ceil(35), 10) = 10 cases
         fr = self._forecast(item, [(2026, 6, 15.0)], safety_stock=50)
         result = suggest_po_for_month(dist, 2026, 5, fr)
         self.assertEqual(len(result['lines']), 1)
         self.assertEqual(result['lines'][0]['item_id'], item.pk)
-        self.assertEqual(result['lines'][0]['cases'], 40.0)
+        self.assertEqual(result['lines'][0]['cases'], 10.0)
         self.assertIsNone(result['lines'][0]['pallets'])
 
     # 2. Item exactly at safety stock → no suggestion
@@ -757,33 +758,34 @@ class SuggestPoForMonthTest(TestCase):
         result_with_po = suggest_po_for_month(dist, 2026, 4, fr_with_po)
         self.assertEqual(result_with_po['lines'], [])
 
-    # 6. Cases mode rounding: shortage=35, order_qty=10 → 40 cases
+    # 6. Cases mode: shortage=35, total_capacity=10 → allocate min(35,10)=10 cases
     def test_cases_mode_rounding(self):
         dist = self._dist_cases(order_value=10)
         item = self._item()
         fr = self._forecast(item, [(2026, 6, 15.0)], safety_stock=50)
         result = suggest_po_for_month(dist, 2026, 5, fr)
-        self.assertEqual(result['lines'][0]['cases'], 40.0)
+        self.assertEqual(result['lines'][0]['cases'], 10.0)
 
-    # 7. Pallets mode: shortage=35, order_qty=2, cpp=12 → 48 cases, 4 pallets
+    # 7. Pallets mode: shortage=35, total_capacity=2 pallets, cpp=12
+    #    pallets_needed=ceil(35/12)=3, allocate min(3,2)=2 pallets = 24 cases
     def test_pallets_mode_rounding(self):
         dist = self._dist_pallets(order_value=2)
         item = self._item(cpp=12)
         fr = self._forecast(item, [(2026, 6, 15.0)], safety_stock=50)
         result = suggest_po_for_month(dist, 2026, 5, fr)
         self.assertEqual(len(result['lines']), 1)
-        self.assertEqual(result['lines'][0]['cases'], 48.0)
-        self.assertEqual(result['lines'][0]['pallets'], 4)
+        self.assertEqual(result['lines'][0]['cases'], 24.0)
+        self.assertEqual(result['lines'][0]['pallets'], 2)
 
-    # 8. December → January rollover
+    # 8. December → January rollover; shortage=45, capacity=10 → allocate min(45,10)=10
     def test_december_january_rollover(self):
         dist = self._dist_cases(order_value=10)
         item = self._item()
-        # modal month=Dec 2026 → lookahead=Jan 2027
+        # modal month=Dec 2026 → lookahead=Jan 2027; inv=5, ss=50, shortage=45
         fr = self._forecast(item, [(2027, 1, 5.0)], safety_stock=50)
         result = suggest_po_for_month(dist, 2026, 12, fr)
         self.assertEqual(len(result['lines']), 1)
-        self.assertEqual(result['lines'][0]['cases'], 50.0)
+        self.assertEqual(result['lines'][0]['cases'], 10.0)
 
     # 9. Null safety stock treated as zero
     def test_null_safety_stock_treated_as_zero(self):
@@ -819,3 +821,170 @@ class SuggestPoForMonthTest(TestCase):
         fr = self._forecast(item, [(2026, 5, 5.0)], safety_stock=50)
         result = suggest_po_for_month(dist, 2026, 5, fr)
         self.assertEqual(result['lines'], [])
+
+    # -----------------------------------------------------------------------
+    # New capacity-allocation tests
+    # -----------------------------------------------------------------------
+
+    def _multi_item_fr(self, items_and_cells, safety_stock_map):
+        """Build a minimal forecast_result with multiple items."""
+        rows = []
+        for item, cells in items_and_cells:
+            monthly_data = [
+                {
+                    'year': y, 'month': m, 'inventory': inv,
+                    'inventory_display': '' if inv is None else str(inv),
+                    'depletion': None, 'status': 'yellow', 'is_snapshot': False,
+                }
+                for y, m, inv in cells
+            ]
+            rows.append({'item': item, 'monthly_data': monthly_data})
+        return {'safety_stock_map': safety_stock_map, 'rows': rows}
+
+    # 13. Total pallet capacity respected across multiple items
+    def test_total_capacity_respected_across_multiple_items(self):
+        # 3 items each needing 10 pallets; capacity=20 pallets → only top 2 allocated
+        dist = self._dist_pallets(order_value=20)
+        item_a = self._item('Item A', 'TC_A', cpp=10)  # shortage=100, pallets_needed=10
+        item_b = self._item('Item B', 'TC_B', cpp=8)   # shortage=80,  pallets_needed=10
+        item_c = self._item('Item C', 'TC_C', cpp=5)   # shortage=50,  pallets_needed=10
+
+        fr = self._multi_item_fr(
+            [
+                (item_a, [(2026, 6, 0.0)]),
+                (item_b, [(2026, 6, 20.0)]),
+                (item_c, [(2026, 6, 50.0)]),
+            ],
+            {item_a.pk: 100, item_b.pk: 100, item_c.pk: 100},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        item_ids = [l['item_id'] for l in result['lines']]
+        self.assertEqual(len(result['lines']), 2)
+        self.assertIn(item_a.pk, item_ids)
+        self.assertIn(item_b.pk, item_ids)
+        self.assertNotIn(item_c.pk, item_ids)
+        line_a = next(l for l in result['lines'] if l['item_id'] == item_a.pk)
+        line_b = next(l for l in result['lines'] if l['item_id'] == item_b.pk)
+        self.assertEqual(line_a['pallets'], 10)
+        self.assertEqual(line_b['pallets'], 10)
+
+    # 14. Items sorted by largest absolute deficit first
+    def test_sorted_by_largest_deficit_first(self):
+        dist = self._dist_cases(order_value=1200)  # large enough for all
+        item_a = self._item('Item A', 'SD_A')   # shortage=200
+        item_b = self._item('Item B', 'SD_B')   # shortage=800 — largest
+        item_c = self._item('Item C', 'SD_C')   # shortage=100
+
+        fr = self._multi_item_fr(
+            [
+                (item_a, [(2026, 6, 0.0)]),
+                (item_b, [(2026, 6, 0.0)]),
+                (item_c, [(2026, 6, 0.0)]),
+            ],
+            {item_a.pk: 200, item_b.pk: 800, item_c.pk: 100},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(len(result['lines']), 3)
+        # B has the largest deficit → must appear first
+        self.assertEqual(result['lines'][0]['item_id'], item_b.pk)
+
+    # 15. Partial allocation when capacity runs out mid-item
+    def test_partial_allocation_when_capacity_runs_out(self):
+        # Item A needs 16 pallets, Item B needs 8 pallets, capacity=20
+        # A gets 16, B gets remaining 4 (partial)
+        dist = self._dist_pallets(order_value=20)
+        item_a = self._item('Item A', 'PA_A', cpp=10)  # shortage=155 → ceil(155/10)=16 pallets
+        item_b = self._item('Item B', 'PA_B', cpp=10)  # shortage=75  → ceil(75/10)=8  pallets
+
+        fr = self._multi_item_fr(
+            [
+                (item_a, [(2026, 6, 45.0)]),
+                (item_b, [(2026, 6, 125.0)]),
+            ],
+            {item_a.pk: 200, item_b.pk: 200},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        line_by_id = {l['item_id']: l for l in result['lines']}
+        self.assertIn(item_a.pk, line_by_id)
+        self.assertIn(item_b.pk, line_by_id)
+        self.assertEqual(line_by_id[item_a.pk]['pallets'], 16)
+        self.assertEqual(line_by_id[item_a.pk]['cases'], 160.0)
+        # B only gets 4 pallets (remaining capacity), not the 8 it needs
+        self.assertEqual(line_by_id[item_b.pk]['pallets'], 4)
+        self.assertEqual(line_by_id[item_b.pk]['cases'], 40.0)
+
+    # 16. Capacity=0 returns empty lines
+    def test_capacity_zero_returns_empty(self):
+        dist = Distributor.objects.create(
+            company=self.company, name='Zero Cap Dist',
+            order_quantity_value=0, order_quantity_unit='cases',
+        )
+        item = self._item('Item Z', 'ZZ01')
+        fr = self._forecast(item, [(2026, 6, 5.0)], safety_stock=50)
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(result['lines'], [])
+
+    # 17. Cases mode: 3 items each short by 50, capacity=100 → only 2 fit
+    def test_cases_mode_total_capacity(self):
+        dist = self._dist_cases(order_value=100)
+        item_a = self._item('Item A', 'CM_A')
+        item_b = self._item('Item B', 'CM_B')
+        item_c = self._item('Item C', 'CM_C')
+
+        fr = self._multi_item_fr(
+            [
+                (item_a, [(2026, 6, 50.0)]),
+                (item_b, [(2026, 6, 50.0)]),
+                (item_c, [(2026, 6, 50.0)]),
+            ],
+            {item_a.pk: 100, item_b.pk: 100, item_c.pk: 100},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(len(result['lines']), 2)
+        item_ids = [l['item_id'] for l in result['lines']]
+        self.assertIn(item_a.pk, item_ids)
+        self.assertIn(item_b.pk, item_ids)
+        self.assertNotIn(item_c.pk, item_ids)
+        self.assertEqual(result['lines'][0]['cases'], 50.0)
+        self.assertEqual(result['lines'][1]['cases'], 50.0)
+
+    # 18. Second suggest call after first PO saved picks up previously uncovered items
+    def test_subsequent_call_after_first_po_saved(self):
+        from apps.distribution.forecast import compute_distributor_forecast
+        from datetime import date as _date
+
+        dist = self._dist_cases(order_value=80)
+        item_a = self._item('Item A', 'SQ_A')
+        item_b = self._item('Item B', 'SQ_B')
+        item_c = self._item('Item C', 'SQ_C')
+        item_d = self._item('Item D', 'SQ_D')
+
+        acc   = _make_account(self.company, dist)
+        batch = _make_batch(self.company, dist)
+        today = _date(2026, 4, 20)
+
+        # All items: snap=10 April 2026; deficits in May 2026: A=80, B=70, C=60, D=40
+        for it, depletion in [(item_a, 90), (item_b, 80), (item_c, 70), (item_d, 50)]:
+            _make_snapshot(dist, it, 2026, 4, quantity=10)
+            _make_sale(self.company, batch, acc, it, 2025, 5, depletion)
+
+        # First suggest: April modal → lookahead May 2026
+        fr1 = compute_distributor_forecast(dist, today=today)
+        result1 = suggest_po_for_month(dist, 2026, 4, fr1)
+
+        # A has the largest deficit (80 = full capacity) → only A allocated
+        self.assertEqual(len(result1['lines']), 1)
+        self.assertEqual(result1['lines'][0]['item_id'], item_a.pk)
+        self.assertEqual(result1['lines'][0]['cases'], 80.0)
+
+        # Simulate saving the first PO for item A (80 cases in May 2026)
+        po_additions = {(item_a.pk, 2026, 5): 80.0}
+        fr2 = compute_distributor_forecast(dist, today=today, po_additions=po_additions)
+        result2 = suggest_po_for_month(dist, 2026, 4, fr2)
+
+        # A is now at safety stock; B has the next largest deficit
+        second_ids = {l['item_id'] for l in result2['lines']}
+        self.assertNotIn(item_a.pk, second_ids)
+        self.assertIn(item_b.pk, second_ids)
+        # B (deficit 70) should be first in the second suggestion
+        self.assertEqual(result2['lines'][0]['item_id'], item_b.pk)

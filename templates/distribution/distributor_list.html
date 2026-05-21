@@ -933,7 +933,8 @@
         data.saved_orders.forEach(function (po) { addOrderTab(po, null); });
 
         if (_state.tabs.length === 0) {
-          addOrderTab(null, null);
+          document.getElementById('po-order-tab-content').innerHTML =
+            '<div class="text-center text-muted py-4">No orders for this month. Click &ldquo;+ Add Order&rdquo; to create one.</div>';
         }
 
         activateFirstTab();
@@ -1059,7 +1060,7 @@
         ? Math.ceil(casesVal / item.cases_per_pallet) : 0;
 
       html += '<tr>';
-      html += '<td class="small">' + _esc(item.name) + ' <code class="small text-muted">' + _esc(item.item_code) + '</code></td>';
+      html += '<td class="small">' + _esc(item.name) + '</td>';
       html += '<td>';
       html += '<input type="number" min="0" step="1"';
       html += ' class="form-control form-control-sm po-cases-input text-end"';

@@ -366,7 +366,10 @@
 
         data.saved_orders.forEach(function (po) { addOrderTab(po, null); });
 
-        if (_state.tabs.length === 0) addOrderTab(null, null);
+        if (_state.tabs.length === 0) {
+          document.getElementById('po-order-tab-content').innerHTML =
+            '<div class="text-center text-muted py-4">No orders for this month. Click &ldquo;+ Add Order&rdquo; to create one.</div>';
+        }
         activateFirstTab();
       })
       .catch(function (err) {
@@ -526,8 +529,7 @@
       var palletsVal = (isPallets && item.cases_per_pallet && casesVal > 0)
         ? Math.ceil(casesVal / item.cases_per_pallet) : 0;
 
-      html += '<tr><td class="small">' + _esc(item.name)
-        + ' <code class="small text-muted">' + _esc(item.item_code) + '</code></td>';
+      html += '<tr><td class="small">' + _esc(item.name) + '</td>';
       html += '<td><input type="number" min="0" step="1"'
         + ' class="form-control form-control-sm po-cases-input text-end"'
         + ' data-item-id="' + item.id + '"'

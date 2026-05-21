@@ -216,6 +216,15 @@ class DistributorPOModalDataTest(TestCase):
         item_ids = [i['id'] for i in data['items']]
         self.assertNotIn(inactive_item.pk, item_ids)
 
+    # 12. No saved POs → saved_orders is empty list (empty state, no auto-tab)
+    def test_modal_open_with_no_saved_pos_returns_empty_saved_orders(self):
+        # No POs exist for this distributor/month; backend should return saved_orders=[]
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('saved_orders', data)
+        self.assertEqual(data['saved_orders'], [])
+
 
 # ---------------------------------------------------------------------------
 # 3. distributor_po_save POST view
