@@ -14,7 +14,7 @@ from django.urls import reverse
 
 from apps.distribution.models import (
     Distributor, DistributorGroup, DistributorItemProfile,
-    DistributorPO, DistributorPOLine,
+    DistributorPO, DistributorPOLine, InventorySnapshot,
 )
 from apps.distribution.tests_forecast import (
     _make_company, _make_supplier_admin, _make_distributor,
@@ -73,13 +73,13 @@ class GroupPOModalDataTest(TestCase):
         item_ids = [i['id'] for i in data['items']]
         self.assertIn(self.item.pk, item_ids)
 
-    # 3. Suggestions are empty when group forecast is misaligned (no snapshots)
+    # 3. Modal data does NOT include suggested_orders (on-demand only)
     def test_group_modal_data_returns_empty_suggestions_when_misaligned(self):
         resp = self.client.get(self.url)
         data = resp.json()
-        self.assertEqual(data['suggested_orders'], [])
+        self.assertNotIn('suggested_orders', data)
 
-    # 4. Suggestions populated when group is aligned and algorithm triggers
+    # 4. Modal data does not include algorithm suggestions at all (on-demand now)
     def test_group_modal_data_includes_algorithm_suggestions(self):
         self.primary.order_quantity_value = 2
         self.primary.order_quantity_unit  = 'pallets'
@@ -87,7 +87,6 @@ class GroupPOModalDataTest(TestCase):
         self.item.cases_per_pallet = 12
         self.item.save()
 
-        # Anchor: April 2026 — enough inventory for May but not June
         _make_snapshot(self.primary, self.item, 2026, 4, quantity=100)
         _make_snapshot(self.other,   self.item, 2026, 4, quantity=100)
 
@@ -96,25 +95,19 @@ class GroupPOModalDataTest(TestCase):
         acc_o  = _make_account(self.company, self.other)
         bat_o  = _make_batch(self.company, self.other)
 
-        # May 2025 depletion (small): 200 total - 80 = 120 still positive → no May trigger
         _make_sale(self.company, bat_p, acc_p, self.item, 2025, 5, 40)
         _make_sale(self.company, bat_o, acc_o, self.item, 2025, 5, 40)
-
-        # June 2025 depletion (large): 120 total - 480 = -360 → June triggers → order in May
         _make_sale(self.company, bat_p, acc_p, self.item, 2025, 6, 240)
         _make_sale(self.company, bat_o, acc_o, self.item, 2025, 6, 240)
 
-        resp = self.client.get(self.url)  # url is month=5
+        resp = self.client.get(self.url)
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertIn('suggested_orders', data)
-        # June trigger causes orders placed in May — must appear in the May modal
-        self.assertGreater(len(data['suggested_orders']), 0)
-        for suggestion in data['suggested_orders']:
-            self.assertIn('lines', suggestion)
-            for line in suggestion['lines']:
-                self.assertIn('item_id', line)
-                self.assertIn('cases',   line)
+        # Suggestions no longer returned by modal data endpoint
+        self.assertNotIn('suggested_orders', data)
+        # Core keys still present
+        self.assertIn('saved_orders', data)
+        self.assertIn('items', data)
 
     # 5. Returns 403 without can_manage_distributor_inventory
     def test_group_modal_data_returns_403_without_permission(self):
@@ -138,9 +131,10 @@ class GroupPOModalDataTest(TestCase):
     def test_group_modal_data_response_shape(self):
         resp = self.client.get(self.url)
         data = resp.json()
-        for key in ('group', 'primary_distributor', 'items', 'saved_orders', 'suggested_orders',
+        for key in ('group', 'primary_distributor', 'items', 'saved_orders',
                     'year', 'month', 'period_label'):
             self.assertIn(key, data, f'Missing key: {key}')
+        self.assertNotIn('suggested_orders', data)
         self.assertEqual(data['primary_distributor']['id'], self.primary.pk)
         self.assertEqual(data['group']['id'], self.group.pk)
 
@@ -318,3 +312,74 @@ class GroupPODeleteViaExistingEndpointTest(TestCase):
         resp = _ajax_post(self.client, url, {'po_id': other_po.pk})
         self.assertEqual(resp.status_code, 404)
         self.assertTrue(DistributorPO.objects.filter(pk=other_po.pk).exists())
+
+
+# ---------------------------------------------------------------------------
+# 4. distributor_group_po_suggest endpoint
+# ---------------------------------------------------------------------------
+
+class GroupSuggestEndpointTest(TestCase):
+
+    def setUp(self):
+        self.company  = _make_company('Group Sug Co')
+        self.admin    = _make_supplier_admin(self.company, 'gsug_admin')
+        self.primary  = Distributor.objects.create(
+            company=self.company, name='GSug Primary',
+            order_quantity_value=10, order_quantity_unit='cases',
+        )
+        self.other    = _make_distributor(self.company, 'GSug Other')
+        self.group    = _make_group(self.company, 'GSug Group', self.primary,
+                                    [self.primary, self.other])
+        self.brand    = _make_brand(self.company)
+        self.item     = _make_item(self.brand, item_code='GSUG1')
+        self.client   = Client()
+        self.client.login(username='gsug_admin', password='testpass123')
+        # Anchor both members at April 2026; prior-year May depletion large enough to cause shortage
+        _make_snapshot(self.primary, self.item, 2026, 4, quantity=10)
+        _make_snapshot(self.other,   self.item, 2026, 4, quantity=10)
+        acc_p = _make_account(self.company, self.primary)
+        bat_p = _make_batch(self.company, self.primary)
+        acc_o = _make_account(self.company, self.other)
+        bat_o = _make_batch(self.company, self.other)
+        # Combined prior-year May 2025 depletion = 100 → May 2026 inv = 20 - 100 = -80
+        _make_sale(self.company, bat_p, acc_p, self.item, 2025, 5, 50)
+        _make_sale(self.company, bat_o, acc_o, self.item, 2025, 5, 50)
+        # Modal month = April 2026 → lookahead = May 2026
+        self.url = reverse('distributor_group_po_suggest',
+                           kwargs={'group_pk': self.group.pk, 'year': 2026, 'month': 4})
+
+    # 17. Group suggest returns correct lines when shortage exists
+    def test_group_suggest_returns_correct_lines(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('lines', data)
+        self.assertGreater(len(data['lines']), 0)
+        self.assertEqual(data['lines'][0]['item_id'], self.item.pk)
+
+    # 18. Returns empty lines when group alignment is broken
+    def test_group_suggest_empty_when_alignment_broken(self):
+        InventorySnapshot.objects.all().delete()
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['lines'], [])
+
+    # 19. Suggestion uses primary distributor's order config
+    def test_group_suggest_uses_primary_order_config(self):
+        # Primary has order_qty=10 cases; primary has shortage of ~80
+        # ceil(80/10)*10 = 80 cases
+        resp = self.client.get(self.url)
+        data = resp.json()
+        self.assertGreater(len(data['lines']), 0)
+        line = data['lines'][0]
+        self.assertIsNone(line['pallets'])  # cases mode, no pallets
+        self.assertGreater(line['cases'], 0)
+
+    # 20. Returns 403 without can_manage_distributor_inventory
+    def test_group_suggest_requires_permission(self):
+        limited = _make_limited_user(self.company, 'gsug_limited')
+        c = Client()
+        c.login(username='gsug_limited', password='testpass123')
+        resp = c.get(self.url)
+        self.assertEqual(resp.status_code, 403)

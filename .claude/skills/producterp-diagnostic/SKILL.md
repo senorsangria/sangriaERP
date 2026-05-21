@@ -41,6 +41,9 @@ The diagnostic report should follow the exact structure requested by the prompt'
 
 End every diagnostic with an "Unexpected findings" or "Anything else" section that surfaces things the prompt didn't ask about but that matter for implementation.
 
+> After the unexpected findings section, append a one-line footer confirming the skill was applied:
+> `— Diagnostic generated using the producterp-diagnostic skill —`
+
 ## What to look for proactively
 
 Every diagnostic should consider these even if not asked:

@@ -726,6 +726,36 @@ into `compute_distributor_forecast` in 4-step-2b).
 
 ---
 
+### Algorithm UX Change — Suggestions On-Demand (replaces auto-suggest)
+
+- Modal open now shows only saved POs; no algorithm-generated tabs are pre-populated
+- **Blank-tab auto-creation removed:** Modal opens with zero tabs when no saved POs exist.
+  Empty state message shown: "No orders for this month. Click '+ Add Order' to create one."
+  User must explicitly click "+ Add Order" to create a tab (which then runs the algorithm).
+- Orders row count = saved POs only (previously inflated by auto-generated suggestion count)
+- "+ Add Order" button triggers async fetch to one-month-lookahead suggest endpoint; button
+  shows a spinner during fetch and prevents double-clicks; falls back to blank tab on error
+- **`suggest_po_for_month` rewritten** (`apps/distribution/order_generation.py`):
+  `order_quantity_value` now correctly represents TOTAL capacity per PO (not per item).
+  Algorithm: (1) find items projected below safety stock at lookahead month; (2) compute
+  shortage in cases per item; (3) sort by largest absolute deficit first; (4) allocate
+  pallets/cases to bring each item to safety stock; (5) cap total allocation at
+  `order_quantity_value`; (6) partially allocate to fill remaining capacity when an item's
+  full need exceeds what's left; (7) items that don't fit are picked up on a subsequent
+  "+ Add Order" click (forecast recomputes with prior PO cases included via `po_additions`).
+- New endpoints:
+  - `GET /distributors/<pk>/po/<year>/<month>/suggest/` — individual distributor
+  - `GET /distributors/group/<pk>/orders/<year>/<month>/suggest/` — group forecast
+- Suggestions correctly consider already-saved POs (forecast passed to suggest includes
+  `po_additions` for saved PO lines)
+- **Item code removed from PO modal line items table** — only item name displayed
+- Applies to both individual distributor modal and group forecast modal
+- `bg-info` badge path removed from Orders row template; only saved-PO `bg-primary` badge remains
+- `generate_projected_orders` is unchanged; still drives the Orders row per-month button
+  structure (but its count no longer contributes to `total_count`)
+
+---
+
 ## Phase 10.7 — Historical Event Import: Stage 3
 
 ### HistoricalImportBatch model (`apps/event_import/models.py`)

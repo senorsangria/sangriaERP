@@ -309,3 +309,120 @@ def _add_line(lines, item, cases_added, pallets_added):
             'cases': cases_added,
             'pallets': pallets_added,
         }
+
+
+# ---------------------------------------------------------------------------
+# On-demand single-month suggestion
+# ---------------------------------------------------------------------------
+
+def suggest_po_for_month(distributor, year, month, forecast_result):
+    """
+    One-month-lookahead PO suggestion respecting total PO capacity.
+
+    Evaluates projected inventory at the END of the month AFTER (year, month).
+    Identifies items below safety stock, sorts by largest deficit, and allocates
+    pallets/cases to bring each item back to safety stock. Total allocation is
+    capped by the distributor's order_quantity_value (which represents total
+    pallets or cases for the WHOLE PO, not per item).
+
+    Returns: {'lines': [{'item_id': int, 'item_name': str, 'cases': float, 'pallets': int|None}]}
+
+    Returns empty lines if:
+    - Distributor has no order profile (order_quantity_value or order_quantity_unit is None)
+    - No items are projected below safety stock at lookahead month
+    - Lookahead month is outside the forecast horizon
+    """
+    if distributor.order_quantity_value is None or distributor.order_quantity_unit is None:
+        return {'lines': []}
+
+    is_pallets = (distributor.order_quantity_unit == 'pallets')
+    total_capacity = distributor.order_quantity_value
+
+    if total_capacity <= 0:
+        return {'lines': []}
+
+    lookahead_year, lookahead_month = _month_add(year, month, 1)
+
+    safety_stock_map = forecast_result.get('safety_stock_map', {})
+    rows = forecast_result.get('rows', [])
+
+    # Step 1: collect items below safety stock with shortage
+    candidates = []
+    for row in rows:
+        item = row['item']
+
+        cell = None
+        for monthly in row['monthly_data']:
+            if monthly['year'] == lookahead_year and monthly['month'] == lookahead_month:
+                cell = monthly
+                break
+
+        if cell is None or cell['inventory'] is None:
+            continue
+
+        safety_stock = safety_stock_map.get(item.pk, 0)
+        projected_inv = cell['inventory']
+
+        if projected_inv >= safety_stock:
+            continue
+
+        shortage = safety_stock - projected_inv
+
+        if is_pallets:
+            cpp = item.cases_per_pallet
+            if cpp is None or cpp <= 0:
+                continue
+        else:
+            cpp = None
+
+        candidates.append({
+            'item': item,
+            'shortage_cases': shortage,
+            'cases_per_pallet': cpp,
+        })
+
+    if not candidates:
+        return {'lines': []}
+
+    # Step 2: sort by largest absolute deficit first
+    candidates.sort(key=lambda c: c['shortage_cases'], reverse=True)
+
+    # Step 3: allocate respecting total capacity
+    lines = []
+    remaining_capacity = total_capacity
+
+    for candidate in candidates:
+        if remaining_capacity <= 0:
+            break
+
+        item = candidate['item']
+        shortage = candidate['shortage_cases']
+
+        if is_pallets:
+            cpp = candidate['cases_per_pallet']
+            pallets_needed = math.ceil(shortage / cpp)
+            pallets_to_allocate = min(pallets_needed, remaining_capacity)
+            cases_to_allocate = float(pallets_to_allocate * cpp)
+
+            if pallets_to_allocate > 0:
+                lines.append({
+                    'item_id': item.pk,
+                    'item_name': item.name,
+                    'cases': cases_to_allocate,
+                    'pallets': int(pallets_to_allocate),
+                })
+                remaining_capacity -= pallets_to_allocate
+        else:
+            cases_needed = math.ceil(shortage)
+            cases_to_allocate = float(min(cases_needed, remaining_capacity))
+
+            if cases_to_allocate > 0:
+                lines.append({
+                    'item_id': item.pk,
+                    'item_name': item.name,
+                    'cases': cases_to_allocate,
+                    'pallets': None,
+                })
+                remaining_capacity -= cases_to_allocate
+
+    return {'lines': lines}
