@@ -324,6 +324,26 @@ class BulkSaveMappingsCreateTest(TestCase):
         data = resp.json()
         self.assertIn('redirect_url', data)
 
+    def test_sales_context_next_url_returned_to_sales_upload(self):
+        """When pending_mapping_resolution has next_url=import_upload, redirect goes there."""
+        from django.urls import reverse as _rev
+        session = self.client.session
+        session['pending_mapping_resolution'] = {
+            'unknown_codes': {str(self.dist.id): ['Red0750']},
+            'next_url': _rev('import_upload'),
+            'context': 'sales',
+        }
+        session.save()
+        resp = self._post({'mappings': [{
+            'distributor_id': self.dist.id,
+            'raw_item_name': 'Red0750',
+            'item_id': self.item.id,
+            'apply_to_all': False,
+        }]})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['redirect_url'], _rev('import_upload'))
+
     def test_clears_session_after_save(self):
         session = self.client.session
         session['pending_mapping_resolution'] = {
