@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load account_filters %}
 
 {% block title %}Accounts{% endblock %}
 
@@ -109,7 +110,7 @@
           <td>
             <div class="fw-medium">
               <a href="{% url 'account_detail_combined' account.pk %}" class="text-decoration-none text-dark">
-                {{ account.name }}
+                {{ account.name|smart_title }}
               </a>
             </div>
             <div class="d-lg-none text-muted small">
@@ -295,10 +296,13 @@
           </div>
           {% endif %}
 
-          {% if counties %}
+          {% if counties or has_unknown_county_accounts %}
           <div class="filter-section-label">County</div>
           <select name="county" class="form-select form-select-sm mb-1">
             <option value="">All counties</option>
+            {% if has_unknown_county_accounts %}
+            <option value="__unknown__" {% if active_filters.county == '__unknown__' %}selected{% endif %}>(Unknown county)</option>
+            {% endif %}
             {% for c in counties %}
             <option value="{{ c }}" {% if active_filters.county == c %}selected{% endif %}>{{ c }}</option>
             {% endfor %}

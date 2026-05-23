@@ -9,6 +9,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db.models import Q
+from django.db.models.functions import Lower
 from django.http import JsonResponse
 from django.template.loader import render_to_string
 
@@ -145,7 +146,9 @@ def get_filtered_account_queryset(qs, filters):
         qs = qs.filter(account_type__in=types)
 
     county = filters.get('county', '')
-    if county:
+    if county == '__unknown__':
+        qs = qs.filter(county='Unknown')
+    elif county:
         qs = qs.filter(county=county)
 
     source = filters.get('source', '')
@@ -276,11 +279,15 @@ def account_list(request):
     counties = (
         Account.active_accounts
         .filter(company=company)
-        .exclude(county='').exclude(county='Unknown')
+        .exclude(county='')
+        .exclude(county='Unknown')
         .values_list('county', flat=True)
         .distinct()
-        .order_by('county')
+        .order_by(Lower('county'))
     )
+    has_unknown_county_accounts = Account.objects.filter(
+        company=company, county='Unknown'
+    ).exists()
     account_types = (
         Account.active_accounts
         .filter(company=company)
@@ -308,6 +315,7 @@ def account_list(request):
         'distributors':        distributors,
         'counties':            counties,
         'account_types':       account_types,
+        'has_unknown_county_accounts': has_unknown_county_accounts,
         'show_no_coverage_message': show_no_coverage_message,
         'can_bulk_delete':     can_bulk_delete,
     })

@@ -4282,3 +4282,12 @@ Established a canonical filter pattern for filtered list views. The account list
 
 - `event_list` CSS: inline styles removed; now sourced from `static/css/filters.css`.
 - `event_list`, `report_*`: use the same modal pattern but have their own helpers/inline styles. Future refactors can migrate them to `apps/core/filters.py` incrementally.
+
+### Account List Polish (follow-on fixes)
+
+1. Visible "Filter Modal" comments confirmed as correct Django `{# #}` syntax — no code change; user-reported issue was browser cache.
+2. County filter dropdown now sorts case-insensitively via `Lower()`.
+3. County filter includes "(Unknown county)" sentinel option (value `__unknown__`) when accounts exist with `county='Unknown'` — the model default set during sales data import. Selecting this option filters to only those accounts via `get_filtered_account_queryset`.
+4. Fixed nested-scroll issue in filter modal — added `overscroll-behavior: contain` to `.filter-checkbox-scroll` in `static/css/filters.css` so the Account Type and Class of Trade checkbox lists scroll independently of the Bootstrap `modal-dialog-scrollable` modal body.
+5. New `smart_title` template filter (`apps/accounts/templatetags/account_filters.py`) — Title Case applied only when the value is currently ALL CAPS (e.g. `"SOCO TAVERN"` → `"Soco Tavern"`). Mixed-case names (`"MGM Grand"`) are preserved as-is. Applied to `account.name` in the account list table.
+6. Quick-view modal extraction (from dashboard to shared partial) DEFERRED — will be tackled as a standalone effort.

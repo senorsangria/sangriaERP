@@ -1455,3 +1455,99 @@ class GetFilteredAccountQuerysetTest(TestCase):
         qs = Account.objects.filter(company=self.company)
         result = get_filtered_account_queryset(qs, {})
         self.assertEqual(result.count(), 2)
+
+    def test_unknown_county_sentinel_filters_correctly(self):
+        from apps.accounts.views import get_filtered_account_queryset
+        unknown = _make_account(self.company, self.dist, "Unknown Co", county="Unknown")
+        known = _make_account(self.company, self.dist, "Hudson Co", county="Hudson")
+        qs = Account.objects.filter(company=self.company)
+        result = get_filtered_account_queryset(qs, {'county': '__unknown__'})
+        pks = list(result.values_list('pk', flat=True))
+        self.assertIn(unknown.pk, pks)
+        self.assertNotIn(known.pk, pks)
+
+
+# ---------------------------------------------------------------------------
+# smart_title template filter
+# ---------------------------------------------------------------------------
+
+from apps.accounts.templatetags.account_filters import smart_title
+
+
+class SmartTitleFilterTest(TestCase):
+    def test_all_caps_becomes_title_case(self):
+        self.assertEqual(smart_title("JOHN'S BAR"), "John's Bar")
+
+    def test_all_caps_with_multiple_words(self):
+        self.assertEqual(smart_title("SOCO TAVERN"), "Soco Tavern")
+
+    def test_mixed_case_unchanged(self):
+        self.assertEqual(smart_title("MGM Grand"), "MGM Grand")
+
+    def test_lowercase_unchanged(self):
+        self.assertEqual(smart_title("john's bar"), "john's bar")
+
+    def test_all_caps_with_ampersand(self):
+        self.assertEqual(smart_title("BAR & GRILL"), "Bar & Grill")
+
+    def test_empty_string(self):
+        self.assertEqual(smart_title(""), "")
+
+    def test_none(self):
+        self.assertEqual(smart_title(None), None)
+
+    def test_numeric_value_unchanged(self):
+        self.assertEqual(smart_title(123), 123)
+
+    def test_no_letters_unchanged(self):
+        self.assertEqual(smart_title("123-456"), "123-456")
+
+    def test_apostrophe_after_capital(self):
+        self.assertEqual(smart_title("O'CONNOR'S"), "O'Connor's")
+
+
+# ---------------------------------------------------------------------------
+# County filter: unknown option, sentinel, and case-insensitive sort
+# ---------------------------------------------------------------------------
+
+class CountyFilterTest(TestCase):
+    """account_list view: (Unknown county) option, __unknown__ sentinel, case-insensitive sort."""
+
+    def setUp(self):
+        from apps.core.rbac import Role
+        self.company = make_company("County Filter Co")
+        self.dist = Distributor.objects.create(company=self.company, name="Dist County")
+        self.user = User.objects.create_user(
+            username="county_admin", password="testpass123", company=self.company
+        )
+        self.user.roles.set([Role.objects.get(codename="supplier_admin")])
+        self.client = Client()
+        self.client.login(username="county_admin", password="testpass123")
+        self.url = reverse("account_list")
+
+    def test_county_dropdown_includes_unknown_option_when_accounts_have_unknown(self):
+        _make_account(self.company, self.dist, "Unknown Store", county="Unknown")
+        response = self.client.get(self.url)
+        self.assertContains(response, 'value="__unknown__"')
+        self.assertContains(response, '(Unknown county)')
+
+    def test_county_dropdown_omits_unknown_option_when_no_unknown_accounts(self):
+        _make_account(self.company, self.dist, "Hudson Store", county="Hudson")
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'value="__unknown__"')
+
+    def test_filter_by_unknown_county_sentinel(self):
+        unknown = _make_account(self.company, self.dist, "Unknown Store", county="Unknown")
+        known = _make_account(self.company, self.dist, "Hudson Store", county="Hudson")
+        response = self.client.get(self.url, {'county': '__unknown__'})
+        pks = [a.pk for a in response.context['page_obj'].object_list]
+        self.assertIn(unknown.pk, pks)
+        self.assertNotIn(known.pk, pks)
+
+    def test_county_list_sorted_case_insensitive(self):
+        _make_account(self.company, self.dist, "Bronx Store", county="Bronx")
+        _make_account(self.company, self.dist, "Albany Store", county="albany")
+        response = self.client.get(self.url)
+        counties = list(response.context['counties'])
+        self.assertEqual(counties.index("albany"), 0)
+        self.assertEqual(counties.index("Bronx"), 1)
