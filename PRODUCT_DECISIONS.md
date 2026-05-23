@@ -4248,3 +4248,37 @@ The nav system has no submenu/child-item concept — flat list only.
 - The `resolve_mappings` view, `bulk_save_mappings` endpoint, and `apps/imports/matching.py` are context-agnostic. The `next_url` and `context` fields in the session allow different upload flows to wire in.
 - Future sales import integration: ~20 lines changed in `import_upload()` to detect unmapped codes and store `{context: 'sales', next_url: reverse('import_upload')}` in session before redirecting. No new files or endpoints needed.
 - **~18 new tests** in `apps/distribution/tests_group_po_endpoints.py`. 3 G2 tests in `tests_group_forecast.py` updated to use `saved_orders` key (G3 response shape). All 284 tests pass.
+
+---
+
+## Filter Pattern Standardization (Account List Redesign)
+
+### Decision
+
+Established a canonical filter pattern for filtered list views. The account list was redesigned as the reference implementation.
+
+### Filter UI Standard
+
+- **Modal pattern** (Bootstrap 5) for 3+ filter dimensions. The Filters button sits in the page header row with a numeric badge showing active filter count.
+- **Hybrid search bar**: always-visible text search above the table; modal for all other filter dimensions.
+- Active indicator: `bg-warning text-dark` badge with `d-none` toggle (not `{% if %}`) on the Filters button.
+
+### Account List Changes
+
+- Replaced inline filter card with Bootstrap 5 modal filter.
+- Added pagination at 100 accounts per page.
+- Added filter dimensions: `account_type` (multi-value checkboxes), `county` (dropdown). Both were present in reports but missing from account list.
+- Search (`q`) is URL-only (not session-stored) for shareability.
+- Session key: `account_list_filters`.
+
+### Shared Infrastructure (New)
+
+- `apps/core/filters.py` — `apply_session_filters()`, `compute_active_filter_count()`, `is_filter_active()`.
+- `static/css/filters.css` — `.filter-section-label`, `.filter-checkbox-inline`, `.filter-checkbox-scroll`, mobile full-screen modal. Moved from `event_list.html` inline styles.
+- Filter pattern documented in `ARCHITECTURE.md`.
+- Helper function `get_filtered_account_queryset(qs, filters)` for reuse by export endpoints.
+
+### Migration Path for Older Views
+
+- `event_list` CSS: inline styles removed; now sourced from `static/css/filters.css`.
+- `event_list`, `report_*`: use the same modal pattern but have their own helpers/inline styles. Future refactors can migrate them to `apps/core/filters.py` incrementally.

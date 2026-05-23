@@ -1,0 +1,57 @@
+/*
+ * productERP shared filter styles
+ *
+ * Used by: account_list, event_list, and any future filtered list view.
+ * Reference implementation: templates/accounts/account_list.html
+ */
+
+.filter-section-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6c757d;
+    margin-top: 1rem;
+    margin-bottom: 0.4rem;
+}
+
+.filter-section-label:first-child {
+    margin-top: 0;
+}
+
+.filter-checkbox-inline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.75rem;
+}
+
+.filter-checkbox-scroll {
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.5rem;
+    background: #fff;
+}
+
+.filter-checkbox-scroll .form-check {
+    margin-bottom: 0.25rem;
+}
+
+.filter-checkbox-scroll .form-check:last-child {
+    margin-bottom: 0;
+}
+
+/* Full-screen filter modal on mobile */
+@media (max-width: 575px) {
+    .filter-modal .modal-dialog {
+        margin: 0;
+        max-width: 100%;
+        height: 100%;
+    }
+
+    .filter-modal .modal-content {
+        height: 100%;
+        border-radius: 0;
+    }
+}

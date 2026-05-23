@@ -4,12 +4,15 @@ AJAX endpoints: states, counties, cities, account search.
 Coverage area management: add, remove.
 Access: Territory Manager, Ambassador Manager, Sales Manager, Supplier Admin.
 """
+from django.core.paginator import Paginator
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db.models import Q
 from django.http import JsonResponse
 from django.template.loader import render_to_string
+
+from apps.core.filters import apply_session_filters, compute_active_filter_count
 
 from apps.core.models import User
 from apps.distribution.models import Distributor
@@ -100,6 +103,61 @@ def _render_coverage_areas_table(user, company):
 
 
 # ---------------------------------------------------------------------------
+# Account filter helpers
+# ---------------------------------------------------------------------------
+
+_ACCOUNT_SESSION_KEY = 'account_list_filters'
+
+DEFAULT_ACCOUNT_FILTERS = {
+    'distributor':   '',
+    'on_off':        '',
+    'account_type':  [],
+    'county':        '',
+    'source':        '',
+    'active_status': '',
+}
+
+
+def get_filtered_account_queryset(qs, filters):
+    """
+    Apply session-stored filter dimensions to an already coverage-scoped queryset.
+
+    active_status is handled by the caller (it determines the base queryset).
+    Search (q) is URL-only and applied separately in the view.
+
+    Reusable for account list view, export endpoints, and future callers.
+    """
+    distributor = filters.get('distributor', '')
+    if distributor == 'none':
+        qs = qs.filter(distributor__isnull=True)
+    elif distributor:
+        try:
+            qs = qs.filter(distributor_id=int(distributor))
+        except (ValueError, TypeError):
+            pass
+
+    on_off = filters.get('on_off', '')
+    if on_off:
+        qs = qs.filter(on_off_premise=on_off)
+
+    types = filters.get('account_type', [])
+    if types:
+        qs = qs.filter(account_type__in=types)
+
+    county = filters.get('county', '')
+    if county:
+        qs = qs.filter(county=county)
+
+    source = filters.get('source', '')
+    if source == 'manual':
+        qs = qs.filter(auto_created=False)
+    elif source == 'imported':
+        qs = qs.filter(auto_created=True)
+
+    return qs
+
+
+# ---------------------------------------------------------------------------
 # Account views
 # ---------------------------------------------------------------------------
 
@@ -111,37 +169,24 @@ def account_list(request):
 
     company = request.user.company
 
-    # ---- Session-based filter persistence ----
-    SESSION_KEY = 'account_list_filters'
-
-    if request.GET.get('clear_filters'):
-        request.session.pop(SESSION_KEY, None)
+    # Clear filters and redirect to clean URL
+    if request.GET.get('clear_filters') == '1':
+        request.session.pop(_ACCOUNT_SESSION_KEY, None)
         return redirect('account_list')
 
-    _known_filter_keys = ('q', 'distributor', 'on_off', 'source', 'active_status')
-    if any(k in request.GET for k in _known_filter_keys):
-        filters = {
-            'q':             request.GET.get('q', '').strip(),
-            'distributor':   request.GET.get('distributor', '').strip(),
-            'on_off':        request.GET.get('on_off', '').strip(),
-            'source':        request.GET.get('source', '').strip(),
-            'active_status': request.GET.get('active_status', '').strip(),
-        }
-        request.session[SESSION_KEY] = filters
-    else:
-        filters = request.session.get(SESSION_KEY, {
-            'q': '', 'distributor': '', 'on_off': '', 'source': '', 'active_status': '',
-        })
+    # Session filter save/restore
+    active_filters, _ = apply_session_filters(
+        request, _ACCOUNT_SESSION_KEY, DEFAULT_ACCOUNT_FILTERS
+    )
 
-    search        = filters.get('q', '')
-    distributor_id = filters.get('distributor', '')
-    on_off        = filters.get('on_off', '')
-    source        = filters.get('source', '')
-    active_status = filters.get('active_status', '')
+    # Search is URL-only (not stored in session)
+    search_query = request.GET.get('q', '').strip()
 
-    # ---- Base queryset ----
-    # Ambassador Manager: sees only accounts linked to their own events
-    # (created by them, or where they are ambassador or event_manager).
+    active_status = active_filters.get('active_status', '')
+
+    # ---- Build coverage-scoped base queryset ----
+    # Ambassador Manager sees only accounts linked to their own events.
+    # inactive filter requires bypassing the active_accounts manager.
     if request.user.is_ambassador_manager:
         ambassador_q = (
             Q(events__created_by=request.user) |
@@ -149,7 +194,7 @@ def account_list(request):
             Q(events__event_manager=request.user)
         )
         if active_status == 'inactive':
-            accounts = (
+            base_qs = (
                 Account.objects.filter(
                     company=company,
                     is_active=False,
@@ -159,19 +204,16 @@ def account_list(request):
                 .distinct()
             )
         else:
-            accounts = (
+            base_qs = (
                 Account.active_accounts
                 .filter(company=company)
                 .filter(ambassador_q)
                 .distinct()
             )
-    # For the inactive filter we cannot use the active_accounts manager (it
-    # filters is_active=True).  Build the appropriate base queryset, applying
-    # the same coverage-area scoping that get_accounts_for_user() provides.
     elif active_status == 'inactive':
         is_privileged = request.user.has_permission('can_view_all_accounts')
         if is_privileged:
-            accounts = Account.objects.filter(
+            base_qs = Account.objects.filter(
                 company=company, is_active=False, merged_into__isnull=True
             )
         else:
@@ -180,7 +222,7 @@ def account_list(request):
                 .select_related('distributor', 'account')
             )
             if not coverage_areas:
-                accounts = Account.objects.none()
+                base_qs = Account.objects.none()
             else:
                 cq = Q(pk__in=[])
                 for ca in coverage_areas:
@@ -193,16 +235,15 @@ def account_list(request):
                         cq |= Q(city=ca.city, state_normalized=ca.state)
                     elif ct == UserCoverageArea.CoverageType.ACCOUNT and ca.account_id:
                         cq |= Q(pk=ca.account_id)
-                accounts = Account.objects.filter(
+                base_qs = Account.objects.filter(
                     company=company, is_active=False, merged_into__isnull=True
                 ).filter(cq)
     else:
-        # Default (All) and Active: use active_accounts manager via helper
-        accounts = get_accounts_for_user(request.user)
+        base_qs = get_accounts_for_user(request.user)
 
-    accounts = accounts.select_related('distributor')
+    base_qs = base_qs.select_related('distributor')
 
-    # Determine if we should show the "no coverage areas" message
+    # Coverage message for non-privileged users with no coverage areas
     is_privileged = request.user.has_permission('can_view_all_accounts')
     show_no_coverage_message = False
     if not is_privileged:
@@ -212,48 +253,45 @@ def account_list(request):
         if not has_coverage:
             show_no_coverage_message = True
 
-    # ---- Apply remaining filters ----
+    # Apply session-stored dimension filters
+    accounts = get_filtered_account_queryset(base_qs, active_filters)
 
-    # Search by name or city
-    if search:
+    # Apply URL-only search on top
+    if search_query:
         accounts = accounts.filter(
-            Q(name__icontains=search) | Q(city__icontains=search)
+            Q(name__icontains=search_query) | Q(city__icontains=search_query)
         )
 
-    # Filter: distributor
-    if distributor_id == 'none':
-        accounts = accounts.filter(distributor__isnull=True)
-    elif distributor_id:
-        accounts = accounts.filter(distributor_id=distributor_id)
+    accounts = accounts.order_by('name')
 
-    # Filter: on/off premise
-    if on_off:
-        accounts = accounts.filter(on_off_premise=on_off)
+    # Pagination (100 per page)
+    paginator = Paginator(accounts, 100)
+    page_number = request.GET.get('page', 1)
+    page_obj = paginator.get_page(page_number)
 
-    # Filter: source (manual vs imported)
-    if source == 'manual':
-        accounts = accounts.filter(auto_created=False)
-    elif source == 'imported':
-        accounts = accounts.filter(auto_created=True)
-
-    # Dynamic filter options from visible accounts
-    filter_distributors = (
-        Distributor.objects.filter(
-            pk__in=accounts.values('distributor_id').distinct()
-        ).order_by('name')
-    )
-
-    on_off_values = list(
-        accounts.exclude(on_off_premise='')
-        .values_list('on_off_premise', flat=True)
+    # Filter options — all active company accounts (not just currently visible ones)
+    distributors = Distributor.objects.filter(
+        company=company, is_active=True
+    ).order_by('name')
+    counties = (
+        Account.active_accounts
+        .filter(company=company)
+        .exclude(county='').exclude(county='Unknown')
+        .values_list('county', flat=True)
         .distinct()
-        .order_by('on_off_premise')
+        .order_by('county')
+    )
+    account_types = (
+        Account.active_accounts
+        .filter(company=company)
+        .exclude(account_type='')
+        .values_list('account_type', flat=True)
+        .distinct()
+        .order_by('account_type')
     )
 
-    has_manual = accounts.filter(auto_created=False).exists()
-    has_imported = accounts.filter(auto_created=True).exists()
-
-    filters_active = bool(search or distributor_id or on_off or source or active_status)
+    active_filter_count = compute_active_filter_count(active_filters, DEFAULT_ACCOUNT_FILTERS)
+    filters_active = active_filter_count > 0
 
     can_bulk_delete = (
         request.user.has_permission('can_delete_accounts')
@@ -261,13 +299,15 @@ def account_list(request):
     )
 
     return render(request, 'accounts/account_list.html', {
-        'accounts':            accounts,
-        'filter_distributors': filter_distributors,
-        'on_off_values':       on_off_values,
-        'has_manual':          has_manual,
-        'has_imported':        has_imported,
-        'filters':             filters,
+        'page_obj':            page_obj,
+        'total_count':         paginator.count,
+        'active_filters':      active_filters,
+        'active_filter_count': active_filter_count,
         'filters_active':      filters_active,
+        'search_query':        search_query,
+        'distributors':        distributors,
+        'counties':            counties,
+        'account_types':       account_types,
         'show_no_coverage_message': show_no_coverage_message,
         'can_bulk_delete':     can_bulk_delete,
     })
