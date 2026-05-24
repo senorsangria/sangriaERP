@@ -7,6 +7,7 @@ import csv
 import json
 import os
 import uuid
+from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
@@ -410,6 +411,7 @@ def distributor_list(request):
     forecast_result = None
     orders_result = None
     forecast_distributor = None
+    forecast_grouped = []
     available_distributors = []
     available_groups = []
 
@@ -553,6 +555,19 @@ def distributor_list(request):
             )
             orders_result = generate_projected_orders(forecast_distributor, forecast_result)
 
+            # Group forecast rows by co-packer for visual grouping in template
+            grouped_rows = defaultdict(list)
+            for row in forecast_result.get('rows', []):
+                item = row['item']
+                co_packer = item.co_packer
+                cp_key = (co_packer.pk, co_packer.name) if co_packer else (None, 'No co-packer')
+                grouped_rows[cp_key].append(row)
+            for cp_key in sorted(grouped_rows.keys(), key=lambda k: (k[0] is None, k[1])):
+                forecast_grouped.append({
+                    'co_packer_name': cp_key[1],
+                    'rows': sorted(grouped_rows[cp_key], key=lambda r: r['item'].name),
+                })
+
             # Augment each slot with saved_count and total_count
             for slot in orders_result['orders_per_horizon']:
                 ym = (slot['year'], slot['month'])
@@ -581,6 +596,7 @@ def distributor_list(request):
         'inventory_sort': inventory_sort,
         # Forecast tab
         'forecast_result': forecast_result,
+        'forecast_grouped': forecast_grouped,
         'orders_result': orders_result,
         'forecast_distributor': forecast_distributor,
         'available_distributors': available_distributors,
@@ -1423,12 +1439,26 @@ def distributor_group_forecast(request, group_pk):
     forecast_result = compute_group_forecast(group, po_additions=po_additions or None)
 
     orders_result = None
+    forecast_grouped = []
     if forecast_result.get('alignment_status') == 'ok':
         orders_result = generate_projected_orders(primary, forecast_result)
         for slot in orders_result.get('orders_per_horizon', []):
             ym = (slot['year'], slot['month'])
             slot['saved_count'] = len(saved_pos_by_month.get(ym, []))
             slot['total_count'] = slot['saved_count']
+
+        # Group forecast rows by co-packer for visual grouping in template
+        grouped_rows = defaultdict(list)
+        for row in forecast_result.get('rows', []):
+            item = row['item']
+            co_packer = item.co_packer
+            cp_key = (co_packer.pk, co_packer.name) if co_packer else (None, 'No co-packer')
+            grouped_rows[cp_key].append(row)
+        for cp_key in sorted(grouped_rows.keys(), key=lambda k: (k[0] is None, k[1])):
+            forecast_grouped.append({
+                'co_packer_name': cp_key[1],
+                'rows': sorted(grouped_rows[cp_key], key=lambda r: r['item'].name),
+            })
 
     available_distributors = list(
         Distributor.objects.filter(company=company)
@@ -1442,6 +1472,7 @@ def distributor_group_forecast(request, group_pk):
         'members': members,
         'primary_distributor': primary,
         'forecast_result': forecast_result,
+        'forecast_grouped': forecast_grouped,
         'orders_result': orders_result,
         'available_distributors': available_distributors,
         'available_groups': available_groups,

@@ -4313,3 +4313,26 @@ Established a canonical filter pattern for filtered list views. The account list
 4. Fixed nested-scroll issue in filter modal — added `overscroll-behavior: contain` to `.filter-checkbox-scroll` in `static/css/filters.css` so the Account Type and Class of Trade checkbox lists scroll independently of the Bootstrap `modal-dialog-scrollable` modal body.
 5. New `smart_title` template filter (`apps/accounts/templatetags/account_filters.py`) — Title Case applied only when the value is currently ALL CAPS (e.g. `"SOCO TAVERN"` → `"Soco Tavern"`). Mixed-case names (`"MGM Grand"`) are preserved as-is. Applied to `account.name` in the account list table.
 6. Quick-view modal extraction (from dashboard to shared partial) DEFERRED — will be tackled as a standalone effort.
+
+### Multi-Month PO Lookahead Algorithm
+
+- `suggest_po_for_month` now evaluates up to 5 future months (M+1 through M+5) instead of just M+1.
+- Self-aware allocation: each pass updates a running working inventory map so subsequent passes see the effect of prior allocations. No double-counting across passes.
+- Stops early when total capacity reaches 0, no items below safety in current pass, or after pass 5.
+- Items allocated across multiple passes are combined into single PO lines (one line per item).
+- Greedy allocation within each pass: largest deficit first, partial allocation when capacity is limited.
+- Replaces previous single-month lookahead which only evaluated M+1.
+- Goal: maximize truck/order capacity utilization by pre-positioning inventory for multiple future months.
+- `_propagate_allocation_forward(working_inv, item_id, po_year, po_month, cases_added)` — adds allocated cases to working inventory at the PO month and all subsequent months in the working map.
+- `MAX_LOOKAHEAD_PASSES = 5` constant in `apps/distribution/order_generation.py`.
+
+### Distributor Forecast Tab — Co-Packer Grouping
+
+- Distributor forecast tab now groups item rows by co-packer with section header bands (matches Production Cases tab visual pattern).
+- Applied to both individual distributor forecast (`distributor_list` Forecast tab) and group forecast (`distributor_group_forecast`).
+- Visual grouping only — no subtotals or totals rows.
+- Items without a co-packer grouped under "No co-packer" section, placed alphabetically after named co-packer sections.
+- Co-packer sections sorted alphabetically by co-packer name; items within each section sorted by item name.
+- `.co-packer-header td` CSS extracted from production_home.html inline styles to `static/css/filters.css` (already loaded globally via base.html) so all forecast and production views share the same header band styling.
+- `forecast_grouped` context variable: list of `{'co_packer_name': str, 'rows': [row, ...]}` dicts, computed in the view from `forecast_result.rows`.
+- `Item.co_packer` added to `select_related` in `compute_distributor_forecast` and `compute_group_forecast` to avoid N+1 queries.

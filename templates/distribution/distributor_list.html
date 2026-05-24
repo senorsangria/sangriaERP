@@ -690,8 +690,12 @@
                 {% endif %}
               </tr>
               {% endif %}
-              <!-- Item rows -->
-              {% for row in forecast_result.rows %}
+              <!-- Item rows grouped by co-packer -->
+              {% for group in forecast_grouped %}
+              <tr class="co-packer-header">
+                <td colspan="{{ forecast_result.horizon|length|add:1 }}">{{ group.co_packer_name }}</td>
+              </tr>
+              {% for row in group.rows %}
               <tr>
                 <td class="small fw-medium">{{ row.item.name }}</td>
                 {% for cell in row.monthly_data %}
@@ -707,6 +711,7 @@
                 </td>
                 {% endfor %}
               </tr>
+              {% endfor %}
               {% endfor %}
             </tbody>
           </table>

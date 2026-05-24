@@ -10,7 +10,9 @@ from django.urls import reverse
 
 from apps.distribution.forecast import compute_distributor_forecast
 from apps.distribution.models import Distributor, DistributorItemProfile, InventorySnapshot
-from apps.distribution.order_generation import generate_projected_orders, suggest_po_for_month
+from apps.distribution.order_generation import (
+    generate_projected_orders, suggest_po_for_month, _propagate_allocation_forward,
+)
 from apps.distribution.tests_forecast import (
     _make_company, _make_supplier_admin, _make_distributor,
     _make_brand, _make_item, _make_account, _make_batch,
@@ -868,7 +870,7 @@ class SuggestPoForMonthTest(TestCase):
         self.assertEqual(line_a['pallets'], 10)
         self.assertEqual(line_b['pallets'], 10)
 
-    # 14. Items sorted by largest absolute deficit first
+    # 14. Items sorted by largest deficit first within a pass; output sorted by name
     def test_sorted_by_largest_deficit_first(self):
         dist = self._dist_cases(order_value=1200)  # large enough for all
         item_a = self._item('Item A', 'SD_A')   # shortage=200
@@ -885,8 +887,13 @@ class SuggestPoForMonthTest(TestCase):
         )
         result = suggest_po_for_month(dist, 2026, 5, fr)
         self.assertEqual(len(result['lines']), 3)
-        # B has the largest deficit → must appear first
-        self.assertEqual(result['lines'][0]['item_id'], item_b.pk)
+        # All three items allocated; output sorted by item name (A, B, C)
+        line_by_id = {l['item_id']: l for l in result['lines']}
+        self.assertIn(item_a.pk, line_by_id)
+        self.assertIn(item_b.pk, line_by_id)
+        self.assertIn(item_c.pk, line_by_id)
+        # B had the largest deficit → allocated its full shortage
+        self.assertEqual(line_by_id[item_b.pk]['cases'], 800.0)
 
     # 15. Partial allocation when capacity runs out mid-item
     def test_partial_allocation_when_capacity_runs_out(self):
@@ -948,7 +955,190 @@ class SuggestPoForMonthTest(TestCase):
         self.assertEqual(result['lines'][0]['cases'], 50.0)
         self.assertEqual(result['lines'][1]['cases'], 50.0)
 
-    # 18. Second suggest call after first PO saved picks up previously uncovered items
+    # -----------------------------------------------------------------------
+    # Multi-pass lookahead tests
+    # -----------------------------------------------------------------------
+
+    # 18. Multi-pass: allocates for M+2 shortage when capacity remains after M+1
+    def test_multi_pass_allocates_for_future_shortage_when_capacity_remains(self):
+        # A is short at M+1 (June), B is short at M+2 (July), C always safe.
+        # After pass 1 (allocate A), remaining capacity picks up B in pass 2.
+        dist = self._dist_pallets(order_value=20)
+        item_a = self._item('Item A', 'MP_A', cpp=50)  # shortage=100 at June → 2 pallets
+        item_b = self._item('Item B', 'MP_B', cpp=50)  # shortage=100 at July → 2 pallets
+        item_c = self._item('Item C', 'MP_C', cpp=50)  # always safe
+
+        fr = self._multi_item_fr(
+            [
+                # A: below ss at June (M+1); July above ss after propagation (50+100=150)
+                (item_a, [(2026, 6, 0.0), (2026, 7, 50.0)]),
+                # B: safe at June, below ss at July (M+2)
+                (item_b, [(2026, 6, 200.0), (2026, 7, 0.0)]),
+                # C: always safe
+                (item_c, [(2026, 6, 200.0), (2026, 7, 200.0)]),
+            ],
+            {item_a.pk: 100, item_b.pk: 100, item_c.pk: 100},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        line_by_id = {l['item_id']: l for l in result['lines']}
+        # Both A and B allocated via multi-pass
+        self.assertIn(item_a.pk, line_by_id)
+        self.assertIn(item_b.pk, line_by_id)
+        self.assertNotIn(item_c.pk, line_by_id)
+        self.assertEqual(line_by_id[item_a.pk]['pallets'], 2)
+        self.assertEqual(line_by_id[item_b.pk]['pallets'], 2)
+
+    # 19. Multi-pass stops when capacity exhausted before reaching all passes
+    def test_multi_pass_stops_when_capacity_exhausted(self):
+        # Capacity=5 pallets. A needs 4 in pass 1, B needs 6 in pass 2 → B gets 1 (partial).
+        dist = self._dist_pallets(order_value=5)
+        item_a = self._item('Item A', 'ME_A', cpp=50)  # shortage=200 → 4 pallets at June
+        item_b = self._item('Item B', 'ME_B', cpp=50)  # shortage=300 → 6 pallets at July
+
+        fr = self._multi_item_fr(
+            [
+                (item_a, [(2026, 6, 0.0), (2026, 7, 50.0)]),
+                (item_b, [(2026, 6, 200.0), (2026, 7, 0.0)]),
+            ],
+            {item_a.pk: 200, item_b.pk: 300},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        line_by_id = {l['item_id']: l for l in result['lines']}
+        # A fully allocated (4 pallets), B gets remaining 1 pallet
+        self.assertIn(item_a.pk, line_by_id)
+        self.assertIn(item_b.pk, line_by_id)
+        self.assertEqual(line_by_id[item_a.pk]['pallets'], 4)
+        self.assertEqual(line_by_id[item_b.pk]['pallets'], 1)
+        self.assertEqual(line_by_id[item_b.pk]['cases'], 50.0)
+
+    # 20. Multi-pass: item not re-allocated in pass 2 if pass 1 allocation fixed it
+    def test_multi_pass_skips_items_no_longer_short_after_prior_allocation(self):
+        # A is short at June and July; after allocating 100 cases in pass 1,
+        # July working inv rises to 150 (≥100 safety), so A is NOT re-allocated in pass 2.
+        dist = self._dist_pallets(order_value=20)
+        item_a = self._item('Item A', 'MS_A', cpp=50)  # short at June, July before propagation
+
+        fr = self._multi_item_fr(
+            [
+                # A: June=0 (shortage=100, 2 pallets), July=50 (below ss before propagation)
+                # After pass 1: July working inv = 50+100=150 ≥ 100 → safe in pass 2
+                (item_a, [(2026, 6, 0.0), (2026, 7, 50.0)]),
+            ],
+            {item_a.pk: 100},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        # A should appear exactly once (combined across passes, but pass 2 shouldn't re-add)
+        a_lines = [l for l in result['lines'] if l['item_id'] == item_a.pk]
+        self.assertEqual(len(a_lines), 1)
+        self.assertEqual(a_lines[0]['pallets'], 2)   # only 2 pallets from pass 1
+        self.assertEqual(a_lines[0]['cases'], 100.0)
+
+    # 21. Multi-pass caps at 5 passes; M+6 shortages never addressed
+    def test_multi_pass_caps_at_five_passes(self):
+        # Items A-E short at M+1 through M+5; Item F short only at M+6.
+        # With large capacity, A-E should be allocated; F should NOT be.
+        dist = self._dist_pallets(order_value=100)
+        item_a = self._item('Item A', 'MC_A', cpp=50)
+        item_b = self._item('Item B', 'MC_B', cpp=50)
+        item_c = self._item('Item C', 'MC_C', cpp=50)
+        item_d = self._item('Item D', 'MC_D', cpp=50)
+        item_e = self._item('Item E', 'MC_E', cpp=50)
+        item_f = self._item('Item F', 'MC_F', cpp=50)
+
+        fr = self._multi_item_fr(
+            [
+                (item_a, [(2026, 6, 0.0)]),
+                (item_b, [(2026, 6, 200.0), (2026, 7, 0.0)]),
+                (item_c, [(2026, 6, 200.0), (2026, 7, 200.0), (2026, 8, 0.0)]),
+                (item_d, [(2026, 6, 200.0), (2026, 7, 200.0), (2026, 8, 200.0), (2026, 9, 0.0)]),
+                (item_e, [(2026, 6, 200.0), (2026, 7, 200.0), (2026, 8, 200.0), (2026, 9, 200.0), (2026, 10, 0.0)]),
+                (item_f, [(2026, 6, 200.0), (2026, 7, 200.0), (2026, 8, 200.0), (2026, 9, 200.0), (2026, 10, 200.0), (2026, 11, 0.0)]),
+            ],
+            {item_a.pk: 100, item_b.pk: 100, item_c.pk: 100,
+             item_d.pk: 100, item_e.pk: 100, item_f.pk: 100},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        allocated_ids = {l['item_id'] for l in result['lines']}
+        # A through E allocated (passes 1-5)
+        self.assertIn(item_a.pk, allocated_ids)
+        self.assertIn(item_b.pk, allocated_ids)
+        self.assertIn(item_c.pk, allocated_ids)
+        self.assertIn(item_d.pk, allocated_ids)
+        self.assertIn(item_e.pk, allocated_ids)
+        # F is only short at M+6; pass 6 is never evaluated
+        self.assertNotIn(item_f.pk, allocated_ids)
+
+    # 22. Multi-pass: combined totals returned as one line per item
+    def test_multi_pass_returns_combined_totals_per_item(self):
+        # A is short at M+1 (100 cases) AND still short at M+3 after pass 1 allocation.
+        # Pass 1 allocates 100 cases; A's Aug working inv rises from -50 to 50 (< 100 ss).
+        # Pass 3 allocates 50 more cases. Result: ONE line for A with 150 total cases.
+        dist = self._dist_cases(order_value=200)
+        item_a = self._item('Item A', 'CT_A')
+
+        fr = self._multi_item_fr(
+            [
+                # June=0 (shortage=100), July=60 (safe after +100: 160≥100), Aug=-50 (shortage=150 before pass1; after +100=50, still short by 50)
+                (item_a, [(2026, 6, 0.0), (2026, 7, 60.0), (2026, 8, -50.0)]),
+            ],
+            {item_a.pk: 100},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        a_lines = [l for l in result['lines'] if l['item_id'] == item_a.pk]
+        self.assertEqual(len(a_lines), 1)
+        # Pass 1: 100 cases; pass 3: 50 cases → combined = 150
+        self.assertEqual(a_lines[0]['cases'], 150.0)
+
+    # 23. _propagate_allocation_forward updates PO month and all subsequent months
+    def test_propagate_allocation_updates_subsequent_months(self):
+        item = self._item('Item A', 'PA01')
+        working_inv = {
+            item.pk: {
+                (2026, 4): 10.0,
+                (2026, 5): 20.0,
+                (2026, 6): 30.0,
+                (2026, 7): 40.0,
+            }
+        }
+        _propagate_allocation_forward(working_inv, item.pk, 2026, 5, 100.0)
+        # Months before po_month unchanged
+        self.assertEqual(working_inv[item.pk][(2026, 4)], 10.0)
+        # PO month and later all get +100
+        self.assertEqual(working_inv[item.pk][(2026, 5)], 120.0)
+        self.assertEqual(working_inv[item.pk][(2026, 6)], 130.0)
+        self.assertEqual(working_inv[item.pk][(2026, 7)], 140.0)
+
+    # 24. Cases mode multi-pass: allocates for M+1 and M+2 in one PO
+    def test_cases_mode_multi_pass(self):
+        # Same scenario as test 18 but with cases mode.
+        # A short at M+1 (June, 100 cases); B short at M+2 (July, 100 cases).
+        dist = self._dist_cases(order_value=200)
+        item_a = self._item('Item A', 'CM_MP_A')
+        item_b = self._item('Item B', 'CM_MP_B')
+        item_c = self._item('Item C', 'CM_MP_C')
+
+        fr = self._multi_item_fr(
+            [
+                # A: June=0 (shortage=100); July=0 (after +100 = 100, at safety, safe in pass 2)
+                (item_a, [(2026, 6, 0.0), (2026, 7, 0.0)]),
+                # B: June safe (200≥100), July=0 (shortage=100)
+                (item_b, [(2026, 6, 200.0), (2026, 7, 0.0)]),
+                # C: always safe
+                (item_c, [(2026, 6, 200.0), (2026, 7, 200.0)]),
+            ],
+            {item_a.pk: 100, item_b.pk: 100, item_c.pk: 100},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        line_by_id = {l['item_id']: l for l in result['lines']}
+        self.assertIn(item_a.pk, line_by_id)
+        self.assertIn(item_b.pk, line_by_id)
+        self.assertNotIn(item_c.pk, line_by_id)
+        self.assertEqual(line_by_id[item_a.pk]['cases'], 100.0)
+        self.assertIsNone(line_by_id[item_a.pk]['pallets'])
+        self.assertEqual(line_by_id[item_b.pk]['cases'], 100.0)
+        self.assertIsNone(line_by_id[item_b.pk]['pallets'])
+
+    # 25. Second suggest call after first PO saved picks up previously uncovered items
     def test_subsequent_call_after_first_po_saved(self):
         from apps.distribution.forecast import compute_distributor_forecast
         from datetime import date as _date
