@@ -328,8 +328,9 @@ class CasesTabViewTest(TestCase):
         session = self.client.session
         session['production_cases_filters'] = {'status': ['projected']}
         session.save()
-        response = self.client.get(self.url + '?tab=production_cases&clear_filters=1')
-        self.assertRedirects(response, self.url + '?tab=production_cases')
+        # clear_filters=1 now redirects to production_home with no tab param
+        response = self.client.get(self.url + '?clear_filters=1')
+        self.assertRedirects(response, self.url)
         # Session key should be cleared
         session = self.client.session
         self.assertNotIn('production_cases_filters', session)
@@ -355,3 +356,49 @@ class CasesTabViewTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Test Item')
         self.assertContains(response, '500')
+
+    # ------------------------------------------------------------------
+    # Tests for the Bootstrap-integration fix (Bug 1 & Bug 2)
+    # ------------------------------------------------------------------
+
+    def test_cases_data_computed_when_active_tab_is_forecast(self):
+        # cases_view must be in context even when the forecast tab is active
+        response = self.client.get(self.url + '?tab=forecast')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('cases_view', response.context)
+        self.assertIsNotNone(response.context['cases_view'])
+
+    def test_cases_data_computed_when_no_tab_specified(self):
+        # cases_view must be in context on a plain /production/ request
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('cases_view', response.context)
+        self.assertIsNotNone(response.context['cases_view'])
+
+    def test_cases_tab_uses_bootstrap_data_attributes(self):
+        # The nav item must be a Bootstrap tab trigger, not a plain <a href>
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-bs-toggle="tab"')
+        self.assertContains(response, 'data-bs-target="#pane-production-cases"')
+
+    def test_cases_pane_rendered_on_all_tabs_but_not_active(self):
+        # The cases pane div must be in the DOM even when forecast is active,
+        # but without the 'show active' classes (Bootstrap CSS hides it).
+        response = self.client.get(self.url + '?tab=forecast')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="pane-production-cases"')
+        content = response.content.decode()
+        # Cases pane must NOT have show active when forecast tab is selected
+        self.assertNotIn('tab-pane fade show active"\n       id="pane-production-cases"', content)
+        # Confirm forecast pane IS show active
+        self.assertIn('pane-forecast', content)
+
+    def test_cases_tab_active_on_direct_url(self):
+        # When ?tab=production_cases is requested, the cases pane gets show active
+        response = self.client.get(self.url + '?tab=production_cases')
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # The cases pane div must contain show active
+        self.assertIn('tab-pane fade show active', content)
+        self.assertIn('id="pane-production-cases"', content)

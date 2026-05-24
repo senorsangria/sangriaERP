@@ -68,8 +68,13 @@
     </button>
   </li>
   <li class="nav-item" role="presentation">
-    <a class="nav-link {% if active_tab == 'production_cases' %}active{% endif %}"
-       href="?tab=production_cases">Production Cases</a>
+    <button class="nav-link {% if active_tab == 'production_cases' %}active{% endif %}"
+            id="tab-production-cases" data-bs-toggle="tab" data-bs-target="#pane-production-cases"
+            type="button" role="tab"
+            aria-controls="pane-production-cases"
+            aria-selected="{% if active_tab == 'production_cases' %}true{% else %}false{% endif %}">
+      Production Cases
+    </button>
   </li>
 </ul>
 
@@ -471,7 +476,6 @@
   <div class="tab-pane fade {% if active_tab == 'production_cases' %}show active{% endif %}"
        id="pane-production-cases" role="tabpanel">
 
-    {% if active_tab == 'production_cases' %}
     <div class="d-flex justify-content-between align-items-center mb-3">
       <div>
         <h2 class="h4 fw-bold mb-1">Production cases by month</h2>
@@ -554,14 +558,12 @@
       </div>
     </div>
     {% endif %}
-    {% endif %}{# active_tab == production_cases #}
 
   </div>
 
 </div>{# tab-content #}
 
-{# Cases Filter Modal — only rendered when the cases tab is active #}
-{% if active_tab == 'production_cases' %}
+{# Cases Filter Modal #}
 <div class="modal fade filter-modal" id="casesFilterModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-scrollable">
     <div class="modal-content">
@@ -595,7 +597,6 @@
     </div>
   </div>
 </div>
-{% endif %}
 
 <!-- Demand breakdown modal -->
 <div class="modal fade" id="demandModal" tabindex="-1"

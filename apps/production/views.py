@@ -245,25 +245,19 @@ def production_home(request):
 
     month_names_dict = {i: name for i, name in enumerate(MONTH_NAMES, 1)}
 
-    # Production Cases tab — lazy: only compute when the tab is active
-    cases_view = None
-    cases_active_filters = DEFAULT_CASES_FILTERS.copy()
-    cases_active_filter_count = 0
-    cases_filters_active = False
+    # Production Cases tab — always computed (matches behaviour of other tabs)
+    if request.GET.get('clear_filters') == '1':
+        request.session.pop('production_cases_filters', None)
+        return redirect('production_home')
 
-    if active_tab == 'production_cases':
-        if request.GET.get('clear_filters') == '1':
-            request.session.pop('production_cases_filters', None)
-            return redirect(f"{reverse('production_home')}?tab=production_cases")
-
-        cases_active_filters, _ = apply_session_filters(
-            request, 'production_cases_filters', DEFAULT_CASES_FILTERS
-        )
-        cases_view = compute_production_cases_view(company, cases_active_filters)
-        cases_active_filter_count = compute_active_filter_count(
-            cases_active_filters, DEFAULT_CASES_FILTERS
-        )
-        cases_filters_active = cases_active_filter_count > 0
+    cases_active_filters, _ = apply_session_filters(
+        request, 'production_cases_filters', DEFAULT_CASES_FILTERS
+    )
+    cases_view = compute_production_cases_view(company, cases_active_filters)
+    cases_active_filter_count = compute_active_filter_count(
+        cases_active_filters, DEFAULT_CASES_FILTERS
+    )
+    cases_filters_active = cases_active_filter_count > 0
 
     return render(request, 'production/production_home.html', {
         'company': company,
