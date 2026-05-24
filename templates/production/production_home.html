@@ -186,15 +186,12 @@
               {% endfor %}
             </tr>
 
-            <!-- Item rows -->
-            {% for row in forecast_result.rows %}
-            {% ifchanged row.item.brand.name %}
-            <tr class="table-secondary">
-              <td colspan="{{ forecast_result.horizon|length|add:1 }}" class="ps-3 py-1">
-                <span class="small text-uppercase text-muted fw-semibold">{{ row.item.brand.name }}</span>
-              </td>
+            <!-- Item rows grouped by co-packer -->
+            {% for group in production_forecast_grouped %}
+            <tr class="co-packer-header">
+              <td colspan="{{ forecast_result.horizon|length|add:1 }}">{{ group.co_packer_name }}</td>
             </tr>
-            {% endifchanged %}
+            {% for row in group.rows %}
             <tr>
               <td class="small">
                 <div class="fw-medium">{{ row.item.name }}</div>
@@ -205,6 +202,7 @@
               </td>
               {% endfor %}
             </tr>
+            {% endfor %}
             {% endfor %}
           </tbody>
         </table>

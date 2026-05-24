@@ -4326,13 +4326,23 @@ Established a canonical filter pattern for filtered list views. The account list
 - `_propagate_allocation_forward(working_inv, item_id, po_year, po_month, cases_added)` — adds allocated cases to working inventory at the PO month and all subsequent months in the working map.
 - `MAX_LOOKAHEAD_PASSES = 5` constant in `apps/distribution/order_generation.py`.
 
-### Distributor Forecast Tab — Co-Packer Grouping
+### Production Forecast Tab — Co-Packer Grouping
 
-- Distributor forecast tab now groups item rows by co-packer with section header bands (matches Production Cases tab visual pattern).
-- Applied to both individual distributor forecast (`distributor_list` Forecast tab) and group forecast (`distributor_group_forecast`).
+- Production Forecast tab groups item rows by co-packer with section header bands (same visual pattern as Production Cases tab).
+- Co-packer grouping is NOT on the Distributor Forecast or Group Forecast pages — those pages display items in a flat list without grouping headers.
 - Visual grouping only — no subtotals or totals rows.
 - Items without a co-packer grouped under "No co-packer" section, placed alphabetically after named co-packer sections.
 - Co-packer sections sorted alphabetically by co-packer name; items within each section sorted by item name.
-- `.co-packer-header td` CSS extracted from production_home.html inline styles to `static/css/filters.css` (already loaded globally via base.html) so all forecast and production views share the same header band styling.
-- `forecast_grouped` context variable: list of `{'co_packer_name': str, 'rows': [row, ...]}` dicts, computed in the view from `forecast_result.rows`.
-- `Item.co_packer` added to `select_related` in `compute_distributor_forecast` and `compute_group_forecast` to avoid N+1 queries.
+- Replaced earlier brand-based `{% ifchanged %}` grouping in `production_home.html` Forecast tab.
+- `.co-packer-header td` CSS in `static/css/filters.css` (loaded globally via base.html) shared by all co-packer group headers.
+- `production_forecast_grouped` context variable: list of `{'co_packer_name': str, 'rows': [row, ...]}` dicts, computed in `production_home` view from `forecast_result.rows`.
+- `Item.co_packer` added to `select_related` in `compute_production_forecast` (`apps/production/forecast.py`) to avoid N+1 queries.
+
+### Multi-Pass Lookahead Gating
+
+- Pass 1 (M+1 lookahead) runs first. If it produces zero allocations, `suggest_po_for_month` returns `{'lines': []}` immediately.
+- Passes 2–5 only run when pass 1 allocated at least one item.
+- Rationale: prevents successive "+ Add Order" clicks from proposing POs that cover only future months when all current-month (M+1) inventory needs are already satisfied by previously saved POs. A PO with no M+1 need is considered opportunistic and should not be auto-suggested.
+- Implementation: inner `run_pass(pass_num)` function uses `nonlocal remaining_capacity` to mutate capacity across passes. Returns count of items allocated in that pass.
+- Gate check: `pass_1_count = run_pass(0); if pass_1_count == 0: return {'lines': []}`.
+- If pass 1 allocates anything (even partially), passes 2–5 run normally to fill remaining capacity.

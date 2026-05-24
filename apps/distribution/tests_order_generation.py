@@ -1178,3 +1178,91 @@ class SuggestPoForMonthTest(TestCase):
         self.assertIn(item_b.pk, second_ids)
         # B (deficit 70) should be first in the second suggestion
         self.assertEqual(result2['lines'][0]['item_id'], item_b.pk)
+
+    # -----------------------------------------------------------------------
+    # Pass-1 gating tests
+    # -----------------------------------------------------------------------
+
+    # 26. Pass-1 gating: M+1 has no shortage → return empty even if M+2/M+3 are short
+    def test_returns_empty_when_pass_1_has_no_shortage(self):
+        dist = self._dist_cases(order_value=100)
+        item_a = self._item('Item A', 'G1_A')
+        item_b = self._item('Item B', 'G1_B')
+        item_c = self._item('Item C', 'G1_C')
+
+        fr = self._multi_item_fr(
+            [
+                # All items safe at M+1 (June)
+                (item_a, [(2026, 6, 200.0), (2026, 7, 10.0)]),   # short at M+2
+                (item_b, [(2026, 6, 200.0), (2026, 7, 200.0), (2026, 8, 10.0)]),  # short at M+3
+                (item_c, [(2026, 6, 200.0)]),                      # always safe in horizon
+            ],
+            {item_a.pk: 50, item_b.pk: 50, item_c.pk: 50},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        self.assertEqual(result['lines'], [])
+
+    # 27. Pass-1 gating: when pass 1 allocates, passes 2+ also run
+    def test_multi_pass_runs_when_pass_1_has_shortage(self):
+        dist = self._dist_pallets(order_value=20)
+        item_a = self._item('Item A', 'G2_A', cpp=50)  # short at M+1 → 2 pallets
+        item_b = self._item('Item B', 'G2_B', cpp=50)  # short at M+2 → 5 pallets
+        item_c = self._item('Item C', 'G2_C', cpp=50)  # short at M+3 → 5 pallets
+
+        fr = self._multi_item_fr(
+            [
+                (item_a, [(2026, 6, 0.0), (2026, 7, 200.0), (2026, 8, 200.0)]),
+                (item_b, [(2026, 6, 200.0), (2026, 7, 0.0), (2026, 8, 200.0)]),
+                (item_c, [(2026, 6, 200.0), (2026, 7, 200.0), (2026, 8, 0.0)]),
+            ],
+            {item_a.pk: 100, item_b.pk: 250, item_c.pk: 250},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        allocated_ids = {l['item_id'] for l in result['lines']}
+        self.assertIn(item_a.pk, allocated_ids)  # pass 1
+        self.assertIn(item_b.pk, allocated_ids)  # pass 2
+        self.assertIn(item_c.pk, allocated_ids)  # pass 3
+
+    # 28. Simulated second "+ Add Order" click: saved PO covers M+1 → empty
+    def test_simulated_second_po_click_returns_empty(self):
+        # Forecast already includes po_additions from first saved PO (baked into inventory values).
+        # A is now at safety stock at M+1; only M+2 and M+3 shortages remain.
+        # Pass 1 finds no candidates → gate → return empty.
+        dist = self._dist_cases(order_value=100)
+        item_a = self._item('Item A', 'S2_A')
+        item_b = self._item('Item B', 'S2_B')
+        item_c = self._item('Item C', 'S2_C')
+
+        fr = self._multi_item_fr(
+            [
+                (item_a, [(2026, 5, 50.0), (2026, 6, 200.0)]),          # at ss at M+1 (saved PO covered it)
+                (item_b, [(2026, 5, 200.0), (2026, 6, 10.0)]),           # safe M+1, short M+2
+                (item_c, [(2026, 5, 200.0), (2026, 6, 200.0), (2026, 7, 10.0)]),  # safe M+1/M+2, short M+3
+            ],
+            {item_a.pk: 50, item_b.pk: 50, item_c.pk: 50},
+        )
+        result = suggest_po_for_month(dist, 2026, 4, fr)  # modal month=April; M+1=May
+        self.assertEqual(result['lines'], [])
+
+    # 29. Partial M+1 allocation still triggers multi-pass for remaining capacity
+    def test_pass_1_partial_allocation_still_triggers_multi_pass(self):
+        # A has a small shortage at M+1 (5 cases out of 100 capacity).
+        # Pass 1 allocates A (pass_1_count=1 > 0) → multi-pass continues.
+        # B is short at M+2; pass 2 allocates B.
+        dist = self._dist_cases(order_value=100)
+        item_a = self._item('Item A', 'PP_A')
+        item_b = self._item('Item B', 'PP_B')
+
+        fr = self._multi_item_fr(
+            [
+                (item_a, [(2026, 6, 45.0), (2026, 7, 200.0)]),   # shortage=5 at M+1
+                (item_b, [(2026, 6, 200.0), (2026, 7, 0.0)]),    # shortage=50 at M+2
+            ],
+            {item_a.pk: 50, item_b.pk: 50},
+        )
+        result = suggest_po_for_month(dist, 2026, 5, fr)
+        line_by_id = {l['item_id']: l for l in result['lines']}
+        self.assertIn(item_a.pk, line_by_id)
+        self.assertIn(item_b.pk, line_by_id)
+        self.assertEqual(line_by_id[item_a.pk]['cases'], 5.0)
+        self.assertEqual(line_by_id[item_b.pk]['cases'], 50.0)

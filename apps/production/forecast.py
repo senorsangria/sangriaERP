@@ -147,7 +147,7 @@ def compute_production_forecast(company, today=None, production_po_additions=Non
     # Step 5 — active items for this company
     items = list(
         Item.objects.filter(brand__company=company, is_active=True)
-        .select_related('brand')
+        .select_related('brand', 'co_packer')
         .order_by('brand__name', 'sort_order', 'name')
     )
 

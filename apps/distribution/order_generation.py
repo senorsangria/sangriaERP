@@ -322,16 +322,10 @@ def suggest_po_for_month(distributor, year, month, forecast_result):
     """
     Multi-month lookahead PO suggestion with self-aware allocation.
 
-    Algorithm:
-    1. Maintain a working inventory map (mutable copy of forecast projected inventory)
-    2. For each of up to 5 passes (M+1, M+2, ... M+5):
-       - Identify items below safety stock at end of that lookahead month
-       - Sort by largest deficit
-       - Allocate to bring each to safety stock, respecting REMAINING total capacity
-       - Add allocated cases to working inventory at PO month and ALL subsequent months
-       - (subsequent passes see updated inventory)
-    3. Stop when capacity reaches 0, or no items below safety, or after pass 5
-    4. Return combined per-item totals as PO lines
+    Pass 1 (M+1) runs first. If it allocates nothing, there is no current need
+    and the function returns empty — this prevents successive "+ Add Order" clicks
+    from proposing future-only POs when existing saved POs already cover M+1.
+    If pass 1 allocates anything, passes 2-5 run to fill remaining capacity.
 
     Returns: {'lines': [{'item_id': int, 'item_name': str, 'cases': float, 'pallets': int|None}]}
     """
@@ -347,7 +341,6 @@ def suggest_po_for_month(distributor, year, month, forecast_result):
     safety_stock_map = forecast_result.get('safety_stock_map', {})
     rows = forecast_result.get('rows', [])
 
-    # Build a mutable working inventory map: {item_id: {(year, month): inventory}}
     working_inv = {}
     item_lookup = {}
     item_cpp = {}
@@ -361,18 +354,16 @@ def suggest_po_for_month(distributor, year, month, forecast_result):
             key = (monthly['year'], monthly['month'])
             working_inv[item.pk][key] = monthly['inventory']
 
-    # Track cumulative allocations per item across all passes
-    allocations = {}  # {item_id: cases_total}
-
+    allocations = {}
     remaining_capacity = total_capacity
 
-    for pass_num in range(MAX_LOOKAHEAD_PASSES):
+    def run_pass(pass_num):
+        nonlocal remaining_capacity
         if remaining_capacity <= 0:
-            break
+            return 0
 
         lookahead_year, lookahead_month = _month_add(year, month, pass_num + 1)
 
-        # Find items below safety stock at this lookahead month using WORKING inventory
         candidates = []
         for item_id, monthly_inv in working_inv.items():
             inv_at_lookahead = monthly_inv.get((lookahead_year, lookahead_month))
@@ -383,7 +374,6 @@ def suggest_po_for_month(distributor, year, month, forecast_result):
             if inv_at_lookahead >= safety_stock:
                 continue
 
-            item = item_lookup[item_id]
             if is_pallets:
                 cpp = item_cpp[item_id]
                 if cpp is None or cpp <= 0:
@@ -392,18 +382,14 @@ def suggest_po_for_month(distributor, year, month, forecast_result):
             shortage = safety_stock - inv_at_lookahead
             candidates.append({'item_id': item_id, 'shortage_cases': shortage})
 
-        if not candidates:
-            continue
-
-        # Sort by largest absolute deficit within this pass
         candidates.sort(key=lambda c: c['shortage_cases'], reverse=True)
 
+        pass_allocation_count = 0
         for candidate in candidates:
             if remaining_capacity <= 0:
                 break
 
             item_id = candidate['item_id']
-            item = item_lookup[item_id]
             shortage = candidate['shortage_cases']
 
             if is_pallets:
@@ -416,6 +402,7 @@ def suggest_po_for_month(distributor, year, month, forecast_result):
                     allocations[item_id] = allocations.get(item_id, 0.0) + cases_to_allocate
                     remaining_capacity -= pallets_to_allocate
                     _propagate_allocation_forward(working_inv, item_id, year, month, cases_to_allocate)
+                    pass_allocation_count += 1
             else:
                 cases_needed = math.ceil(shortage)
                 cases_to_allocate = float(min(cases_needed, remaining_capacity))
@@ -424,8 +411,19 @@ def suggest_po_for_month(distributor, year, month, forecast_result):
                     allocations[item_id] = allocations.get(item_id, 0.0) + cases_to_allocate
                     remaining_capacity -= cases_to_allocate
                     _propagate_allocation_forward(working_inv, item_id, year, month, cases_to_allocate)
+                    pass_allocation_count += 1
 
-    # Build final lines from cumulative allocations
+        return pass_allocation_count
+
+    pass_1_count = run_pass(0)
+    if pass_1_count == 0:
+        return {'lines': []}
+
+    for pass_num in range(1, MAX_LOOKAHEAD_PASSES):
+        if remaining_capacity <= 0:
+            break
+        run_pass(pass_num)
+
     lines = []
     for item_id, total_cases in allocations.items():
         if total_cases <= 0:

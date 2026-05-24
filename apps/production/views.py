@@ -7,6 +7,7 @@ Phase D: production PO modal endpoints, production_po_additions forecast integra
 Phase D2: COMPLETE status, Production POs tab list, single-PO modal endpoint.
 """
 import json
+from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
@@ -94,6 +95,20 @@ def production_home(request):
         company,
         production_po_additions=production_po_additions or None,
     )
+
+    # Group forecast rows by co-packer for visual grouping in template
+    _grouped_rows = defaultdict(list)
+    for _row in forecast_result.get('rows', []):
+        _item = _row['item']
+        _co_packer = _item.co_packer
+        _cp_key = (_co_packer.pk, _co_packer.name) if _co_packer else (None, 'No co-packer')
+        _grouped_rows[_cp_key].append(_row)
+    production_forecast_grouped = []
+    for _cp_key in sorted(_grouped_rows.keys(), key=lambda k: (k[0] is None, k[1])):
+        production_forecast_grouped.append({
+            'co_packer_name': _cp_key[1],
+            'rows': sorted(_grouped_rows[_cp_key], key=lambda r: r['item'].name),
+        })
 
     # Production PO count by month for the Production POs row in the grid
     production_po_count_rows = (
@@ -264,6 +279,7 @@ def production_home(request):
         'active_tab': active_tab,
         # Forecast tab
         'forecast_result': forecast_result,
+        'production_forecast_grouped': production_forecast_grouped,
         'production_pos_by_month': production_pos_by_month,
         'dist_orders_by_month': dist_orders_by_month,
         'items_missing_config': items_missing_config,
