@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load rbac %}
+{% load humanize %}
 
 {% block title %}Production{% endblock %}
 
@@ -18,6 +19,14 @@
 .demand-btn:hover { background-color: rgba(0,0,0,.05); }
 .production-po-btn { font-size: .8rem; line-height: 1; text-decoration: none; }
 .production-po-btn:hover { background-color: rgba(0,0,0,.05); }
+/* Production Cases tab */
+.cases-grid .sticky-left { position: sticky; left: 0; background: var(--bs-body-bg, #fff); z-index: 1; }
+.cases-grid tr.co-packer-header td { background: #dbeafe; color: #1e40af; font-weight: 500; text-transform: uppercase; font-size: .8rem; letter-spacing: .04em; border-top: 1px solid var(--bs-border-color); }
+.cases-grid tr.co-packer-subtotal td { background: #f8f9fa; font-weight: 600; }
+.cases-grid tr.grand-total td { background: #e9ecef; font-weight: 700; border-top: 2px solid #adb5bd; }
+.cases-grid tr.co-packer-header td.sticky-left,
+.cases-grid tr.co-packer-subtotal td.sticky-left,
+.cases-grid tr.grand-total td.sticky-left { background: inherit; }
 </style>
 {% endblock %}
 
@@ -57,6 +66,10 @@
             aria-selected="{% if active_tab == 'production_pos' %}true{% else %}false{% endif %}">
       Production POs
     </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <a class="nav-link {% if active_tab == 'production_cases' %}active{% endif %}"
+       href="?tab=production_cases">Production Cases</a>
   </li>
 </ul>
 
@@ -452,7 +465,137 @@
 
   </div>
 
+  <!-- ============================================================ -->
+  <!-- PRODUCTION CASES TAB -->
+  <!-- ============================================================ -->
+  <div class="tab-pane fade {% if active_tab == 'production_cases' %}show active{% endif %}"
+       id="pane-production-cases" role="tabpanel">
+
+    {% if active_tab == 'production_cases' %}
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div>
+        <h2 class="h4 fw-bold mb-1">Production cases by month</h2>
+        <p class="text-muted small mb-0">Cases produced per item, grouped by co-packer</p>
+      </div>
+      <button type="button" class="btn btn-outline-primary btn-sm"
+              data-bs-toggle="modal" data-bs-target="#casesFilterModal">
+        <i class="bi bi-funnel"></i> Filters
+        {% if cases_filters_active %}
+        <span class="badge bg-warning text-dark ms-1">{{ cases_active_filter_count }}</span>
+        {% endif %}
+      </button>
+    </div>
+
+    {% if cases_view.co_packer_groups %}
+    <div class="table-responsive border rounded">
+      <table class="table table-sm mb-0 cases-grid">
+        <thead class="table-light">
+          <tr>
+            <th class="sticky-left" style="min-width: 180px;">Item</th>
+            {% for h in cases_view.horizon %}
+            <th class="text-end" style="min-width: 70px;">{{ h.label }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for group in cases_view.co_packer_groups %}
+          {# Co-packer section header #}
+          <tr class="co-packer-header">
+            <td class="sticky-left" colspan="{{ cases_view.horizon|length|add:1 }}">{{ group.co_packer.name }}</td>
+          </tr>
+          {# Item rows #}
+          {% for item_row in group.items %}
+          <tr>
+            <td class="sticky-left small">{{ item_row.item.name }}</td>
+            {% for h in cases_view.horizon %}
+            <td class="text-end small">
+              {% with val=item_row.monthly_cases|get_item:h.year|get_item:h.month %}
+              {% if val %}{{ val|intcomma }}{% else %}—{% endif %}
+              {% endwith %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+          {# Per-co-packer subtotal row #}
+          <tr class="co-packer-subtotal">
+            <td class="sticky-left small">{{ group.co_packer.name }} total</td>
+            {% for h in cases_view.horizon %}
+            <td class="text-end small">
+              {% with val=group.subtotals|get_item:h.year|get_item:h.month %}
+              {% if val %}{{ val|intcomma }}{% else %}—{% endif %}
+              {% endwith %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+          {# Grand total row #}
+          <tr class="grand-total">
+            <td class="sticky-left small">Grand total</td>
+            {% for h in cases_view.horizon %}
+            <td class="text-end small">
+              {% with val=cases_view.grand_totals|get_item:h.year|get_item:h.month %}
+              {% if val %}{{ val|intcomma }}{% else %}—{% endif %}
+              {% endwith %}
+            </td>
+            {% endfor %}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center text-muted py-5">
+        <i class="bi bi-table fs-1 d-block mb-3"></i>
+        <h5 class="fw-semibold">No production cases to display</h5>
+        <p class="mb-0">No production PO lines found for the current 12-month horizon{% if cases_filters_active %} with the active filters{% endif %}.</p>
+        {% if cases_filters_active %}
+        <a href="?tab=production_cases&clear_filters=1" class="btn btn-outline-secondary btn-sm mt-3">Clear Filters</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+    {% endif %}{# active_tab == production_cases #}
+
+  </div>
+
 </div>{# tab-content #}
+
+{# Cases Filter Modal — only rendered when the cases tab is active #}
+{% if active_tab == 'production_cases' %}
+<div class="modal fade filter-modal" id="casesFilterModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Filter production cases</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="casesFilterForm" method="get">
+          <input type="hidden" name="tab" value="production_cases">
+          <div class="filter-section-label">PO Status</div>
+          <div class="filter-checkbox-scroll">
+            {% for status_value, status_label in po_status_choices %}
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox"
+                     name="status" value="{{ status_value }}"
+                     id="cases_status_{{ forloop.counter }}"
+                     {% if status_value in cases_active_filters.status %}checked{% endif %}>
+              <label class="form-check-label" for="cases_status_{{ forloop.counter }}">{{ status_label }}</label>
+            </div>
+            {% endfor %}
+          </div>
+          <small class="text-muted d-block mt-2">If no status is checked, all statuses are included.</small>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <a href="?tab=production_cases&clear_filters=1" class="btn btn-outline-secondary btn-sm me-auto">Clear All</a>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" form="casesFilterForm" class="btn btn-primary btn-sm">Apply Filters</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <!-- Demand breakdown modal -->
 <div class="modal fade" id="demandModal" tabindex="-1"

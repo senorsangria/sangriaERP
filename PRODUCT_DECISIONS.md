@@ -778,6 +778,28 @@ into `compute_distributor_forecast` in 4-step-2b).
 - `generate_projected_orders` is unchanged; still drives the Orders row per-month button
   structure (but its count no longer contributes to `total_count`)
 
+### Production Cases Tab
+
+Read-only grid on the Production page showing case production quantities aggregated from
+`ProductionPOLine` records by item × month, grouped by co-packer.
+
+- **Location:** New tab to the right of "Production POs" on the Production page
+- **Horizon:** Current month + next 11 months (same 12-month convention as production forecast)
+- **Grid layout:** Items down the left (sticky column), months across the top
+- **Grouping:** Items grouped under co-packer section headers (blue band, uppercase label)
+- **Subtotals:** Per-co-packer subtotal row at the bottom of each group (bold, light gray)
+- **Grand total:** Grand total row at the bottom of the table (darker background, thicker top border)
+- **Empty cells:** Em-dash (—) for months with zero production
+- **Zero items hidden:** Items with zero production across all 12 horizon months are excluded
+- **Orphan items excluded:** Items without a co_packer FK are not shown
+- **Status filter:** Filter by ProductionPO status (Projected, Actual, Complete); default shows all
+- **Filter pattern:** Canonical modal pattern — button with active count badge, Bootstrap modal,
+  session-stored filters, `?clear_filters=1` sentinel. Reuses `apps/core/filters.py` utilities
+  and `static/css/filters.css` classes.
+- **Data source:** `apps/production/cases.py` — `compute_production_cases_view(company, filters)`
+- **Template tag:** Uses existing `get_item` filter from `apps/core/templatetags/rbac.py` for
+  nested `{year: {month: cases}}` dict lookups in templates
+
 ---
 
 ## Phase 10.7 — Historical Event Import: Stage 3
