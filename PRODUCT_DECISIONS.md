@@ -778,6 +778,28 @@ into `compute_distributor_forecast` in 4-step-2b).
 - `generate_projected_orders` is unchanged; still drives the Orders row per-month button
   structure (but its count no longer contributes to `total_count`)
 
+### Production Cases Tab
+
+Read-only grid on the Production page showing case production quantities aggregated from
+`ProductionPOLine` records by item × month, grouped by co-packer.
+
+- **Location:** New tab to the right of "Production POs" on the Production page
+- **Horizon:** Current month + next 11 months (same 12-month convention as production forecast)
+- **Grid layout:** Items down the left (sticky column), months across the top
+- **Grouping:** Items grouped under co-packer section headers (blue band, uppercase label)
+- **Subtotals:** Per-co-packer subtotal row at the bottom of each group (bold, light gray)
+- **Grand total:** Grand total row at the bottom of the table (darker background, thicker top border)
+- **Empty cells:** Em-dash (—) for months with zero production
+- **Zero items hidden:** Items with zero production across all 12 horizon months are excluded
+- **Orphan items excluded:** Items without a co_packer FK are not shown
+- **Status filter:** Filter by ProductionPO status (Projected, Actual, Complete); default shows all
+- **Filter pattern:** Canonical modal pattern — button with active count badge, Bootstrap modal,
+  session-stored filters, `?clear_filters=1` sentinel. Reuses `apps/core/filters.py` utilities
+  and `static/css/filters.css` classes.
+- **Data source:** `apps/production/cases.py` — `compute_production_cases_view(company, filters)`
+- **Template tag:** Uses existing `get_item` filter from `apps/core/templatetags/rbac.py` for
+  nested `{year: {month: cases}}` dict lookups in templates
+
 ---
 
 ## Phase 10.7 — Historical Event Import: Stage 3
@@ -4248,3 +4270,79 @@ The nav system has no submenu/child-item concept — flat list only.
 - The `resolve_mappings` view, `bulk_save_mappings` endpoint, and `apps/imports/matching.py` are context-agnostic. The `next_url` and `context` fields in the session allow different upload flows to wire in.
 - Future sales import integration: ~20 lines changed in `import_upload()` to detect unmapped codes and store `{context: 'sales', next_url: reverse('import_upload')}` in session before redirecting. No new files or endpoints needed.
 - **~18 new tests** in `apps/distribution/tests_group_po_endpoints.py`. 3 G2 tests in `tests_group_forecast.py` updated to use `saved_orders` key (G3 response shape). All 284 tests pass.
+
+---
+
+## Filter Pattern Standardization (Account List Redesign)
+
+### Decision
+
+Established a canonical filter pattern for filtered list views. The account list was redesigned as the reference implementation.
+
+### Filter UI Standard
+
+- **Modal pattern** (Bootstrap 5) for 3+ filter dimensions. The Filters button sits in the page header row with a numeric badge showing active filter count.
+- **Hybrid search bar**: always-visible text search above the table; modal for all other filter dimensions.
+- Active indicator: `bg-warning text-dark` badge with `d-none` toggle (not `{% if %}`) on the Filters button.
+
+### Account List Changes
+
+- Replaced inline filter card with Bootstrap 5 modal filter.
+- Added pagination at 100 accounts per page.
+- Added filter dimensions: `account_type` (multi-value checkboxes), `county` (dropdown). Both were present in reports but missing from account list.
+- Search (`q`) is URL-only (not session-stored) for shareability.
+- Session key: `account_list_filters`.
+
+### Shared Infrastructure (New)
+
+- `apps/core/filters.py` — `apply_session_filters()`, `compute_active_filter_count()`, `is_filter_active()`.
+- `static/css/filters.css` — `.filter-section-label`, `.filter-checkbox-inline`, `.filter-checkbox-scroll`, mobile full-screen modal. Moved from `event_list.html` inline styles.
+- Filter pattern documented in `ARCHITECTURE.md`.
+- Helper function `get_filtered_account_queryset(qs, filters)` for reuse by export endpoints.
+
+### Migration Path for Older Views
+
+- `event_list` CSS: inline styles removed; now sourced from `static/css/filters.css`.
+- `event_list`, `report_*`: use the same modal pattern but have their own helpers/inline styles. Future refactors can migrate them to `apps/core/filters.py` incrementally.
+
+### Account List Polish (follow-on fixes)
+
+1. Visible "Filter Modal" comments confirmed as correct Django `{# #}` syntax — no code change; user-reported issue was browser cache.
+2. County filter dropdown now sorts case-insensitively via `Lower()`.
+3. County filter includes "(Unknown county)" sentinel option (value `__unknown__`) when accounts exist with `county='Unknown'` — the model default set during sales data import. Selecting this option filters to only those accounts via `get_filtered_account_queryset`.
+4. Fixed nested-scroll issue in filter modal — added `overscroll-behavior: contain` to `.filter-checkbox-scroll` in `static/css/filters.css` so the Account Type and Class of Trade checkbox lists scroll independently of the Bootstrap `modal-dialog-scrollable` modal body.
+5. New `smart_title` template filter (`apps/accounts/templatetags/account_filters.py`) — Title Case applied only when the value is currently ALL CAPS (e.g. `"SOCO TAVERN"` → `"Soco Tavern"`). Mixed-case names (`"MGM Grand"`) are preserved as-is. Applied to `account.name` in the account list table.
+6. Quick-view modal extraction (from dashboard to shared partial) DEFERRED — will be tackled as a standalone effort.
+
+### Multi-Month PO Lookahead Algorithm
+
+- `suggest_po_for_month` now evaluates up to 5 future months (M+1 through M+5) instead of just M+1.
+- Self-aware allocation: each pass updates a running working inventory map so subsequent passes see the effect of prior allocations. No double-counting across passes.
+- Stops early when total capacity reaches 0, no items below safety in current pass, or after pass 5.
+- Items allocated across multiple passes are combined into single PO lines (one line per item).
+- Greedy allocation within each pass: largest deficit first, partial allocation when capacity is limited.
+- Replaces previous single-month lookahead which only evaluated M+1.
+- Goal: maximize truck/order capacity utilization by pre-positioning inventory for multiple future months.
+- `_propagate_allocation_forward(working_inv, item_id, po_year, po_month, cases_added)` — adds allocated cases to working inventory at the PO month and all subsequent months in the working map.
+- `MAX_LOOKAHEAD_PASSES = 5` constant in `apps/distribution/order_generation.py`.
+
+### Production Forecast Tab — Co-Packer Grouping
+
+- Production Forecast tab groups item rows by co-packer with section header bands (same visual pattern as Production Cases tab).
+- Co-packer grouping is NOT on the Distributor Forecast or Group Forecast pages — those pages display items in a flat list without grouping headers.
+- Visual grouping only — no subtotals or totals rows.
+- Items without a co-packer grouped under "No co-packer" section, placed alphabetically after named co-packer sections.
+- Co-packer sections sorted alphabetically by co-packer name; items within each section sorted by item name.
+- Replaced earlier brand-based `{% ifchanged %}` grouping in `production_home.html` Forecast tab.
+- `.co-packer-header td` CSS in `static/css/filters.css` (loaded globally via base.html) shared by all co-packer group headers.
+- `production_forecast_grouped` context variable: list of `{'co_packer_name': str, 'rows': [row, ...]}` dicts, computed in `production_home` view from `forecast_result.rows`.
+- `Item.co_packer` added to `select_related` in `compute_production_forecast` (`apps/production/forecast.py`) to avoid N+1 queries.
+
+### Multi-Pass Lookahead Gating
+
+- Pass 1 (M+1 lookahead) runs first. If it produces zero allocations, `suggest_po_for_month` returns `{'lines': []}` immediately.
+- Passes 2–5 only run when pass 1 allocated at least one item.
+- Rationale: prevents successive "+ Add Order" clicks from proposing POs that cover only future months when all current-month (M+1) inventory needs are already satisfied by previously saved POs. A PO with no M+1 need is considered opportunistic and should not be auto-suggested.
+- Implementation: inner `run_pass(pass_num)` function uses `nonlocal remaining_capacity` to mutate capacity across passes. Returns count of items allocated in that pass.
+- Gate check: `pass_1_count = run_pass(0); if pass_1_count == 0: return {'lines': []}`.
+- If pass 1 allocates anything (even partially), passes 2–5 run normally to fill remaining capacity.

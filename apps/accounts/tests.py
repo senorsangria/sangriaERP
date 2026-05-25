@@ -781,7 +781,7 @@ class AmbassadorManagerAccountListTest(TestCase):
     def test_ambassador_manager_account_list_only_own(self):
         resp = self.client.get(reverse('account_list'))
         self.assertEqual(resp.status_code, 200)
-        accounts = list(resp.context['accounts'])
+        accounts = list(resp.context['page_obj'].object_list)
         self.assertIn(self.am_account, accounts)
         self.assertNotIn(self.other_account, accounts)
 
@@ -799,7 +799,7 @@ class AmbassadorManagerAccountListTest(TestCase):
 
         resp = self.client.get(reverse('account_list'), {'active_status': 'inactive'})
         self.assertEqual(resp.status_code, 200)
-        accounts = list(resp.context['accounts'])
+        accounts = list(resp.context['page_obj'].object_list)
 
         self.assertIn(self.am_account, accounts)          # inactive + linked to AM
         self.assertNotIn(self.other_account, accounts)    # active, not linked to AM
@@ -1225,3 +1225,329 @@ class NoteAPITest(TestCase):
         resp = self._post(url, {'body': 'Should be blocked.'})
         self.assertEqual(resp.status_code, 403)
         self.assertEqual(AccountNote.objects.filter(account=self.account).count(), 0)
+
+
+# ---------------------------------------------------------------------------
+# account_list redesign: filters, pagination, search, get_filtered helper
+# ---------------------------------------------------------------------------
+
+def _make_account(company, distributor=None, name="Test Liquors", **kwargs):
+    defaults = dict(
+        street="1 Main St", city="Hoboken", state="NJ",
+        address_normalized="1 MAIN ST", city_normalized="HOBOKEN",
+        state_normalized="NJ", is_active=True, merged_into=None,
+    )
+    defaults.update(kwargs)
+    return Account.objects.create(company=company, distributor=distributor, name=name, **defaults)
+
+
+class AccountListFilterTest(TestCase):
+    """account_list view: filter dimensions, session persistence, search, pagination."""
+
+    def setUp(self):
+        from apps.core.rbac import Role
+        self.company = make_company("Filter Co")
+        self.dist_a = Distributor.objects.create(company=self.company, name="Dist Alpha")
+        self.dist_b = Distributor.objects.create(company=self.company, name="Dist Beta")
+        self.user = User.objects.create_user(
+            username="filter_admin", password="testpass123", company=self.company
+        )
+        self.user.roles.set([Role.objects.get(codename="supplier_admin")])
+        self.client = Client()
+        self.client.login(username="filter_admin", password="testpass123")
+        self.url = reverse("account_list")
+
+    # --- pagination ---
+
+    def test_paginates_at_100(self):
+        for i in range(105):
+            _make_account(self.company, self.dist_a, name=f"Account {i:03d}")
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.context["page_obj"].object_list), 100)
+        self.assertEqual(resp.context["total_count"], 105)
+
+    def test_page_2_returns_remaining(self):
+        for i in range(105):
+            _make_account(self.company, self.dist_a, name=f"Account {i:03d}")
+        resp = self.client.get(self.url + "?page=2")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.context["page_obj"].object_list), 5)
+
+    # --- distributor filter ---
+
+    def test_filter_by_distributor(self):
+        a1 = _make_account(self.company, self.dist_a, "Alpha Store")
+        a2 = _make_account(self.company, self.dist_b, "Beta Store")
+        resp = self.client.get(self.url + f"?distributor={self.dist_a.pk}")
+        self.assertEqual(resp.status_code, 200)
+        pks = [a.pk for a in resp.context["page_obj"].object_list]
+        self.assertIn(a1.pk, pks)
+        self.assertNotIn(a2.pk, pks)
+
+    def test_filter_by_distributor_none(self):
+        a_no_dist = _make_account(self.company, None, "No Dist Store")
+        a_has_dist = _make_account(self.company, self.dist_a, "Has Dist Store")
+        resp = self.client.get(self.url + "?distributor=none")
+        self.assertEqual(resp.status_code, 200)
+        pks = [a.pk for a in resp.context["page_obj"].object_list]
+        self.assertIn(a_no_dist.pk, pks)
+        self.assertNotIn(a_has_dist.pk, pks)
+
+    # --- on_off filter ---
+
+    def test_filter_by_on_off(self):
+        on_acct = _make_account(self.company, self.dist_a, "On Premise", on_off_premise="ON")
+        off_acct = _make_account(self.company, self.dist_a, "Off Premise", on_off_premise="OFF")
+        resp = self.client.get(self.url + "?on_off=ON")
+        pks = [a.pk for a in resp.context["page_obj"].object_list]
+        self.assertIn(on_acct.pk, pks)
+        self.assertNotIn(off_acct.pk, pks)
+
+    # --- account_type multi-value ---
+
+    def test_filter_by_account_type_multi(self):
+        bar = _make_account(self.company, self.dist_a, "The Bar", account_type="Bar")
+        rest = _make_account(self.company, self.dist_a, "The Rest", account_type="Restaurant")
+        store = _make_account(self.company, self.dist_a, "Liquor Store", account_type="Liquor Store")
+        resp = self.client.get(self.url + "?account_type=Bar&account_type=Restaurant")
+        pks = [a.pk for a in resp.context["page_obj"].object_list]
+        self.assertIn(bar.pk, pks)
+        self.assertIn(rest.pk, pks)
+        self.assertNotIn(store.pk, pks)
+
+    # --- county filter ---
+
+    def test_filter_by_county(self):
+        hudson = _make_account(self.company, self.dist_a, "Hudson Store", county="Hudson")
+        bergen = _make_account(self.company, self.dist_a, "Bergen Store", county="Bergen")
+        resp = self.client.get(self.url + "?county=Hudson")
+        pks = [a.pk for a in resp.context["page_obj"].object_list]
+        self.assertIn(hudson.pk, pks)
+        self.assertNotIn(bergen.pk, pks)
+
+    # --- active_status filter ---
+
+    def test_filter_by_active_status_inactive(self):
+        active_acct = _make_account(self.company, self.dist_a, "Active One", is_active=True)
+        inactive_acct = _make_account(self.company, self.dist_a, "Inactive One", is_active=False)
+        resp = self.client.get(self.url + "?active_status=inactive")
+        pks = [a.pk for a in resp.context["page_obj"].object_list]
+        self.assertNotIn(active_acct.pk, pks)
+        self.assertIn(inactive_acct.pk, pks)
+
+    # --- search ---
+
+    def test_search_filters_by_name(self):
+        target = _make_account(self.company, self.dist_a, "Unique Name Store")
+        other = _make_account(self.company, self.dist_a, "Something Else")
+        resp = self.client.get(self.url + "?q=Unique+Name")
+        pks = [a.pk for a in resp.context["page_obj"].object_list]
+        self.assertIn(target.pk, pks)
+        self.assertNotIn(other.pk, pks)
+
+    def test_search_filters_by_city(self):
+        jersey = _make_account(self.company, self.dist_a, "Jersey Store", city="Jersey City")
+        hoboken = _make_account(self.company, self.dist_a, "Hoboken Store", city="Hoboken")
+        resp = self.client.get(self.url + "?q=Jersey+City")
+        pks = [a.pk for a in resp.context["page_obj"].object_list]
+        self.assertIn(jersey.pk, pks)
+        self.assertNotIn(hoboken.pk, pks)
+
+    def test_search_is_not_stored_in_session(self):
+        _make_account(self.company, self.dist_a, "Session Test Store")
+        self.client.get(self.url + "?q=Session+Test")
+        session = self.client.session
+        stored = session.get("account_list_filters", {})
+        self.assertNotIn("q", stored)
+
+    # --- session persistence ---
+
+    def test_filters_persist_in_session(self):
+        self.client.get(self.url + f"?distributor={self.dist_a.pk}")
+        session = self.client.session
+        stored = session.get("account_list_filters", {})
+        self.assertEqual(stored.get("distributor"), str(self.dist_a.pk))
+
+    def test_clear_filters_removes_session(self):
+        self.client.get(self.url + f"?distributor={self.dist_a.pk}")
+        resp = self.client.get(self.url + "?clear_filters=1")
+        self.assertRedirects(resp, self.url)
+        session = self.client.session
+        self.assertNotIn("account_list_filters", session)
+
+    def test_filters_restored_from_session_on_bare_get(self):
+        _make_account(self.company, self.dist_a, "Restore A")
+        _make_account(self.company, self.dist_b, "Restore B")
+        self.client.get(self.url + f"?distributor={self.dist_a.pk}")
+        resp = self.client.get(self.url)
+        pks = [a.pk for a in resp.context["page_obj"].object_list]
+        names = [a.name for a in resp.context["page_obj"].object_list]
+        self.assertIn("Restore A", names)
+        self.assertNotIn("Restore B", names)
+
+    # --- active_filter_count ---
+
+    def test_active_filter_count_correct(self):
+        resp = self.client.get(self.url + f"?distributor={self.dist_a.pk}&on_off=ON")
+        self.assertEqual(resp.context["active_filter_count"], 2)
+        self.assertTrue(resp.context["filters_active"])
+
+    def test_active_filter_count_zero_when_no_filters(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.context["active_filter_count"], 0)
+        self.assertFalse(resp.context["filters_active"])
+
+    # --- pagination preserves search ---
+
+    def test_pagination_preserves_search_in_links(self):
+        for i in range(105):
+            _make_account(self.company, self.dist_a, name=f"Pag Store {i:03d}")
+        resp = self.client.get(self.url + "?q=Pag+Store")
+        content = resp.content.decode()
+        self.assertIn("page=2", content)
+        self.assertIn("q=Pag", content)
+
+
+class GetFilteredAccountQuerysetTest(TestCase):
+    """get_filtered_account_queryset helper: reusable filter logic."""
+
+    def setUp(self):
+        self.company = make_company("Helper Co")
+        self.dist = Distributor.objects.create(company=self.company, name="Dist")
+
+    def test_filters_by_distributor_pk(self):
+        from apps.accounts.views import get_filtered_account_queryset
+        a1 = _make_account(self.company, self.dist, "A1")
+        a2 = _make_account(self.company, None, "A2")
+        qs = Account.objects.filter(company=self.company)
+        result = get_filtered_account_queryset(qs, {'distributor': str(self.dist.pk)})
+        pks = list(result.values_list('pk', flat=True))
+        self.assertIn(a1.pk, pks)
+        self.assertNotIn(a2.pk, pks)
+
+    def test_filters_by_distributor_none_sentinel(self):
+        from apps.accounts.views import get_filtered_account_queryset
+        a1 = _make_account(self.company, None, "No Dist")
+        a2 = _make_account(self.company, self.dist, "Has Dist")
+        qs = Account.objects.filter(company=self.company)
+        result = get_filtered_account_queryset(qs, {'distributor': 'none'})
+        pks = list(result.values_list('pk', flat=True))
+        self.assertIn(a1.pk, pks)
+        self.assertNotIn(a2.pk, pks)
+
+    def test_filters_by_account_type_list(self):
+        from apps.accounts.views import get_filtered_account_queryset
+        bar = _make_account(self.company, self.dist, "Bar", account_type="Bar")
+        rest = _make_account(self.company, self.dist, "Restaurant", account_type="Restaurant")
+        store = _make_account(self.company, self.dist, "Store", account_type="Store")
+        qs = Account.objects.filter(company=self.company)
+        result = get_filtered_account_queryset(qs, {'account_type': ['Bar', 'Restaurant']})
+        pks = list(result.values_list('pk', flat=True))
+        self.assertIn(bar.pk, pks)
+        self.assertIn(rest.pk, pks)
+        self.assertNotIn(store.pk, pks)
+
+    def test_no_filters_returns_full_qs(self):
+        from apps.accounts.views import get_filtered_account_queryset
+        _make_account(self.company, self.dist, "X")
+        _make_account(self.company, self.dist, "Y")
+        qs = Account.objects.filter(company=self.company)
+        result = get_filtered_account_queryset(qs, {})
+        self.assertEqual(result.count(), 2)
+
+    def test_unknown_county_sentinel_filters_correctly(self):
+        from apps.accounts.views import get_filtered_account_queryset
+        unknown = _make_account(self.company, self.dist, "Unknown Co", county="Unknown")
+        known = _make_account(self.company, self.dist, "Hudson Co", county="Hudson")
+        qs = Account.objects.filter(company=self.company)
+        result = get_filtered_account_queryset(qs, {'county': '__unknown__'})
+        pks = list(result.values_list('pk', flat=True))
+        self.assertIn(unknown.pk, pks)
+        self.assertNotIn(known.pk, pks)
+
+
+# ---------------------------------------------------------------------------
+# smart_title template filter
+# ---------------------------------------------------------------------------
+
+from apps.accounts.templatetags.account_filters import smart_title
+
+
+class SmartTitleFilterTest(TestCase):
+    def test_all_caps_becomes_title_case(self):
+        self.assertEqual(smart_title("JOHN'S BAR"), "John's Bar")
+
+    def test_all_caps_with_multiple_words(self):
+        self.assertEqual(smart_title("SOCO TAVERN"), "Soco Tavern")
+
+    def test_mixed_case_unchanged(self):
+        self.assertEqual(smart_title("MGM Grand"), "MGM Grand")
+
+    def test_lowercase_unchanged(self):
+        self.assertEqual(smart_title("john's bar"), "john's bar")
+
+    def test_all_caps_with_ampersand(self):
+        self.assertEqual(smart_title("BAR & GRILL"), "Bar & Grill")
+
+    def test_empty_string(self):
+        self.assertEqual(smart_title(""), "")
+
+    def test_none(self):
+        self.assertEqual(smart_title(None), None)
+
+    def test_numeric_value_unchanged(self):
+        self.assertEqual(smart_title(123), 123)
+
+    def test_no_letters_unchanged(self):
+        self.assertEqual(smart_title("123-456"), "123-456")
+
+    def test_apostrophe_after_capital(self):
+        self.assertEqual(smart_title("O'CONNOR'S"), "O'Connor's")
+
+
+# ---------------------------------------------------------------------------
+# County filter: unknown option, sentinel, and case-insensitive sort
+# ---------------------------------------------------------------------------
+
+class CountyFilterTest(TestCase):
+    """account_list view: (Unknown county) option, __unknown__ sentinel, case-insensitive sort."""
+
+    def setUp(self):
+        from apps.core.rbac import Role
+        self.company = make_company("County Filter Co")
+        self.dist = Distributor.objects.create(company=self.company, name="Dist County")
+        self.user = User.objects.create_user(
+            username="county_admin", password="testpass123", company=self.company
+        )
+        self.user.roles.set([Role.objects.get(codename="supplier_admin")])
+        self.client = Client()
+        self.client.login(username="county_admin", password="testpass123")
+        self.url = reverse("account_list")
+
+    def test_county_dropdown_includes_unknown_option_when_accounts_have_unknown(self):
+        _make_account(self.company, self.dist, "Unknown Store", county="Unknown")
+        response = self.client.get(self.url)
+        self.assertContains(response, 'value="__unknown__"')
+        self.assertContains(response, '(Unknown county)')
+
+    def test_county_dropdown_omits_unknown_option_when_no_unknown_accounts(self):
+        _make_account(self.company, self.dist, "Hudson Store", county="Hudson")
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'value="__unknown__"')
+
+    def test_filter_by_unknown_county_sentinel(self):
+        unknown = _make_account(self.company, self.dist, "Unknown Store", county="Unknown")
+        known = _make_account(self.company, self.dist, "Hudson Store", county="Hudson")
+        response = self.client.get(self.url, {'county': '__unknown__'})
+        pks = [a.pk for a in response.context['page_obj'].object_list]
+        self.assertIn(unknown.pk, pks)
+        self.assertNotIn(known.pk, pks)
+
+    def test_county_list_sorted_case_insensitive(self):
+        _make_account(self.company, self.dist, "Bronx Store", county="Bronx")
+        _make_account(self.company, self.dist, "Albany Store", county="albany")
+        response = self.client.get(self.url)
+        counties = list(response.context['counties'])
+        self.assertEqual(counties.index("albany"), 0)
+        self.assertEqual(counties.index("Bronx"), 1)

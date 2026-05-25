@@ -7,6 +7,7 @@ import csv
 import json
 import os
 import uuid
+from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages

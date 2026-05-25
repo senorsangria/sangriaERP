@@ -7,6 +7,7 @@ Phase D: production PO modal endpoints, production_po_additions forecast integra
 Phase D2: COMPLETE status, Production POs tab list, single-PO modal endpoint.
 """
 import json
+from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
@@ -18,7 +19,9 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 
 from apps.catalog.models import Brand, CoPacker, Item
+from apps.core.filters import apply_session_filters, compute_active_filter_count
 from apps.distribution.models import DistributorPO, DistributorPOLine
+from .cases import compute_production_cases_view
 from .forecast import compute_production_forecast, MONTH_SHORT
 from .forms import MONTH_CHOICES, OwnInventorySnapshotPeriodForm
 from .models import OwnInventorySnapshot, ProductionPO, ProductionPOLine
@@ -26,6 +29,10 @@ from .models import OwnInventorySnapshot, ProductionPO, ProductionPOLine
 
 # Month names list for views (full names, indexed 0-based)
 MONTH_NAMES = [m for _, m in MONTH_CHOICES]
+
+DEFAULT_CASES_FILTERS = {
+    'status': [],  # list of ProductionPO.Status choice values; empty = all statuses
+}
 
 
 def _format_quantity_cases(qty):
@@ -73,7 +80,7 @@ def production_home(request):
     company = request.user.company
 
     active_tab = request.GET.get('tab', 'forecast')
-    if active_tab not in ('forecast', 'inventory', 'production_pos'):
+    if active_tab not in ('forecast', 'inventory', 'production_pos', 'production_cases'):
         active_tab = 'forecast'
 
     # Build production_po_additions dict for the forecast algorithm
@@ -88,6 +95,20 @@ def production_home(request):
         company,
         production_po_additions=production_po_additions or None,
     )
+
+    # Group forecast rows by co-packer for visual grouping in template
+    _grouped_rows = defaultdict(list)
+    for _row in forecast_result.get('rows', []):
+        _item = _row['item']
+        _co_packer = _item.co_packer
+        _cp_key = (_co_packer.pk, _co_packer.name) if _co_packer else (None, 'No co-packer')
+        _grouped_rows[_cp_key].append(_row)
+    production_forecast_grouped = []
+    for _cp_key in sorted(_grouped_rows.keys(), key=lambda k: (k[0] is None, k[1])):
+        production_forecast_grouped.append({
+            'co_packer_name': _cp_key[1],
+            'rows': sorted(_grouped_rows[_cp_key], key=lambda r: r['item'].name),
+        })
 
     # Production PO count by month for the Production POs row in the grid
     production_po_count_rows = (
@@ -239,11 +260,26 @@ def production_home(request):
 
     month_names_dict = {i: name for i, name in enumerate(MONTH_NAMES, 1)}
 
+    # Production Cases tab — always computed (matches behaviour of other tabs)
+    if request.GET.get('clear_filters') == '1':
+        request.session.pop('production_cases_filters', None)
+        return redirect('production_home')
+
+    cases_active_filters, _ = apply_session_filters(
+        request, 'production_cases_filters', DEFAULT_CASES_FILTERS
+    )
+    cases_view = compute_production_cases_view(company, cases_active_filters)
+    cases_active_filter_count = compute_active_filter_count(
+        cases_active_filters, DEFAULT_CASES_FILTERS
+    )
+    cases_filters_active = cases_active_filter_count > 0
+
     return render(request, 'production/production_home.html', {
         'company': company,
         'active_tab': active_tab,
         # Forecast tab
         'forecast_result': forecast_result,
+        'production_forecast_grouped': production_forecast_grouped,
         'production_pos_by_month': production_pos_by_month,
         'dist_orders_by_month': dist_orders_by_month,
         'items_missing_config': items_missing_config,
@@ -264,6 +300,12 @@ def production_home(request):
         'co_packer_choices_pos': co_packer_choices_pos,
         'status_group_choices': status_group_choices,
         'month_names_dict': month_names_dict,
+        # Production Cases tab
+        'cases_view': cases_view,
+        'cases_active_filters': cases_active_filters,
+        'cases_active_filter_count': cases_active_filter_count,
+        'cases_filters_active': cases_filters_active,
+        'po_status_choices': ProductionPO.Status.choices,
     })
 
 

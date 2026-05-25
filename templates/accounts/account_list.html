@@ -1,137 +1,91 @@
 {% extends "base.html" %}
+{% load account_filters %}
 
 {% block title %}Accounts{% endblock %}
 
 {% block content %}
 
-<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
+{# ---- Page header ---- #}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
   <div>
     <h1 class="h3 mb-0 fw-bold">Accounts</h1>
-    <p class="text-muted small mb-0">Retail locations for {{ user.company.name }}</p>
+    <p class="text-muted small mb-0">
+      {{ total_count }} account{{ total_count|pluralize }}
+      {% if search_query %}&nbsp;&mdash; searching &ldquo;{{ search_query }}&rdquo;{% endif %}
+    </p>
   </div>
-  <a href="{% url 'account_create' %}" class="btn btn-primary">
-    <i class="bi bi-plus-lg me-1"></i>New Account
-  </a>
+  <div class="d-flex align-items-center gap-2">
+    <button type="button"
+            class="btn btn-outline-secondary btn-sm"
+            data-bs-toggle="modal"
+            data-bs-target="#filterModal">
+      <i class="bi bi-funnel me-1"></i>Filters
+      <span id="filter-count-badge"
+            class="badge bg-warning text-dark ms-1 {% if not filters_active %}d-none{% endif %}">
+        {{ active_filter_count }}
+      </span>
+    </button>
+    <a href="{% url 'account_create' %}" class="btn btn-primary btn-sm">
+      <i class="bi bi-plus-lg me-1"></i>New Account
+    </a>
+  </div>
 </div>
 
-<!-- Filters -->
-<div class="card border-0 shadow-sm mb-4">
-  <div class="card-body py-3">
-    <div class="d-flex align-items-center justify-content-between mb-2">
-      <span class="fw-semibold small text-muted">Filters</span>
-      {% if filters_active %}
-      <span class="badge bg-warning text-dark">Filters Active</span>
-      {% endif %}
-    </div>
-    <form method="get" class="row g-2 align-items-end">
-
-      <!-- Search -->
-      <div class="col-12 col-sm-6 col-lg-3">
-        <label class="form-label small text-muted mb-1">Search</label>
-        <div class="input-group input-group-sm">
-          <span class="input-group-text"><i class="bi bi-search"></i></span>
-          <input
-            type="text" name="q" class="form-control"
-            placeholder="Name or city…"
-            value="{{ filters.q }}"
-          >
-        </div>
-      </div>
-
-      <!-- Distributor filter -->
-      <div class="col-12 col-sm-6 col-lg-3">
-        <label class="form-label small text-muted mb-1">Distributor</label>
-        <select name="distributor" class="form-select form-select-sm">
-          <option value="">All</option>
-          {% for dist in filter_distributors %}
-          <option value="{{ dist.pk }}" {% if filters.distributor == dist.pk|stringformat:"s" %}selected{% endif %}>
-            {{ dist.name }}
-          </option>
-          {% endfor %}
-        </select>
-      </div>
-
-      <!-- On/Off Premise filter -->
-      <div class="col-12 col-sm-6 col-lg-2">
-        <label class="form-label small text-muted mb-1">On / Off Premise</label>
-        <select name="on_off" class="form-select form-select-sm">
-          <option value="">All</option>
-          {% if 'ON' in on_off_values %}
-          <option value="ON" {% if filters.on_off == 'ON' %}selected{% endif %}>ON</option>
-          {% endif %}
-          {% if 'OFF' in on_off_values %}
-          <option value="OFF" {% if filters.on_off == 'OFF' %}selected{% endif %}>OFF</option>
-          {% endif %}
-          {% if 'Unknown' in on_off_values %}
-          <option value="Unknown" {% if filters.on_off == 'Unknown' %}selected{% endif %}>Unknown</option>
-          {% endif %}
-        </select>
-      </div>
-
-      <!-- Source filter -->
-      <div class="col-12 col-sm-6 col-lg-2">
-        <label class="form-label small text-muted mb-1">Source</label>
-        <select name="source" class="form-select form-select-sm">
-          <option value="">All</option>
-          {% if has_manual %}
-          <option value="manual" {% if filters.source == 'manual' %}selected{% endif %}>Manual</option>
-          {% endif %}
-          {% if has_imported %}
-          <option value="imported" {% if filters.source == 'imported' %}selected{% endif %}>Imported</option>
-          {% endif %}
-        </select>
-      </div>
-
-      <!-- Status filter -->
-      <div class="col-12 col-sm-6 col-lg-2">
-        <label class="form-label small text-muted mb-1">Status</label>
-        <select name="active_status" class="form-select form-select-sm">
-          <option value="">All</option>
-          <option value="active"   {% if filters.active_status == 'active' %}selected{% endif %}>Active</option>
-          <option value="inactive" {% if filters.active_status == 'inactive' %}selected{% endif %}>Inactive</option>
-        </select>
-      </div>
-
-      <!-- Buttons -->
-      <div class="col-12 col-lg-auto">
-        <button type="submit" class="btn btn-outline-primary btn-sm me-1">Filter</button>
-        {% if filters_active %}
-        <a href="{% url 'account_list' %}?clear_filters=1" class="btn btn-outline-secondary btn-sm">Clear</a>
-        {% endif %}
-      </div>
-
-    </form>
-
-    {% if can_bulk_delete %}
-    <div class="mt-2" id="bulkDeleteBar" style="display:none;">
-      <button type="button" class="btn btn-danger btn-sm"
-              data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
-        <i class="bi bi-trash me-1"></i>Delete Selected
-        (<span id="selectedCount">0</span>)
-      </button>
-    </div>
+{# ---- Always-visible search bar ---- #}
+<form method="get" class="mb-3" id="searchForm">
+  {# Preserve current page for search (reset to page 1 on new search) #}
+  <div class="input-group">
+    <span class="input-group-text bg-white border-end-0">
+      <i class="bi bi-search text-muted"></i>
+    </span>
+    <input type="text"
+           name="q"
+           class="form-control border-start-0"
+           placeholder="Search by account name or city…"
+           value="{{ search_query }}"
+           autocomplete="off">
+    <button type="submit" class="btn btn-outline-primary">Search</button>
+    {% if search_query %}
+    <a href="{% url 'account_list' %}" class="btn btn-outline-secondary">Clear Search</a>
     {% endif %}
+  </div>
+</form>
 
+{% if show_no_coverage_message %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-shop fs-1 text-muted d-block mb-3"></i>
+    <h5 class="fw-semibold">No accounts assigned to your coverage area</h5>
+    <p class="text-muted mb-0">
+      No accounts are currently assigned to your coverage area.
+      Please contact your Supplier Admin to set up your coverage areas.
+    </p>
   </div>
 </div>
-
-{% if accounts %}
+{% elif page_obj %}
 
 {% if can_bulk_delete %}
-<!-- Bulk delete form wraps the table -->
 <form method="post" action="{% url 'account_bulk_delete' %}" id="bulkDeleteForm">
   {% csrf_token %}
 {% endif %}
 
 <div class="card border-0 shadow-sm">
+  {% if can_bulk_delete %}
+  <div class="card-header bg-white border-bottom-0 py-2" id="bulkDeleteBar" style="display:none;">
+    <button type="button" class="btn btn-danger btn-sm"
+            data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
+      <i class="bi bi-trash me-1"></i>Delete Selected
+      (<span id="selectedCount">0</span>)
+    </button>
+  </div>
+  {% endif %}
   <div class="table-responsive">
     <table class="table table-hover mb-0 align-middle">
       <thead class="table-light">
         <tr>
           {% if can_bulk_delete %}
           <th style="width:40px;">
-            <input type="checkbox" id="selectAllCheckbox" class="form-check-input"
-                   title="Select all">
+            <input type="checkbox" id="selectAllCheckbox" class="form-check-input" title="Select all">
           </th>
           {% endif %}
           <th>Account Name</th>
@@ -145,7 +99,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for account in accounts %}
+        {% for account in page_obj %}
         <tr>
           {% if can_bulk_delete %}
           <td>
@@ -156,10 +110,9 @@
           <td>
             <div class="fw-medium">
               <a href="{% url 'account_detail_combined' account.pk %}" class="text-decoration-none text-dark">
-                {{ account.name }}
+                {{ account.name|smart_title }}
               </a>
             </div>
-            <!-- Mobile: city/state + source under name -->
             <div class="d-lg-none text-muted small">
               {% if account.city or account.state %}
               {{ account.city }}{% if account.city and account.state %}, {% endif %}{{ account.state }}
@@ -226,21 +179,58 @@
 </form>
 {% endif %}
 
-<p class="text-muted small mt-2">{{ accounts|length }} account{{ accounts|length|pluralize }}</p>
+{# ---- Pagination ---- #}
+{% if page_obj.has_other_pages %}
+<nav class="mt-3" aria-label="Account pagination">
+  <ul class="pagination justify-content-center mb-0">
+    {% if page_obj.has_previous %}
+    <li class="page-item">
+      <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}">
+        <i class="bi bi-chevron-left"></i>
+      </a>
+    </li>
+    {% else %}
+    <li class="page-item disabled">
+      <span class="page-link"><i class="bi bi-chevron-left"></i></span>
+    </li>
+    {% endif %}
+
+    <li class="page-item active" aria-current="page">
+      <span class="page-link">
+        Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+      </span>
+    </li>
+
+    {% if page_obj.has_next %}
+    <li class="page-item">
+      <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}">
+        <i class="bi bi-chevron-right"></i>
+      </a>
+    </li>
+    {% else %}
+    <li class="page-item disabled">
+      <span class="page-link"><i class="bi bi-chevron-right"></i></span>
+    </li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
 
 {% else %}
+{# ---- Empty state ---- #}
 <div class="card border-0 shadow-sm">
   <div class="card-body text-center py-5">
     <i class="bi bi-shop fs-1 text-muted d-block mb-3"></i>
-    {% if show_no_coverage_message %}
-    <h5 class="fw-semibold">No accounts assigned to your coverage area</h5>
-    <p class="text-muted mb-3">
-      No accounts are currently assigned to your coverage area.
-      Please contact your Supplier Admin to set up your coverage areas.
-    </p>
-    {% elif filters_active %}
+    {% if filters_active or search_query %}
     <h5 class="fw-semibold">No accounts match those filters</h5>
-    <p class="text-muted mb-3">Try adjusting your filters.</p>
+    <p class="text-muted mb-3">Try adjusting your filters or search.</p>
+    {% if filters_active %}
+    <a href="?clear_filters=1{% if search_query %}&q={{ search_query }}{% endif %}"
+       class="btn btn-outline-secondary btn-sm me-2">Clear Filters</a>
+    {% endif %}
+    {% if search_query %}
+    <a href="{% url 'account_list' %}" class="btn btn-outline-secondary btn-sm">Clear All</a>
+    {% endif %}
     {% else %}
     <h5 class="fw-semibold">No accounts yet</h5>
     <p class="text-muted mb-3">Create your first account to get started.</p>
@@ -252,8 +242,102 @@
 </div>
 {% endif %}
 
+{# Filter Modal #}
+<div class="modal fade filter-modal" id="filterModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title fw-semibold">
+          <i class="bi bi-funnel me-1"></i>Filter Accounts
+        </h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="accountFilterForm" method="get" action="{% url 'account_list' %}" autocomplete="off">
+          {# Preserve search query when applying filters #}
+          {% if search_query %}
+          <input type="hidden" name="q" value="{{ search_query }}">
+          {% endif %}
+
+          <div class="filter-section-label">Distributor</div>
+          <select name="distributor" class="form-select form-select-sm mb-1">
+            <option value="">All distributors</option>
+            <option value="none" {% if active_filters.distributor == 'none' %}selected{% endif %}>(No distributor assigned)</option>
+            {% for d in distributors %}
+            <option value="{{ d.pk }}"
+              {% if active_filters.distributor == d.pk|stringformat:"s" %}selected{% endif %}>
+              {{ d.name }}
+            </option>
+            {% endfor %}
+          </select>
+
+          <div class="filter-section-label">On / Off Premise</div>
+          <select name="on_off" class="form-select form-select-sm mb-1">
+            <option value="">All</option>
+            <option value="ON"      {% if active_filters.on_off == 'ON' %}selected{% endif %}>ON</option>
+            <option value="OFF"     {% if active_filters.on_off == 'OFF' %}selected{% endif %}>OFF</option>
+            <option value="Unknown" {% if active_filters.on_off == 'Unknown' %}selected{% endif %}>Unknown</option>
+          </select>
+
+          {% if account_types %}
+          <div class="filter-section-label">Account Type</div>
+          <div class="filter-checkbox-scroll mb-1">
+            {% for t in account_types %}
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox"
+                     name="account_type" value="{{ t }}"
+                     id="atype_{{ forloop.counter }}"
+                     {% if t in active_filters.account_type %}checked{% endif %}>
+              <label class="form-check-label small" for="atype_{{ forloop.counter }}">{{ t }}</label>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
+          {% if counties or has_unknown_county_accounts %}
+          <div class="filter-section-label">County</div>
+          <select name="county" class="form-select form-select-sm mb-1">
+            <option value="">All counties</option>
+            {% if has_unknown_county_accounts %}
+            <option value="__unknown__" {% if active_filters.county == '__unknown__' %}selected{% endif %}>(Unknown county)</option>
+            {% endif %}
+            {% for c in counties %}
+            <option value="{{ c }}" {% if active_filters.county == c %}selected{% endif %}>{{ c }}</option>
+            {% endfor %}
+          </select>
+          {% endif %}
+
+          <div class="filter-section-label">Source</div>
+          <select name="source" class="form-select form-select-sm mb-1">
+            <option value="">All</option>
+            <option value="manual"   {% if active_filters.source == 'manual' %}selected{% endif %}>Manual</option>
+            <option value="imported" {% if active_filters.source == 'imported' %}selected{% endif %}>Imported</option>
+          </select>
+
+          <div class="filter-section-label">Status</div>
+          <select name="active_status" class="form-select form-select-sm">
+            <option value="">All</option>
+            <option value="active"   {% if active_filters.active_status == 'active' %}selected{% endif %}>Active</option>
+            <option value="inactive" {% if active_filters.active_status == 'inactive' %}selected{% endif %}>Inactive</option>
+          </select>
+        </form>
+      </div>
+      <div class="modal-footer py-2">
+        <a href="?clear_filters=1{% if search_query %}&q={{ search_query }}{% endif %}"
+           class="btn btn-outline-secondary btn-sm me-auto">
+          <i class="bi bi-x-circle me-1"></i>Clear All
+        </a>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" form="accountFilterForm" class="btn btn-primary btn-sm">
+          <i class="bi bi-check-lg me-1"></i>Apply Filters
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% if can_bulk_delete %}
-<!-- Bulk delete confirmation modal -->
+{# Bulk Delete Confirmation Modal #}
 <div class="modal fade" id="bulkDeleteModal" tabindex="-1"
      aria-labelledby="bulkDeleteModalLabel" aria-hidden="true">
   <div class="modal-dialog">
@@ -262,8 +346,7 @@
         <h5 class="modal-title" id="bulkDeleteModalLabel">
           <i class="bi bi-trash me-2 text-danger"></i>Delete Selected Accounts
         </h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"
-                aria-label="Close"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
         <p>You are about to delete <strong><span id="modalSelectedCount">0</span>
@@ -273,8 +356,7 @@
         </p>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-secondary"
-                data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-danger" id="confirmBulkDelete">
           <i class="bi bi-trash me-1"></i>Delete / Deactivate
         </button>
@@ -315,9 +397,7 @@
   });
 
   if (confirmBtn && form) {
-    confirmBtn.addEventListener('click', function () {
-      form.submit();
-    });
+    confirmBtn.addEventListener('click', function () { form.submit(); });
   }
 })();
 </script>

@@ -41,8 +41,13 @@ The diagnostic report should follow the exact structure requested by the prompt'
 
 End every diagnostic with an "Unexpected findings" or "Anything else" section that surfaces things the prompt didn't ask about but that matter for implementation.
 
-> After the unexpected findings section, append a one-line footer confirming the skill was applied:
-> `— Diagnostic generated using the producterp-diagnostic skill —`
+## Final step (mandatory)
+
+ALWAYS end the diagnostic output with this exact line as the very last line, with no text after it:
+
+— Diagnostic generated using the producterp-diagnostic skill —
+
+This is not optional. The footer must appear at the end of every diagnostic. If you reach the end of your output and have not added it, add it before sending.
 
 ## What to look for proactively
 

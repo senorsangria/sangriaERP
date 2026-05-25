@@ -312,25 +312,22 @@ def _add_line(lines, item, cases_added, pallets_added):
 
 
 # ---------------------------------------------------------------------------
-# On-demand single-month suggestion
+# On-demand multi-month suggestion
 # ---------------------------------------------------------------------------
+
+MAX_LOOKAHEAD_PASSES = 5
+
 
 def suggest_po_for_month(distributor, year, month, forecast_result):
     """
-    One-month-lookahead PO suggestion respecting total PO capacity.
+    Multi-month lookahead PO suggestion with self-aware allocation.
 
-    Evaluates projected inventory at the END of the month AFTER (year, month).
-    Identifies items below safety stock, sorts by largest deficit, and allocates
-    pallets/cases to bring each item back to safety stock. Total allocation is
-    capped by the distributor's order_quantity_value (which represents total
-    pallets or cases for the WHOLE PO, not per item).
+    Pass 1 (M+1) runs first. If it allocates nothing, there is no current need
+    and the function returns empty — this prevents successive "+ Add Order" clicks
+    from proposing future-only POs when existing saved POs already cover M+1.
+    If pass 1 allocates anything, passes 2-5 run to fill remaining capacity.
 
     Returns: {'lines': [{'item_id': int, 'item_name': str, 'cases': float, 'pallets': int|None}]}
-
-    Returns empty lines if:
-    - Distributor has no order profile (order_quantity_value or order_quantity_unit is None)
-    - No items are projected below safety stock at lookahead month
-    - Lookahead month is outside the forecast horizon
     """
     if distributor.order_quantity_value is None or distributor.order_quantity_unit is None:
         return {'lines': []}
@@ -341,88 +338,125 @@ def suggest_po_for_month(distributor, year, month, forecast_result):
     if total_capacity <= 0:
         return {'lines': []}
 
-    lookahead_year, lookahead_month = _month_add(year, month, 1)
-
     safety_stock_map = forecast_result.get('safety_stock_map', {})
     rows = forecast_result.get('rows', [])
 
-    # Step 1: collect items below safety stock with shortage
-    candidates = []
+    working_inv = {}
+    item_lookup = {}
+    item_cpp = {}
+
     for row in rows:
         item = row['item']
-
-        cell = None
+        item_lookup[item.pk] = item
+        item_cpp[item.pk] = item.cases_per_pallet
+        working_inv[item.pk] = {}
         for monthly in row['monthly_data']:
-            if monthly['year'] == lookahead_year and monthly['month'] == lookahead_month:
-                cell = monthly
-                break
+            key = (monthly['year'], monthly['month'])
+            working_inv[item.pk][key] = monthly['inventory']
 
-        if cell is None or cell['inventory'] is None:
-            continue
-
-        safety_stock = safety_stock_map.get(item.pk, 0)
-        projected_inv = cell['inventory']
-
-        if projected_inv >= safety_stock:
-            continue
-
-        shortage = safety_stock - projected_inv
-
-        if is_pallets:
-            cpp = item.cases_per_pallet
-            if cpp is None or cpp <= 0:
-                continue
-        else:
-            cpp = None
-
-        candidates.append({
-            'item': item,
-            'shortage_cases': shortage,
-            'cases_per_pallet': cpp,
-        })
-
-    if not candidates:
-        return {'lines': []}
-
-    # Step 2: sort by largest absolute deficit first
-    candidates.sort(key=lambda c: c['shortage_cases'], reverse=True)
-
-    # Step 3: allocate respecting total capacity
-    lines = []
+    allocations = {}
     remaining_capacity = total_capacity
 
-    for candidate in candidates:
+    def run_pass(pass_num):
+        nonlocal remaining_capacity
+        if remaining_capacity <= 0:
+            return 0
+
+        lookahead_year, lookahead_month = _month_add(year, month, pass_num + 1)
+
+        candidates = []
+        for item_id, monthly_inv in working_inv.items():
+            inv_at_lookahead = monthly_inv.get((lookahead_year, lookahead_month))
+            if inv_at_lookahead is None:
+                continue
+
+            safety_stock = safety_stock_map.get(item_id, 0)
+            if inv_at_lookahead >= safety_stock:
+                continue
+
+            if is_pallets:
+                cpp = item_cpp[item_id]
+                if cpp is None or cpp <= 0:
+                    continue
+
+            shortage = safety_stock - inv_at_lookahead
+            candidates.append({'item_id': item_id, 'shortage_cases': shortage})
+
+        candidates.sort(key=lambda c: c['shortage_cases'], reverse=True)
+
+        pass_allocation_count = 0
+        for candidate in candidates:
+            if remaining_capacity <= 0:
+                break
+
+            item_id = candidate['item_id']
+            shortage = candidate['shortage_cases']
+
+            if is_pallets:
+                cpp = item_cpp[item_id]
+                pallets_needed = math.ceil(shortage / cpp)
+                pallets_to_allocate = min(pallets_needed, remaining_capacity)
+                cases_to_allocate = float(pallets_to_allocate * cpp)
+
+                if pallets_to_allocate > 0:
+                    allocations[item_id] = allocations.get(item_id, 0.0) + cases_to_allocate
+                    remaining_capacity -= pallets_to_allocate
+                    _propagate_allocation_forward(working_inv, item_id, year, month, cases_to_allocate)
+                    pass_allocation_count += 1
+            else:
+                cases_needed = math.ceil(shortage)
+                cases_to_allocate = float(min(cases_needed, remaining_capacity))
+
+                if cases_to_allocate > 0:
+                    allocations[item_id] = allocations.get(item_id, 0.0) + cases_to_allocate
+                    remaining_capacity -= cases_to_allocate
+                    _propagate_allocation_forward(working_inv, item_id, year, month, cases_to_allocate)
+                    pass_allocation_count += 1
+
+        return pass_allocation_count
+
+    pass_1_count = run_pass(0)
+    if pass_1_count == 0:
+        return {'lines': []}
+
+    for pass_num in range(1, MAX_LOOKAHEAD_PASSES):
         if remaining_capacity <= 0:
             break
+        run_pass(pass_num)
 
-        item = candidate['item']
-        shortage = candidate['shortage_cases']
+    lines = []
+    for item_id, total_cases in allocations.items():
+        if total_cases <= 0:
+            continue
+
+        item = item_lookup[item_id]
 
         if is_pallets:
-            cpp = candidate['cases_per_pallet']
-            pallets_needed = math.ceil(shortage / cpp)
-            pallets_to_allocate = min(pallets_needed, remaining_capacity)
-            cases_to_allocate = float(pallets_to_allocate * cpp)
-
-            if pallets_to_allocate > 0:
-                lines.append({
-                    'item_id': item.pk,
-                    'item_name': item.name,
-                    'cases': cases_to_allocate,
-                    'pallets': int(pallets_to_allocate),
-                })
-                remaining_capacity -= pallets_to_allocate
+            cpp = item_cpp[item_id]
+            total_pallets = int(total_cases / cpp)
         else:
-            cases_needed = math.ceil(shortage)
-            cases_to_allocate = float(min(cases_needed, remaining_capacity))
+            total_pallets = None
 
-            if cases_to_allocate > 0:
-                lines.append({
-                    'item_id': item.pk,
-                    'item_name': item.name,
-                    'cases': cases_to_allocate,
-                    'pallets': None,
-                })
-                remaining_capacity -= cases_to_allocate
+        lines.append({
+            'item_id': item_id,
+            'item_name': item.name,
+            'cases': total_cases,
+            'pallets': total_pallets,
+        })
 
+    lines.sort(key=lambda l: l['item_name'])
     return {'lines': lines}
+
+
+def _propagate_allocation_forward(working_inv, item_id, po_year, po_month, cases_added):
+    """
+    Add allocated cases to working inventory at po_month and all subsequent months.
+
+    Mutates working_inv[item_id] in place.
+    """
+    monthly_inv = working_inv.get(item_id, {})
+    for (y, m) in monthly_inv.keys():
+        if (y, m) >= (po_year, po_month):
+            current = monthly_inv[(y, m)]
+            if current is not None:
+                monthly_inv[(y, m)] = current + cases_added

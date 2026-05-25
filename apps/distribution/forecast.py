@@ -253,7 +253,7 @@ def compute_distributor_forecast(distributor, today=None, po_additions=None):
     items = list(
         Item.objects.filter(brand__company=distributor.company, is_active=True)
         .exclude(pk__in=inactive_item_ids)
-        .select_related('brand')
+        .select_related('brand', 'co_packer')
         .order_by('brand__name', 'sort_order', 'name')
     )
 
@@ -452,7 +452,7 @@ def compute_group_forecast(group, po_additions=None, today=None):
 
     items = list(
         Item.objects.filter(brand__company=company, is_active=True, pk__in=union_active_ids)
-        .select_related('brand')
+        .select_related('brand', 'co_packer')
         .order_by('brand__name', 'sort_order', 'name')
     )
 
