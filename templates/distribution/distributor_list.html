@@ -736,7 +736,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" id="poModalLabel">
-            Orders &mdash; <span id="po-modal-period"></span>
+            Orders &mdash; <span id="po-modal-distributor-name"></span> <span id="po-modal-period"></span>
           </h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
@@ -770,21 +770,28 @@
   {% if active_tab == 'distributor_pos' or active_tab == 'invoiced_pos' %}
   {% load humanize %}
   <style>
-  .vertical-header { vertical-align: bottom; text-align: center; padding: 0.25rem; }
-  .vertical-text { transform: rotate(-90deg); white-space: nowrap; display: inline-block; transform-origin: center; font-size: 11px; font-weight: 500; }
+  .vertical-header {
+    height: 100px;
+    vertical-align: bottom;
+    padding: 0.5rem 0.1rem;
+    text-align: center;
+    min-width: 28px;
+  }
+  .vertical-text {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+  }
   .po-table .sticky-left { position: sticky; left: 0; background: var(--bs-body-bg, white); z-index: 1; }
   .brand-header { background: var(--bs-info-bg-subtle, #e7f3ff); border-bottom: 2px solid var(--bs-border-color); font-weight: 500; font-size: .82rem; }
   .po-row:hover { background-color: var(--bs-secondary-bg, #f8f9fa); cursor: pointer; }
   .po-table th a { color: inherit; text-decoration: none; }
   </style>
 
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-      <h2 class="h4 fw-bold mb-1">{% if is_invoiced_tab %}Invoiced POs{% else %}Distributor POs{% endif %}</h2>
-      <p class="text-muted small mb-0">
-        {% if pos_page_obj %}{{ pos_page_obj.paginator.count }} PO{{ pos_page_obj.paginator.count|pluralize }}{% endif %}
-      </p>
-    </div>
+  <div class="d-flex justify-content-end mb-2">
     <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#posFilterModal">
       <i class="bi bi-funnel"></i> Filters
       <span class="badge bg-warning text-dark ms-1 {% if not pos_filters_active %}d-none{% endif %}">{{ pos_active_filter_count }}</span>
@@ -795,37 +802,35 @@
     <table class="table table-sm po-table mb-0">
       <thead class="table-light">
         <tr>
-          <th class="sticky-left" style="min-width:100px;">
+          <th class="sticky-left" style="min-width:90px;">
             <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'po_month' %}-po_month{% else %}po_month{% endif %}">
               PO Month{% if 'po_month' in pos_sort %} {% if pos_sort == 'po_month' %}&uarr;{% else %}&darr;{% endif %}{% endif %}
             </a>
           </th>
-          <th style="min-width:100px;">
-            <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'status' %}-status{% else %}status{% endif %}">Status</a>
-          </th>
-          <th style="min-width:150px;">
-            <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'distributor' %}-distributor{% else %}distributor{% endif %}">Distributor</a>
+          <th style="min-width:70px;">
+            <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'distributor' %}-distributor{% else %}distributor{% endif %}">
+              Dist{% if 'distributor' in pos_sort %} {% if pos_sort == 'distributor' %}&uarr;{% else %}&darr;{% endif %}{% endif %}
+            </a>
           </th>
           {% for brand in brand_groups %}
             <th colspan="{{ brand.items|length }}" class="brand-header text-center">{{ brand.brand_name }}</th>
           {% endfor %}
-          <th style="min-width:70px;">
-            <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'so_number' %}-so_number{% else %}so_number{% endif %}">SO#</a>
+          <th style="min-width:60px;">
+            <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'so_number' %}-so_number{% else %}so_number{% endif %}">
+              SO#{% if 'so_number' in pos_sort %} {% if pos_sort == 'so_number' %}&uarr;{% else %}&darr;{% endif %}{% endif %}
+            </a>
           </th>
-          <th style="min-width:60px;">Edit</th>
         </tr>
         <tr>
           <th class="sticky-left"></th>
           <th></th>
-          <th></th>
           {% for brand in brand_groups %}
             {% for item in brand.items %}
-              <th class="vertical-header" style="height:90px;min-width:28px;">
+              <th class="vertical-header">
                 <div class="vertical-text">{{ item.item_code|default:item.name }}</div>
               </th>
             {% endfor %}
           {% endfor %}
-          <th></th>
           <th></th>
         </tr>
       </thead>
@@ -836,18 +841,23 @@
               data-dist-pk="{{ row.po.distributor_id }}"
               data-year="{{ row.po.year }}"
               data-month="{{ row.po.month }}">
-            <td class="sticky-left small">{{ row.po.year }}-{{ row.po.month|stringformat:"02d" }}</td>
-            <td class="small">{{ row.po.get_status_display }}</td>
-            <td class="small">{{ row.po.distributor.name }}</td>
+            <td class="sticky-left small">
+              <div>{{ row.po.year }}-{{ row.po.month|stringformat:"02d" }}</div>
+              <div class="text-muted" style="font-size:.75rem;">{{ row.po.get_status_display }}</div>
+            </td>
+            <td class="small">
+              <span title="{{ row.po.distributor.name }}" data-bs-toggle="tooltip" data-bs-placement="top">
+                {{ row.po.distributor.code|default:row.po.distributor.name }}
+              </span>
+            </td>
             {% for cases in row.item_cases %}
               <td class="text-end small">{% if cases %}{{ cases|floatformat:0|intcomma }}{% else %}—{% endif %}</td>
             {% endfor %}
             <td class="small">{{ row.po.so_number|default:"—" }}</td>
-            <td><button type="button" class="btn btn-sm btn-outline-secondary edit-po-btn" style="font-size:.75rem;padding:.15rem .4rem;">Edit</button></td>
           </tr>
         {% empty %}
           <tr>
-            <td colspan="{{ all_items|length|add:5 }}" class="text-center text-muted py-4">No POs found.</td>
+            <td colspan="{{ all_items|length|add:3 }}" class="text-center text-muted py-4">No POs found.</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -910,15 +920,6 @@
             </div>
 
             <div class="mb-3">
-              <label class="filter-section-label">PO Month From</label>
-              <input type="month" name="date_from" class="form-control form-control-sm" value="{{ pos_active_filters.date_from }}">
-            </div>
-            <div class="mb-3">
-              <label class="filter-section-label">PO Month To</label>
-              <input type="month" name="date_to" class="form-control form-control-sm" value="{{ pos_active_filters.date_to }}">
-            </div>
-
-            <div class="mb-3">
               <label class="filter-section-label">Item</label>
               <div class="filter-checkbox-scroll">
                 {% for item in all_items %}
@@ -945,46 +946,19 @@
     </div>
   </div>
 
-  <!-- PO Edit Modal (reuse existing poModal) -->
-  {% if forecast_distributor %}
-  <div class="modal fade" id="poModalV2" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-xl modal-dialog-scrollable">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title" id="poModalV2Label">Edit PO</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <div id="pov2-loading" class="text-center py-4">
-            <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading…</span></div>
-          </div>
-          <div id="pov2-content" style="display:none;">
-            <div id="pov2-po-info" class="mb-3"></div>
-            <div id="pov2-error" class="alert alert-danger" style="display:none;"></div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-        </div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
   <script>
   (function () {
     'use strict';
 
-    document.querySelectorAll('.po-row').forEach(function (row) {
-      row.addEventListener('click', function (e) {
-        if (e.target.closest('.edit-po-btn')) return;
-        openPoModalFromRow(row);
-      });
+    // Initialize Bootstrap tooltips for distributor codes
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+      new bootstrap.Tooltip(el);
     });
-    document.querySelectorAll('.edit-po-btn').forEach(function (btn) {
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        openPoModalFromRow(btn.closest('.po-row'));
+
+    // Whole-row click opens PO modal
+    document.querySelectorAll('.po-row').forEach(function (row) {
+      row.addEventListener('click', function () {
+        openPoModalFromRow(row);
       });
     });
 
@@ -1148,6 +1122,12 @@
 
   var MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+  // All 7 status choices for the modal dropdown
+  var _statusChoices = [
+    {% for value, label in po_status_choices %}['{{ value }}', '{{ label }}']{% if not forloop.last %},{% endif %}
+    {% endfor %}
+  ];
+
   function openModal(dataUrl, year, month) {
     _state.year  = year;
     _state.month = month;
@@ -1155,6 +1135,8 @@
     _state.nextTabId = 1;
 
     document.getElementById('po-modal-period').textContent = MONTH_NAMES[month - 1] + ' ' + year;
+    var distNameEl = document.getElementById('po-modal-distributor-name');
+    if (distNameEl) distNameEl.textContent = '';
     document.getElementById('po-modal-loading').style.display = '';
     document.getElementById('po-modal-content').style.display = 'none';
     document.getElementById('po-modal-error').style.display = 'none';
@@ -1173,6 +1155,11 @@
       .then(function (data) {
         _state.items     = data.items;
         _state.orderUnit = data.distributor.order_quantity_unit;
+
+        // Show distributor name in title
+        if (distNameEl && data.distributor && data.distributor.name) {
+          distNameEl.textContent = data.distributor.name + ' —';
+        }
 
         document.getElementById('po-modal-loading').style.display = 'none';
         document.getElementById('po-modal-content').style.display = '';
@@ -1254,9 +1241,10 @@
       html += '<span class="badge bg-' + (savedPo.generated_by_algorithm ? 'secondary' : 'primary') + '">';
       html += savedPo.generated_by_algorithm ? 'Algorithm' : 'Manual';
       html += '</span>';
-      html += '<span class="badge bg-' + (savedPo.status === 'actual' ? 'success' : 'warning text-dark') + '">';
-      html += savedPo.status === 'actual' ? 'Actual' : 'Projected';
-      html += '</span></div>';
+      var statusLabel = '';
+      _statusChoices.forEach(function (sc) { if (sc[0] === savedPo.status) statusLabel = sc[1]; });
+      var statusBg = savedPo.status === 'actual' ? 'success' : (savedPo.status === 'cancelled' ? 'danger' : (savedPo.status === 'invoiced' ? 'dark' : 'warning text-dark'));
+      html += '<span class="badge bg-' + statusBg + '">' + (statusLabel || savedPo.status) + '</span></div>';
       html += '<button type="button" class="btn btn-outline-danger btn-sm po-delete-btn">Delete Order</button>';
     } else {
       var hint = suggestedOrder ? '<span class="badge bg-info text-dark">Algorithm suggestion</span>' : '<span class="text-muted small">New order</span>';
@@ -1273,8 +1261,9 @@
     html += '<div class="col-sm-3">';
     html += '<label class="form-label small text-muted mb-1">Status</label>';
     html += '<select class="form-select form-select-sm po-status-select">';
-    html += '<option value="projected"' + (curStatus === 'projected' ? ' selected' : '') + '>Projected</option>';
-    html += '<option value="actual"' + (curStatus === 'actual' ? ' selected' : '') + '>Actual</option>';
+    _statusChoices.forEach(function (sc) {
+      html += '<option value="' + sc[0] + '"' + (curStatus === sc[0] ? ' selected' : '') + '>' + sc[1] + '</option>';
+    });
     html += '</select></div>';
     html += '<div class="col-sm-4">';
     html += '<label class="form-label small text-muted mb-1">PO Number <span class="text-muted">(required if Actual)</span></label>';

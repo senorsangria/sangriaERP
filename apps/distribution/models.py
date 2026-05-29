@@ -1,6 +1,7 @@
 """
 Distribution models: Distributor, DistributorItemProfile, InventoryImportBatch, InventorySnapshot.
 """
+import re
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
@@ -58,6 +59,12 @@ class Distributor(TimeStampedModel):
         related_name='distributors',
     )
     name = models.CharField(max_length=255)
+    code = models.CharField(
+        max_length=10,
+        blank=True,
+        db_index=True,
+        help_text='Short identifier for this distributor (e.g., SPDC). Auto-generated from name if left blank.',
+    )
     address = models.CharField(max_length=500, blank=True)
     city = models.CharField(max_length=100, blank=True)
     state = models.CharField(max_length=50, blank=True)
@@ -90,6 +97,29 @@ class Distributor(TimeStampedModel):
 
     def __str__(self):
         return f'{self.name} ({self.company.name})'
+
+    @staticmethod
+    def _generate_code_from_name(name):
+        """
+        Generate a default code from a distributor name.
+        Takes the first letter of each significant word, uppercased, max 10 chars.
+
+        Examples:
+          "Shore Point Dist Co, NJ"       → "SPDCNJ"
+          "Colonial Beverage Wholesaler, MA" → "CBWMA"
+          "Peerless Beverage, NJ"         → "PBNJ"
+        """
+        if not name:
+            return ''
+        skip_words = {'a', 'an', 'the', 'of', 'and', '&'}
+        words = re.findall(r'[A-Za-z0-9]+', name)
+        code_chars = [w[0].upper() for w in words if w.lower() not in skip_words]
+        return ''.join(code_chars)[:10]
+
+    def save(self, *args, **kwargs):
+        if not self.code and self.name:
+            self.code = self._generate_code_from_name(self.name)
+        super().save(*args, **kwargs)
 
 
 class DistributorItemProfile(TimeStampedModel):

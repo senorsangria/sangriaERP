@@ -354,16 +354,12 @@ def distributor_group_delete(request, pk):
 _DEFAULT_DISTRIBUTOR_POS_FILTERS = {
     'status': [],
     'distributor': [],
-    'date_from': '',
-    'date_to': '',
     'item': [],
     'so_number': '',
 }
 
 _DEFAULT_INVOICED_POS_FILTERS = {
     'distributor': [],
-    'date_from': '',
-    'date_to': '',
     'item': [],
     'so_number': '',
 }
@@ -385,22 +381,6 @@ def _get_filtered_distributor_pos_queryset(company, filters, exclude_invoiced=Tr
     distributors = filters.get('distributor', [])
     if distributors:
         qs = qs.filter(distributor_id__in=distributors)
-
-    date_from = filters.get('date_from', '')
-    if date_from:
-        try:
-            y, m = date_from.split('-')
-            qs = qs.filter(year__gt=int(y)) | qs.filter(year=int(y), month__gte=int(m))
-        except (ValueError, AttributeError):
-            pass
-
-    date_to = filters.get('date_to', '')
-    if date_to:
-        try:
-            y, m = date_to.split('-')
-            qs = qs.filter(year__lt=int(y)) | qs.filter(year=int(y), month__lte=int(m))
-        except (ValueError, AttributeError):
-            pass
 
     items = filters.get('item', [])
     if items:
@@ -492,10 +472,11 @@ def distributor_list(request):
     brand_groups = []
     all_distributors_for_filter = []
     status_choices = []
+    po_status_choices = []
     pos_active_filters = {}
     pos_active_filter_count = 0
     pos_filters_active = False
-    pos_sort = '-po_month'
+    pos_sort = 'po_month'
     is_invoiced_tab = False
 
     if can_manage_inventory:
@@ -645,6 +626,9 @@ def distributor_list(request):
                 slot['saved_count'] = saved_count
                 slot['total_count'] = saved_count
 
+        # Always available for modal status dropdown
+        po_status_choices = DistributorPO.Status.choices
+
         # Distributor POs / Invoiced POs tabs
         if active_tab in ('distributor_pos', 'invoiced_pos'):
             is_invoiced_tab = (active_tab == 'invoiced_pos')
@@ -661,19 +645,19 @@ def distributor_list(request):
                 company, pos_active_filters, exclude_invoiced=not is_invoiced_tab
             )
 
-            # Sorting
-            pos_sort = request.GET.get('sort', '-po_month')
+            # Sorting — default ascending (oldest first)
+            pos_sort = request.GET.get('sort', 'po_month')
             sort_map = {
-                'po_month':    ['year', 'month'],
-                '-po_month':   ['-year', '-month'],
-                'status':      ['status'],
-                '-status':     ['-status'],
-                'distributor': ['distributor__name'],
+                'po_month':     ['year', 'month'],
+                '-po_month':    ['-year', '-month'],
+                'status':       ['status'],
+                '-status':      ['-status'],
+                'distributor':  ['distributor__name'],
                 '-distributor': ['-distributor__name'],
-                'so_number':   ['so_number'],
-                '-so_number':  ['-so_number'],
+                'so_number':    ['so_number'],
+                '-so_number':   ['-so_number'],
             }
-            order_fields = sort_map.get(pos_sort, ['-year', '-month'])
+            order_fields = sort_map.get(pos_sort, ['year', 'month'])
             pos_qs = pos_qs.order_by(*order_fields)
 
             pos_qs = pos_qs.prefetch_related('lines__item__brand')
@@ -682,10 +666,11 @@ def distributor_list(request):
             page_number = request.GET.get('page', 1)
             pos_page_obj = paginator.get_page(page_number)
 
+            # Items ordered by brand, then sort_order, then name
             all_items = list(
                 Item.objects.filter(brand__company=company, is_active=True)
                 .select_related('brand')
-                .order_by('brand__name', 'name')
+                .order_by('brand__name', 'sort_order', 'name')
             )
 
             # Group items by brand for header span calculation
@@ -708,9 +693,15 @@ def distributor_list(request):
                 item_cases = [line_map.get(item.pk) for item in all_items]
                 pos_rows.append({'po': po, 'item_cases': item_cases})
 
-            all_distributors_for_filter = list(
-                Distributor.objects.filter(company=company, is_active=True).order_by('name')
+            # Filter distributors: only those with POs in the current (unfiltered) base queryset
+            base_pos_qs = _get_filtered_distributor_pos_queryset(
+                company, {}, exclude_invoiced=not is_invoiced_tab
             )
+            filter_dist_ids = base_pos_qs.values_list('distributor_id', flat=True).distinct()
+            all_distributors_for_filter = list(
+                Distributor.objects.filter(pk__in=filter_dist_ids, company=company).order_by('name')
+            )
+
             status_choices_all = DistributorPO.Status.choices
             if is_invoiced_tab:
                 status_choices = [(s, l) for s, l in status_choices_all if s == DistributorPO.Status.INVOICED]
@@ -752,6 +743,7 @@ def distributor_list(request):
         'brand_groups': brand_groups,
         'all_distributors_for_filter': all_distributors_for_filter,
         'status_choices': status_choices,
+        'po_status_choices': DistributorPO.Status.choices,
         'pos_active_filters': pos_active_filters,
         'pos_active_filter_count': pos_active_filter_count,
         'pos_filters_active': pos_filters_active,

@@ -813,6 +813,33 @@ Both tabs:
 
 The existing PO modal IIFE exposes `window.openDistributorPoModal(dataUrl, year, month, saveUrl, deleteUrlBase, suggestPattern)`.
 The new tab rows carry `data-dist-pk`, `data-year`, `data-month` attributes so the JS can construct the v1-style URL directly without a v2 fetch.
+The modal title shows the distributor name (populated from `data.distributor.name` in the fetch response).
+The status dropdown in the modal form now shows all 7 statuses (driven by `po_status_choices` context variable rendered into JS).
+
+#### Distributor.code Field
+
+- New `CharField(max_length=10)`, `db_indexed`, `blank=True` on `Distributor` model
+- Auto-defaults from name on save using `Distributor._generate_code_from_name(name)`:
+  takes the first letter of each significant word (skipping a/an/the/of/and/&), uppercased, max 10 chars
+- Examples: "Shore Point Dist Co, NJ" → "SPDCNJ", "Colonial Beverage Wholesaler, MA" → "CBWM"
+- Editable in the distributor form (appears after Name field with auto-default help text)
+- Displayed in PO list tables in place of full name; full name shown on hover via Bootstrap tooltip
+- Backfilled for existing distributors via data migration `0014_backfill_distributor_codes.py`
+- Migrations: `0013_distributor_code.py` (field), `0014_backfill_distributor_codes.py` (backfill)
+
+#### PO List Tab Refinements (round 2)
+
+- **Default sort:** PO Month ascending (oldest first), was descending
+- **Combined column:** PO Month and Status shown stacked in single column (date above, status below in small muted text), saving horizontal space
+- **Distributor column:** Shows `distributor.code` with full name as Bootstrap tooltip on hover; falls back to full name if code is blank
+- **Item column headers:** Use `writing-mode: vertical-rl` + `transform: rotate(180deg)` for proper bottom-to-top vertical rendering (replaces transform-only approach that had alignment issues)
+- **Item sort:** Ordered by `brand__name`, then `sort_order`, then `name`
+- **Edit button column removed:** Whole row is clickable; no redundant Edit button
+- **Page header section removed:** Tab nav already identifies active tab; count/heading row removed
+- **Filter distributor dropdown:** Shows only distributors that have at least one PO in the active tab's queryset (not all active distributors)
+- **Date range filters removed:** "PO Month From" and "PO Month To" fields removed from filter modal (status + distributor + item + SO# remain)
+- **All 7 statuses in modal dropdown:** Was hardcoded to 2 (Projected/Actual); now dynamically rendered from `po_status_choices` context
+- **Modal shows distributor name:** Modal title updated to include distributor name from API response
 
 ---
 

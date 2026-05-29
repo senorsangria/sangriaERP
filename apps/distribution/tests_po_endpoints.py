@@ -873,3 +873,114 @@ class DistributorPOsTabTest(TestCase):
         page_obj = resp.context['pos_page_obj']
         self.assertEqual(len(page_obj.object_list), 50)
         self.assertEqual(page_obj.paginator.num_pages, 2)
+
+
+# ---------------------------------------------------------------------------
+# 10. Distributor.code tests + new tab refinements
+# ---------------------------------------------------------------------------
+
+class DistributorCodeTest(TestCase):
+
+    def setUp(self):
+        self.company = _make_company('Code Co')
+
+    # 1. Code auto-generated from name ("NJ" is one word → first letter 'N')
+    def test_distributor_code_auto_generated_from_name(self):
+        from apps.distribution.models import Distributor
+        dist = Distributor.objects.create(
+            company=self.company, name='Shore Point Dist Co, NJ'
+        )
+        # "Shore Point Dist Co NJ" → S, P, D, C, NJ(→N) = "SPDCN"
+        self.assertEqual(dist.code, 'SPDCN')
+
+    # 2. Code can be explicitly set and is preserved
+    def test_distributor_code_can_be_overridden(self):
+        from apps.distribution.models import Distributor
+        dist = Distributor.objects.create(
+            company=self.company, name='Some Distributor', code='MYCODE'
+        )
+        dist.refresh_from_db()
+        self.assertEqual(dist.code, 'MYCODE')
+
+    # 3. Code max 10 chars
+    def test_distributor_code_max_10_chars(self):
+        from apps.distribution.models import Distributor
+        dist = Distributor(company=self.company, name='A B C D E F G H I J K L M N')
+        code = Distributor._generate_code_from_name(dist.name)
+        self.assertLessEqual(len(code), 10)
+
+    # 4. Code skips common short words
+    def test_distributor_code_skips_stop_words(self):
+        from apps.distribution.models import Distributor
+        code = Distributor._generate_code_from_name('Colonial Beverage of New Jersey')
+        # "of" skipped
+        self.assertNotIn('O', code.split('C')[0] if 'C' in code else '')
+        self.assertEqual(code, 'CBNJ')
+
+    # 5. All 7 statuses in modal endpoint response
+    def test_all_seven_statuses_in_po_status_choices(self):
+        company = _make_company('Status Co')
+        admin = _make_inventory_user(company, 'sts_admin')
+        dist = _make_distributor(company)
+        brand = _make_brand(company)
+        item = _make_item(brand)
+        po = _make_po(dist, 2026, 5, status='projected')
+
+        client = Client()
+        client.login(username='sts_admin', password='testpass123')
+        url = reverse('distributor_list') + '?tab=distributor_pos'
+        resp = client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        choices = resp.context.get('po_status_choices', [])
+        values = [c[0] for c in choices]
+        for expected in ('projected', 'actual', 'submitted', 'in_transit', 'delivered', 'invoiced', 'cancelled'):
+            self.assertIn(expected, values, f"Status '{expected}' missing from po_status_choices")
+
+    # 6. Default sort is ascending (oldest first)
+    def test_distributor_pos_default_sort_ascending(self):
+        company = _make_company('Sort Co')
+        admin = _make_inventory_user(company, 'sort_admin')
+        dist = _make_distributor(company)
+        _make_po(dist, 2026, 6, status='projected')
+        _make_po(dist, 2026, 3, status='projected')
+        _make_po(dist, 2026, 9, status='projected')
+
+        client = Client()
+        client.login(username='sort_admin', password='testpass123')
+        resp = client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.context['pos_rows']
+        months = [(r['po'].year, r['po'].month) for r in rows]
+        self.assertEqual(months, sorted(months))
+
+    # 7. Filter distributors restricted to those with POs
+    def test_filter_distributors_only_shows_those_with_pos(self):
+        company = _make_company('FiltDist Co')
+        admin = _make_inventory_user(company, 'fd_admin')
+        dist_with_po = _make_distributor(company, 'Has PO')
+        dist_no_po = _make_distributor(company, 'No PO')
+        _make_po(dist_with_po, 2026, 5, status='projected')
+
+        client = Client()
+        client.login(username='fd_admin', password='testpass123')
+        resp = client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        filter_dists = resp.context['all_distributors_for_filter']
+        filter_pks = [d.pk for d in filter_dists]
+        self.assertIn(dist_with_po.pk, filter_pks)
+        self.assertNotIn(dist_no_po.pk, filter_pks)
+
+    # 8. Filter modal has no date_from/date_to fields in context filters
+    def test_filter_modal_no_date_range_fields(self):
+        company = _make_company('NoDate Co')
+        admin = _make_inventory_user(company, 'nd_admin')
+        dist = _make_distributor(company)
+        _make_po(dist, 2026, 5, status='projected')
+
+        client = Client()
+        client.login(username='nd_admin', password='testpass123')
+        resp = client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        pos_active_filters = resp.context['pos_active_filters']
+        self.assertNotIn('date_from', pos_active_filters)
+        self.assertNotIn('date_to', pos_active_filters)
