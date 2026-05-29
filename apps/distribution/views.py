@@ -13,6 +13,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
+from django.core.paginator import Paginator
 from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -26,9 +27,10 @@ from apps.imports.models import ItemMapping
 from .forecast import compute_distributor_forecast, compute_group_forecast
 from .forms import DistributorForm, DistributorGroupForm, InventoryImportUploadForm
 from .order_generation import generate_projected_orders, suggest_po_for_month
+from apps.core.filters import apply_session_filters, compute_active_filter_count
 from .models import (
     Distributor, DistributorGroup, DistributorItemProfile, DistributorPO, DistributorPOLine,
-    InventoryImportBatch, InventorySnapshot,
+    InventoryImportBatch, InventorySnapshot, assign_so_number,
 )
 
 
@@ -346,6 +348,75 @@ def distributor_group_delete(request, pk):
 
 
 # ---------------------------------------------------------------------------
+# Distributor POs tab — filter defaults and helper
+# ---------------------------------------------------------------------------
+
+_DEFAULT_DISTRIBUTOR_POS_FILTERS = {
+    'status': [],
+    'distributor': [],
+    'date_from': '',
+    'date_to': '',
+    'item': [],
+    'so_number': '',
+}
+
+_DEFAULT_INVOICED_POS_FILTERS = {
+    'distributor': [],
+    'date_from': '',
+    'date_to': '',
+    'item': [],
+    'so_number': '',
+}
+
+
+def _get_filtered_distributor_pos_queryset(company, filters, exclude_invoiced=True):
+    """Return DistributorPO queryset for the new tab(s)."""
+    qs = DistributorPO.objects.filter(distributor__company=company).select_related('distributor')
+
+    if exclude_invoiced:
+        qs = qs.exclude(status=DistributorPO.Status.INVOICED)
+    else:
+        qs = qs.filter(status=DistributorPO.Status.INVOICED)
+
+    statuses = filters.get('status', [])
+    if statuses:
+        qs = qs.filter(status__in=statuses)
+
+    distributors = filters.get('distributor', [])
+    if distributors:
+        qs = qs.filter(distributor_id__in=distributors)
+
+    date_from = filters.get('date_from', '')
+    if date_from:
+        try:
+            y, m = date_from.split('-')
+            qs = qs.filter(year__gt=int(y)) | qs.filter(year=int(y), month__gte=int(m))
+        except (ValueError, AttributeError):
+            pass
+
+    date_to = filters.get('date_to', '')
+    if date_to:
+        try:
+            y, m = date_to.split('-')
+            qs = qs.filter(year__lt=int(y)) | qs.filter(year=int(y), month__lte=int(m))
+        except (ValueError, AttributeError):
+            pass
+
+    items = filters.get('item', [])
+    if items:
+        qs = qs.filter(lines__item_id__in=items).distinct()
+
+    so_search = filters.get('so_number', '')
+    if so_search:
+        try:
+            qs = qs.filter(so_number=int(so_search))
+        except ValueError:
+            pass
+
+    return qs
+
+
+# ---------------------------------------------------------------------------
 # Distributor list (3-tab page)
 # ---------------------------------------------------------------------------
 
@@ -391,9 +462,9 @@ def distributor_list(request):
 
     search = q
     active_tab = request.GET.get('tab', 'distributors')
-    if active_tab not in ('distributors', 'inventory', 'forecast'):
+    if active_tab not in ('distributors', 'inventory', 'forecast', 'distributor_pos', 'invoiced_pos'):
         active_tab = 'distributors'
-    if active_tab in ('inventory', 'forecast') and not can_manage_inventory:
+    if active_tab in ('inventory', 'forecast', 'distributor_pos', 'invoiced_pos') and not can_manage_inventory:
         active_tab = 'distributors'
 
     # Inventory tab data
@@ -413,6 +484,19 @@ def distributor_list(request):
     forecast_distributor = None
     available_distributors = []
     available_groups = []
+
+    # Distributor POs / Invoiced POs tab data
+    pos_page_obj = None
+    pos_rows = []
+    all_items = []
+    brand_groups = []
+    all_distributors_for_filter = []
+    status_choices = []
+    pos_active_filters = {}
+    pos_active_filter_count = 0
+    pos_filters_active = False
+    pos_sort = '-po_month'
+    is_invoiced_tab = False
 
     if can_manage_inventory:
         inv_distributor_filter = request.GET.get('inv_distributor', '')
@@ -561,6 +645,81 @@ def distributor_list(request):
                 slot['saved_count'] = saved_count
                 slot['total_count'] = saved_count
 
+        # Distributor POs / Invoiced POs tabs
+        if active_tab in ('distributor_pos', 'invoiced_pos'):
+            is_invoiced_tab = (active_tab == 'invoiced_pos')
+            session_key = 'invoiced_pos_filters' if is_invoiced_tab else 'distributor_pos_filters'
+            default_filters = _DEFAULT_INVOICED_POS_FILTERS if is_invoiced_tab else _DEFAULT_DISTRIBUTOR_POS_FILTERS
+
+            if request.GET.get('clear_filters') == '1':
+                request.session.pop(session_key, None)
+                return redirect(f"{reverse('distributor_list')}?tab={active_tab}")
+
+            pos_active_filters, _ = apply_session_filters(request, session_key, default_filters)
+
+            pos_qs = _get_filtered_distributor_pos_queryset(
+                company, pos_active_filters, exclude_invoiced=not is_invoiced_tab
+            )
+
+            # Sorting
+            pos_sort = request.GET.get('sort', '-po_month')
+            sort_map = {
+                'po_month':    ['year', 'month'],
+                '-po_month':   ['-year', '-month'],
+                'status':      ['status'],
+                '-status':     ['-status'],
+                'distributor': ['distributor__name'],
+                '-distributor': ['-distributor__name'],
+                'so_number':   ['so_number'],
+                '-so_number':  ['-so_number'],
+            }
+            order_fields = sort_map.get(pos_sort, ['-year', '-month'])
+            pos_qs = pos_qs.order_by(*order_fields)
+
+            pos_qs = pos_qs.prefetch_related('lines__item__brand')
+
+            paginator = Paginator(pos_qs, 50)
+            page_number = request.GET.get('page', 1)
+            pos_page_obj = paginator.get_page(page_number)
+
+            all_items = list(
+                Item.objects.filter(brand__company=company, is_active=True)
+                .select_related('brand')
+                .order_by('brand__name', 'name')
+            )
+
+            # Group items by brand for header span calculation
+            brand_groups = []
+            current_brand = None
+            current_brand_items = []
+            for item in all_items:
+                if item.brand.name != current_brand:
+                    if current_brand_items:
+                        brand_groups.append({'brand_name': current_brand, 'items': current_brand_items})
+                    current_brand = item.brand.name
+                    current_brand_items = []
+                current_brand_items.append(item)
+            if current_brand_items:
+                brand_groups.append({'brand_name': current_brand, 'items': current_brand_items})
+
+            pos_rows = []
+            for po in pos_page_obj:
+                line_map = {line.item_id: float(line.quantity_cases) for line in po.lines.all()}
+                item_cases = [line_map.get(item.pk) for item in all_items]
+                pos_rows.append({'po': po, 'item_cases': item_cases})
+
+            all_distributors_for_filter = list(
+                Distributor.objects.filter(company=company, is_active=True).order_by('name')
+            )
+            status_choices_all = DistributorPO.Status.choices
+            if is_invoiced_tab:
+                status_choices = [(s, l) for s, l in status_choices_all if s == DistributorPO.Status.INVOICED]
+            else:
+                status_choices = status_choices_all
+
+            pos_active_filter_count = compute_active_filter_count(pos_active_filters, default_filters)
+            pos_filters_active = pos_active_filter_count > 0
+
     return render(request, 'distribution/distributor_list.html', {
         'distributors_flat': distributors_flat,
         'grouped_data': grouped_data,
@@ -586,6 +745,18 @@ def distributor_list(request):
         'forecast_distributor': forecast_distributor,
         'available_distributors': available_distributors,
         'available_groups': available_groups,
+        # Distributor POs / Invoiced POs tabs
+        'pos_page_obj': pos_page_obj,
+        'pos_rows': pos_rows,
+        'all_items': all_items,
+        'brand_groups': brand_groups,
+        'all_distributors_for_filter': all_distributors_for_filter,
+        'status_choices': status_choices,
+        'pos_active_filters': pos_active_filters,
+        'pos_active_filter_count': pos_active_filter_count,
+        'pos_filters_active': pos_filters_active,
+        'pos_sort': pos_sort,
+        'is_invoiced_tab': is_invoiced_tab,
     })
 
 
@@ -1243,10 +1414,12 @@ def distributor_po_save(request, dist_pk):
     all_item_ids = set()
     existing_po_ids = []
 
+    valid_statuses = [s[0] for s in DistributorPO.Status.choices]
+
     for i, order_data in enumerate(orders):
         label = f'Order {i + 1}'
         status = order_data.get('status', 'projected')
-        if status not in ('projected', 'actual'):
+        if status not in valid_statuses:
             errors.append(f'{label}: invalid status "{status}"')
             continue
 
@@ -1329,9 +1502,11 @@ def distributor_po_save(request, dist_pk):
                         po.external_po_number = po_number
                         po.notes = notes
                         po.generated_by_algorithm = False
-                        po.save(update_fields=[
-                            'status', 'external_po_number', 'notes', 'generated_by_algorithm',
-                        ])
+                        update_fields = ['status', 'external_po_number', 'notes', 'generated_by_algorithm']
+                        if status == DistributorPO.Status.SUBMITTED and po.so_number is None:
+                            assign_so_number(po)
+                            update_fields.append('so_number')
+                        po.save(update_fields=update_fields)
                         po.lines.all().delete()
                         for line in nonzero_lines:
                             DistributorPOLine.objects.create(
@@ -1342,7 +1517,7 @@ def distributor_po_save(request, dist_pk):
                 else:
                     if not nonzero_lines:
                         continue
-                    po = DistributorPO.objects.create(
+                    po = DistributorPO(
                         distributor=distributor,
                         year=year,
                         month=month,
@@ -1352,6 +1527,9 @@ def distributor_po_save(request, dist_pk):
                         generated_by_algorithm=False,
                         created_by=request.user,
                     )
+                    if status == DistributorPO.Status.SUBMITTED:
+                        assign_so_number(po)
+                    po.save()
                     for line in nonzero_lines:
                         DistributorPOLine.objects.create(
                             po=po,
@@ -1386,6 +1564,95 @@ def distributor_po_delete(request, dist_pk, po_pk):
     po.delete()
 
     return JsonResponse({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# New PO modal endpoint (v2) — single-PO and multi-PO modes
+# ---------------------------------------------------------------------------
+
+def _serialize_po(po):
+    """Return a dict representation of a PO for modal display."""
+    return {
+        'pk': po.pk,
+        'distributor_id': po.distributor_id,
+        'distributor_name': po.distributor.name,
+        'year': po.year,
+        'month': po.month,
+        'status': po.status,
+        'external_po_number': po.external_po_number or '',
+        'so_number': po.so_number,
+        'notes': po.notes or '',
+        'lines': [
+            {
+                'item_id': line.item_id,
+                'item_name': line.item.name,
+                'cases': float(line.quantity_cases),
+            }
+            for line in po.lines.all()
+        ],
+    }
+
+
+@login_required
+def distributor_po_modal_data_v2(request):
+    """
+    New modal data endpoint supporting both single-PO and multi-PO modes.
+
+    Single PO mode: ?po_pk=N
+    Multi PO mode: ?distributor=N&year=YYYY&month=M
+    """
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    company = request.user.company
+    po_pk = request.GET.get('po_pk')
+
+    if po_pk:
+        try:
+            po = (
+                DistributorPO.objects
+                .select_related('distributor')
+                .prefetch_related('lines__item')
+                .get(pk=po_pk, distributor__company=company)
+            )
+        except DistributorPO.DoesNotExist:
+            return JsonResponse({'error': 'PO not found'}, status=404)
+
+        pos_list = [_serialize_po(po)]
+        distributor = po.distributor
+    else:
+        try:
+            dist_pk = int(request.GET.get('distributor'))
+            year = int(request.GET.get('year'))
+            month = int(request.GET.get('month'))
+        except (TypeError, ValueError):
+            return JsonResponse({'error': 'Missing distributor, year, or month'}, status=400)
+
+        distributor = get_object_or_404(Distributor, pk=dist_pk, company=company)
+
+        pos_qs = (
+            DistributorPO.objects
+            .filter(distributor=distributor, year=year, month=month)
+            .select_related('distributor')
+            .prefetch_related('lines__item')
+        )
+        pos_list = [_serialize_po(po) for po in pos_qs]
+
+    items = list(
+        Item.objects.filter(brand__company=company, is_active=True)
+        .select_related('brand')
+        .order_by('brand__name', 'name')
+    )
+    items_data = [
+        {'pk': i.pk, 'name': i.name, 'brand': i.brand.name, 'item_code': i.item_code or ''}
+        for i in items
+    ]
+
+    return JsonResponse({
+        'pos': pos_list,
+        'items': items_data,
+        'distributor': {'pk': distributor.pk, 'name': distributor.name},
+    })
 
 
 # ---------------------------------------------------------------------------

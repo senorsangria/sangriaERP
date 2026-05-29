@@ -66,6 +66,14 @@
       Forecast
     </button>
   </li>
+  <li class="nav-item" role="presentation">
+    <a class="nav-link {% if active_tab == 'distributor_pos' %}active{% endif %}"
+       href="?tab=distributor_pos">Distributor POs</a>
+  </li>
+  <li class="nav-item" role="presentation">
+    <a class="nav-link {% if active_tab == 'invoiced_pos' %}active{% endif %}"
+       href="?tab=invoiced_pos">Invoiced POs</a>
+  </li>
   {% endif %}
 </ul>
 
@@ -758,6 +766,246 @@
   </div>
   {% endif %}
 
+  <!-- TAB 4: Distributor POs / TAB 5: Invoiced POs -->
+  {% if active_tab == 'distributor_pos' or active_tab == 'invoiced_pos' %}
+  {% load humanize %}
+  <style>
+  .vertical-header { vertical-align: bottom; text-align: center; padding: 0.25rem; }
+  .vertical-text { transform: rotate(-90deg); white-space: nowrap; display: inline-block; transform-origin: center; font-size: 11px; font-weight: 500; }
+  .po-table .sticky-left { position: sticky; left: 0; background: var(--bs-body-bg, white); z-index: 1; }
+  .brand-header { background: var(--bs-info-bg-subtle, #e7f3ff); border-bottom: 2px solid var(--bs-border-color); font-weight: 500; font-size: .82rem; }
+  .po-row:hover { background-color: var(--bs-secondary-bg, #f8f9fa); cursor: pointer; }
+  .po-table th a { color: inherit; text-decoration: none; }
+  </style>
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h2 class="h4 fw-bold mb-1">{% if is_invoiced_tab %}Invoiced POs{% else %}Distributor POs{% endif %}</h2>
+      <p class="text-muted small mb-0">
+        {% if pos_page_obj %}{{ pos_page_obj.paginator.count }} PO{{ pos_page_obj.paginator.count|pluralize }}{% endif %}
+      </p>
+    </div>
+    <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#posFilterModal">
+      <i class="bi bi-funnel"></i> Filters
+      <span class="badge bg-warning text-dark ms-1 {% if not pos_filters_active %}d-none{% endif %}">{{ pos_active_filter_count }}</span>
+    </button>
+  </div>
+
+  <div class="table-responsive border rounded">
+    <table class="table table-sm po-table mb-0">
+      <thead class="table-light">
+        <tr>
+          <th class="sticky-left" style="min-width:100px;">
+            <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'po_month' %}-po_month{% else %}po_month{% endif %}">
+              PO Month{% if 'po_month' in pos_sort %} {% if pos_sort == 'po_month' %}&uarr;{% else %}&darr;{% endif %}{% endif %}
+            </a>
+          </th>
+          <th style="min-width:100px;">
+            <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'status' %}-status{% else %}status{% endif %}">Status</a>
+          </th>
+          <th style="min-width:150px;">
+            <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'distributor' %}-distributor{% else %}distributor{% endif %}">Distributor</a>
+          </th>
+          {% for brand in brand_groups %}
+            <th colspan="{{ brand.items|length }}" class="brand-header text-center">{{ brand.brand_name }}</th>
+          {% endfor %}
+          <th style="min-width:70px;">
+            <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'so_number' %}-so_number{% else %}so_number{% endif %}">SO#</a>
+          </th>
+          <th style="min-width:60px;">Edit</th>
+        </tr>
+        <tr>
+          <th class="sticky-left"></th>
+          <th></th>
+          <th></th>
+          {% for brand in brand_groups %}
+            {% for item in brand.items %}
+              <th class="vertical-header" style="height:90px;min-width:28px;">
+                <div class="vertical-text">{{ item.item_code|default:item.name }}</div>
+              </th>
+            {% endfor %}
+          {% endfor %}
+          <th></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in pos_rows %}
+          <tr class="po-row"
+              data-po-pk="{{ row.po.pk }}"
+              data-dist-pk="{{ row.po.distributor_id }}"
+              data-year="{{ row.po.year }}"
+              data-month="{{ row.po.month }}">
+            <td class="sticky-left small">{{ row.po.year }}-{{ row.po.month|stringformat:"02d" }}</td>
+            <td class="small">{{ row.po.get_status_display }}</td>
+            <td class="small">{{ row.po.distributor.name }}</td>
+            {% for cases in row.item_cases %}
+              <td class="text-end small">{% if cases %}{{ cases|floatformat:0|intcomma }}{% else %}—{% endif %}</td>
+            {% endfor %}
+            <td class="small">{{ row.po.so_number|default:"—" }}</td>
+            <td><button type="button" class="btn btn-sm btn-outline-secondary edit-po-btn" style="font-size:.75rem;padding:.15rem .4rem;">Edit</button></td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="{{ all_items|length|add:5 }}" class="text-center text-muted py-4">No POs found.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  {% if pos_page_obj.has_other_pages %}
+  <nav class="mt-3">
+    <ul class="pagination pagination-sm justify-content-center">
+      {% if pos_page_obj.has_previous %}
+        <li class="page-item"><a class="page-link" href="?tab={{ active_tab }}&page={{ pos_page_obj.previous_page_number }}&sort={{ pos_sort }}">Previous</a></li>
+      {% endif %}
+      <li class="page-item disabled"><span class="page-link">Page {{ pos_page_obj.number }} of {{ pos_page_obj.paginator.num_pages }}</span></li>
+      {% if pos_page_obj.has_next %}
+        <li class="page-item"><a class="page-link" href="?tab={{ active_tab }}&page={{ pos_page_obj.next_page_number }}&sort={{ pos_sort }}">Next</a></li>
+      {% endif %}
+    </ul>
+  </nav>
+  {% endif %}
+
+  <!-- Filter Modal -->
+  <div class="modal fade filter-modal" id="posFilterModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Filter POs</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <form method="get" action="">
+          <div class="modal-body">
+            <input type="hidden" name="tab" value="{{ active_tab }}">
+
+            {% if not is_invoiced_tab %}
+            <div class="mb-3">
+              <label class="filter-section-label">Status</label>
+              <div class="filter-checkbox-scroll">
+                {% for val, label in status_choices %}
+                  <div class="filter-checkbox-inline">
+                    <input class="form-check-input" type="checkbox" name="status" value="{{ val }}" id="pos_status_{{ val }}"
+                      {% if val in pos_active_filters.status %}checked{% endif %}>
+                    <label class="form-check-label" for="pos_status_{{ val }}">{{ label }}</label>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+
+            <div class="mb-3">
+              <label class="filter-section-label">Distributor</label>
+              <div class="filter-checkbox-scroll">
+                {% for dist in all_distributors_for_filter %}
+                  <div class="filter-checkbox-inline">
+                    <input class="form-check-input" type="checkbox" name="distributor" value="{{ dist.pk }}" id="pos_dist_{{ dist.pk }}"
+                      {% if dist.pk|stringformat:"s" in pos_active_filters.distributor %}checked{% endif %}>
+                    <label class="form-check-label" for="pos_dist_{{ dist.pk }}">{{ dist.name }}</label>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="filter-section-label">PO Month From</label>
+              <input type="month" name="date_from" class="form-control form-control-sm" value="{{ pos_active_filters.date_from }}">
+            </div>
+            <div class="mb-3">
+              <label class="filter-section-label">PO Month To</label>
+              <input type="month" name="date_to" class="form-control form-control-sm" value="{{ pos_active_filters.date_to }}">
+            </div>
+
+            <div class="mb-3">
+              <label class="filter-section-label">Item</label>
+              <div class="filter-checkbox-scroll">
+                {% for item in all_items %}
+                  <div class="filter-checkbox-inline">
+                    <input class="form-check-input" type="checkbox" name="item" value="{{ item.pk }}" id="pos_item_{{ item.pk }}"
+                      {% if item.pk|stringformat:"s" in pos_active_filters.item %}checked{% endif %}>
+                    <label class="form-check-label" for="pos_item_{{ item.pk }}">{{ item.name }}</label>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="filter-section-label">SO#</label>
+              <input type="text" name="so_number" class="form-control form-control-sm" placeholder="Search SO number…" value="{{ pos_active_filters.so_number }}">
+            </div>
+          </div>
+          <div class="modal-footer">
+            <a href="?tab={{ active_tab }}&clear_filters=1" class="btn btn-outline-secondary btn-sm">Clear All</a>
+            <button type="submit" class="btn btn-primary btn-sm">Apply Filters</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- PO Edit Modal (reuse existing poModal) -->
+  {% if forecast_distributor %}
+  <div class="modal fade" id="poModalV2" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="poModalV2Label">Edit PO</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div id="pov2-loading" class="text-center py-4">
+            <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading…</span></div>
+          </div>
+          <div id="pov2-content" style="display:none;">
+            <div id="pov2-po-info" class="mb-3"></div>
+            <div id="pov2-error" class="alert alert-danger" style="display:none;"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <script>
+  (function () {
+    'use strict';
+
+    document.querySelectorAll('.po-row').forEach(function (row) {
+      row.addEventListener('click', function (e) {
+        if (e.target.closest('.edit-po-btn')) return;
+        openPoModalFromRow(row);
+      });
+    });
+    document.querySelectorAll('.edit-po-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openPoModalFromRow(btn.closest('.po-row'));
+      });
+    });
+
+    function openPoModalFromRow(row) {
+      var distPk = row.dataset.distPk;
+      var year   = parseInt(row.dataset.year, 10);
+      var month  = parseInt(row.dataset.month, 10);
+      var dataUrl = '/distributors/' + distPk + '/po/' + year + '/' + month + '/';
+      var saveUrl = '/distributors/' + distPk + '/po/save/';
+      var deleteBase = '/distributors/' + distPk + '/po/';
+      var suggestPattern = '/distributors/' + distPk + '/po/YEAR/MONTH/suggest/';
+      if (typeof window.openDistributorPoModal === 'function') {
+        window.openDistributorPoModal(dataUrl, year, month, saveUrl, deleteBase, suggestPattern);
+      } else {
+        alert('PO modal not available. Ensure a distributor exists for the Forecast tab.');
+      }
+    }
+  })();
+  </script>
+  {% endif %}{# active_tab in distributor_pos / invoiced_pos #}
+
   {% endif %}{# can_manage_inventory #}
 
 </div>{# tab-content #}
@@ -1226,6 +1474,14 @@
     var m = document.cookie.match(/csrftoken=([^;]+)/);
     return m ? m[1] : '';
   }
+
+  // Expose for use by Distributor POs / Invoiced POs tab rows
+  window.openDistributorPoModal = function (dataUrl, year, month, saveUrl, deleteUrlBase, suggestPattern) {
+    if (saveUrl) _saveUrl = saveUrl;
+    if (deleteUrlBase) _deleteUrlBase = deleteUrlBase;
+    if (suggestPattern) _modalEl.dataset.suggestUrlPattern = suggestPattern;
+    openModal(dataUrl, year, month);
+  };
 })();
 </script>
 {% endif %}

@@ -750,6 +750,72 @@ into `compute_distributor_forecast` in 4-step-2b).
 
 ---
 
+### Distributor POs Tabs + SO# Tracking + Expanded Status Workflow (Complete)
+
+#### Status Workflow Expansion
+
+`DistributorPO.Status` expanded from 2 to 7 values:
+
+| Value | Display | Notes |
+|-------|---------|-------|
+| `projected` | Projected | Existing |
+| `actual` | Actual | Existing |
+| `submitted` | Submitted | New |
+| `in_transit` | In Transit | New |
+| `delivered` | Delivered | New |
+| `invoiced` | Invoiced | New |
+| `cancelled` | Cancelled | New |
+
+Typical workflow: Projected → Actual → Submitted → In Transit → Delivered → Invoiced (Cancelled at any point).
+Migration is additive only — existing PROJECTED and ACTUAL data preserved.
+
+#### SO# (Sales Order Number) Tracking
+
+- New `so_number` field on `DistributorPO` (`IntegerField`, `db_indexed`, nullable)
+- System-generated, read-only in UI — no manual override
+- Auto-assigned when status transitions to Submitted (via `assign_so_number()` helper in `apps/distribution/models.py`)
+- Derived from `MAX(so_number) + 1` across the company's POs; first SO uses `Company.so_sequence_start`
+- Persists across status changes (including reversals and cancellations)
+- Required when status is Submitted (validated in `DistributorPO.clean()`)
+
+#### Company.so_sequence_start
+
+- New `IntegerField` on `Company`, default `2006`
+- Configured via Django admin only — admin exposes it in Company fieldsets
+- Used once for the first SO# assignment per company; then MAX+1 takes over
+
+#### Two New Tabs on Distributor Page
+
+**Distributor POs tab** (`?tab=distributor_pos`): All POs with status != Invoiced.
+**Invoiced POs tab** (`?tab=invoiced_pos`): Only POs with status = Invoiced.
+
+Both tabs:
+- Columns: PO Month, Status, Distributor, [item columns grouped by brand], SO#, Edit
+- Item columns: one per Item (ordered by brand name then item name), case quantities per PO
+- Item code headers rotated -90° (vertical), brand name spans across item columns in header
+- Pagination at 50 per page, preserves filters
+- Sortable by: PO Month, Status, Distributor, SO# (clicking column headers toggles asc/desc)
+- Default sort: PO Month descending (most recent first)
+- Click row or Edit button → opens existing PO modal (single-PO mode via the modal IIFE)
+- Filter modal with: status (multi-select, hidden on Invoiced tab), distributor (multi-select),
+  date range (PO Month from/to), item (multi-select), SO# (text input search)
+- Filter follows canonical pattern (session-stored, badge count, `?clear_filters=1` sentinel)
+
+#### New PO Modal Endpoint (`distributor_po_modal_data_v2`)
+
+- URL: `GET /distributors/po/modal-data/`
+- Accepts `?po_pk=N` (single PO) OR `?distributor=N&year=YYYY&month=M` (multi-PO)
+- Returns `{pos: [...], items: [...], distributor: {...}}`
+- Used now by the new tabs in single-PO mode (the existing tab JS resolves to the v1 URL and opens the shared modal)
+- Future: will unify PO editing across the forecast tab and new tabs
+
+#### Modal JS Architecture
+
+The existing PO modal IIFE exposes `window.openDistributorPoModal(dataUrl, year, month, saveUrl, deleteUrlBase, suggestPattern)`.
+The new tab rows carry `data-dist-pk`, `data-year`, `data-month` attributes so the JS can construct the v1-style URL directly without a v2 fetch.
+
+---
+
 ### Algorithm UX Change — Suggestions On-Demand (replaces auto-suggest)
 
 - Modal open now shows only saved POs; no algorithm-generated tabs are pre-populated

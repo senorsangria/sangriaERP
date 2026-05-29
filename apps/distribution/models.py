@@ -247,8 +247,13 @@ class DistributorPO(TimeStampedModel):
     """
 
     class Status(models.TextChoices):
-        PROJECTED = 'projected', 'Projected'
-        ACTUAL    = 'actual',    'Actual'
+        PROJECTED  = 'projected',  'Projected'
+        ACTUAL     = 'actual',     'Actual'
+        SUBMITTED  = 'submitted',  'Submitted'
+        IN_TRANSIT = 'in_transit', 'In Transit'
+        DELIVERED  = 'delivered',  'Delivered'
+        INVOICED   = 'invoiced',   'Invoiced'
+        CANCELLED  = 'cancelled',  'Cancelled'
 
     distributor = models.ForeignKey(
         'distribution.Distributor',
@@ -263,6 +268,12 @@ class DistributorPO(TimeStampedModel):
         default=Status.PROJECTED,
     )
     external_po_number = models.CharField(max_length=100, blank=True, default='')
+    so_number = models.IntegerField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Auto-assigned when PO is Submitted',
+    )
     generated_by_algorithm = models.BooleanField(
         default=True,
         help_text='True when created by the order-generation algorithm; False when manually entered.',
@@ -289,6 +300,10 @@ class DistributorPO(TimeStampedModel):
         if self.status == self.Status.ACTUAL and not self.external_po_number:
             raise ValidationError({
                 'external_po_number': 'PO number is required when status is Actual.'
+            })
+        if self.status == self.Status.SUBMITTED and not self.so_number:
+            raise ValidationError({
+                'so_number': 'SO number is required when status is Submitted. It should be auto-assigned by the system.'
             })
 
 
@@ -320,3 +335,29 @@ class DistributorPOLine(TimeStampedModel):
 
     def __str__(self):
         return f'{self.po} / {self.item}: {self.quantity_cases} cases'
+
+
+def assign_so_number(distributor_po):
+    """
+    Assign next SO# for the company. Idempotent — if so_number already set, do nothing.
+
+    Returns the assigned so_number.
+    """
+    if distributor_po.so_number is not None:
+        return distributor_po.so_number
+
+    company = distributor_po.distributor.company
+
+    from django.db.models import Max
+    max_so = DistributorPO.objects.filter(
+        distributor__company=company,
+        so_number__isnull=False,
+    ).aggregate(Max('so_number'))['so_number__max']
+
+    if max_so is None:
+        next_so = company.so_sequence_start
+    else:
+        next_so = max_so + 1
+
+    distributor_po.so_number = next_so
+    return next_so

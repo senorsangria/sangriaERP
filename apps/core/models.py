@@ -34,6 +34,10 @@ class Company(TimeStampedModel):
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=120, unique=True, blank=True)
     is_active = models.BooleanField(default=True)
+    so_sequence_start = models.IntegerField(
+        default=2006,
+        help_text='Starting SO number for the first auto-assigned PO. Used once, then MAX+1 takes over.',
+    )
 
     class Meta:
         verbose_name = 'Company'

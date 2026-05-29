@@ -583,3 +583,293 @@ class SuggestEndpointTest(TestCase):
                       kwargs={'dist_pk': other_dist.pk, 'year': 2026, 'month': 4})
         resp = self.client.get(url)
         self.assertEqual(resp.status_code, 404)
+
+
+# ---------------------------------------------------------------------------
+# 7. SO# assignment tests
+# ---------------------------------------------------------------------------
+
+from apps.distribution.models import assign_so_number
+
+
+class SONumberAssignmentTest(TestCase):
+
+    def setUp(self):
+        self.company = _make_company('SO Co')
+        self.company.so_sequence_start = 2006
+        self.company.save()
+        self.dist = _make_distributor(self.company)
+        self.brand = _make_brand(self.company)
+        self.item = _make_item(self.brand)
+
+    def _make_submitted_po(self, **kwargs):
+        return DistributorPO.objects.create(
+            distributor=self.dist, year=2026, month=6,
+            status=DistributorPO.Status.SUBMITTED,
+            **kwargs
+        )
+
+    # 1. First SO uses company.so_sequence_start
+    def test_assign_so_number_uses_company_start_for_first_po(self):
+        po = DistributorPO(
+            distributor=self.dist, year=2026, month=6,
+            status=DistributorPO.Status.SUBMITTED,
+        )
+        result = assign_so_number(po)
+        self.assertEqual(result, 2006)
+        self.assertEqual(po.so_number, 2006)
+
+    # 2. Subsequent SO uses MAX + 1
+    def test_assign_so_number_uses_max_plus_one(self):
+        for so in (2006, 2007, 2008):
+            DistributorPO.objects.create(
+                distributor=self.dist, year=2025, month=so - 2005,
+                status=DistributorPO.Status.SUBMITTED,
+                so_number=so,
+            )
+        po = DistributorPO(
+            distributor=self.dist, year=2026, month=7,
+            status=DistributorPO.Status.SUBMITTED,
+        )
+        result = assign_so_number(po)
+        self.assertEqual(result, 2009)
+
+    # 3. Idempotent — skips if already set
+    def test_assign_so_number_skips_if_already_set(self):
+        po = DistributorPO(
+            distributor=self.dist, year=2026, month=6,
+            status=DistributorPO.Status.SUBMITTED,
+            so_number=5000,
+        )
+        result = assign_so_number(po)
+        self.assertEqual(result, 5000)
+        self.assertEqual(po.so_number, 5000)
+
+    # 4. clean() raises when status=SUBMITTED and so_number=None
+    def test_so_number_required_when_submitted(self):
+        from django.core.exceptions import ValidationError
+        po = DistributorPO(
+            distributor=self.dist, year=2026, month=6,
+            status=DistributorPO.Status.SUBMITTED,
+            so_number=None,
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            po.full_clean()
+        self.assertIn('so_number', ctx.exception.message_dict)
+
+    # 5. clean() passes with actual status and PO number (existing rule unchanged)
+    def test_external_po_required_when_actual(self):
+        from django.core.exceptions import ValidationError
+        po = DistributorPO(
+            distributor=self.dist, year=2026, month=6,
+            status=DistributorPO.Status.ACTUAL,
+            external_po_number='',
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            po.full_clean()
+        self.assertIn('external_po_number', ctx.exception.message_dict)
+
+    # 6. so_number persists when status changes back to Actual
+    def test_so_number_persists_on_status_change_back_to_actual(self):
+        po = DistributorPO.objects.create(
+            distributor=self.dist, year=2026, month=6,
+            status=DistributorPO.Status.SUBMITTED,
+            so_number=2010,
+        )
+        po.status = DistributorPO.Status.ACTUAL
+        po.external_po_number = 'PO-999'
+        po.save(update_fields=['status', 'external_po_number'])
+        po.refresh_from_db()
+        self.assertEqual(po.so_number, 2010)
+
+    # 7. so_number persists on cancel
+    def test_so_number_persists_on_cancel(self):
+        po = DistributorPO.objects.create(
+            distributor=self.dist, year=2026, month=6,
+            status=DistributorPO.Status.SUBMITTED,
+            so_number=2015,
+        )
+        po.status = DistributorPO.Status.CANCELLED
+        po.save(update_fields=['status'])
+        po.refresh_from_db()
+        self.assertEqual(po.so_number, 2015)
+
+    # 8. SO# is scoped per company (Company B uses its own so_sequence_start)
+    def test_assign_so_number_scoped_per_company(self):
+        company_b = _make_company('SO Co B')
+        company_b.so_sequence_start = 3001
+        company_b.save()
+        dist_b = _make_distributor(company_b, 'Dist B')
+
+        # Company A has POs with so_number=5000
+        DistributorPO.objects.create(
+            distributor=self.dist, year=2026, month=1,
+            status=DistributorPO.Status.SUBMITTED,
+            so_number=5000,
+        )
+
+        # Company B's first PO should use Company B's so_sequence_start
+        po_b = DistributorPO(
+            distributor=dist_b, year=2026, month=1,
+            status=DistributorPO.Status.SUBMITTED,
+        )
+        result = assign_so_number(po_b)
+        self.assertEqual(result, 3001)
+
+
+# ---------------------------------------------------------------------------
+# 8. distributor_po_modal_data_v2 endpoint tests
+# ---------------------------------------------------------------------------
+
+class DistributorPOModalDataV2Test(TestCase):
+
+    def setUp(self):
+        self.company = _make_company('V2 Modal Co')
+        self.admin = _make_inventory_user(self.company, 'v2_admin')
+        self.dist = _make_distributor(self.company)
+        self.brand = _make_brand(self.company)
+        self.item = _make_item(self.brand, item_code='V2ITEM')
+        self.client = Client()
+        self.client.login(username='v2_admin', password='testpass123')
+        self.url = reverse('distributor_po_modal_data_v2')
+
+    # 9. Single PO mode returns one PO entry
+    def test_modal_data_v2_single_po_mode(self):
+        po = _make_po(self.dist, 2026, 5, status='projected')
+        _make_po_line(po, self.item, 48)
+        resp = self.client.get(self.url + f'?po_pk={po.pk}')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('pos', data)
+        self.assertEqual(len(data['pos']), 1)
+        self.assertEqual(data['pos'][0]['pk'], po.pk)
+        self.assertEqual(data['pos'][0]['year'], 2026)
+        self.assertEqual(data['pos'][0]['month'], 5)
+        self.assertEqual(len(data['pos'][0]['lines']), 1)
+        self.assertIn('items', data)
+        self.assertIn('distributor', data)
+
+    # 10. Multi-PO mode returns all POs for that distributor/month
+    def test_modal_data_v2_multi_po_mode(self):
+        po1 = _make_po(self.dist, 2026, 5)
+        po2 = _make_po(self.dist, 2026, 5)
+        resp = self.client.get(
+            self.url + f'?distributor={self.dist.pk}&year=2026&month=5'
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(len(data['pos']), 2)
+        pks = {p['pk'] for p in data['pos']}
+        self.assertIn(po1.pk, pks)
+        self.assertIn(po2.pk, pks)
+
+    # 11. Requires can_manage_distributor_inventory
+    def test_modal_data_v2_requires_permission(self):
+        limited = _make_limited_user(self.company, 'v2_limited')
+        c = Client()
+        c.login(username='v2_limited', password='testpass123')
+        po = _make_po(self.dist, 2026, 5)
+        resp = c.get(self.url + f'?po_pk={po.pk}')
+        self.assertEqual(resp.status_code, 403)
+
+    # 12. Returns 404 for PO belonging to a different company
+    def test_modal_data_v2_404_for_other_company_po(self):
+        other_co = _make_company('Other V2 Co')
+        other_dist = _make_distributor(other_co, 'Other V2 Dist')
+        po = _make_po(other_dist, 2026, 5)
+        resp = self.client.get(self.url + f'?po_pk={po.pk}')
+        self.assertEqual(resp.status_code, 404)
+
+
+# ---------------------------------------------------------------------------
+# 9. Distributor POs tab view tests
+# ---------------------------------------------------------------------------
+
+class DistributorPOsTabTest(TestCase):
+
+    def setUp(self):
+        self.company = _make_company('Tab Co')
+        self.admin = _make_inventory_user(self.company, 'tab_admin')
+        self.dist = _make_distributor(self.company)
+        self.brand = _make_brand(self.company)
+        self.item = _make_item(self.brand, item_code='TABIT')
+        self.client = Client()
+        self.client.login(username='tab_admin', password='testpass123')
+        self.url = reverse('distributor_list')
+
+    def _get_tab(self, tab='distributor_pos', **params):
+        query = '&'.join(f'{k}={v}' for k, v in params.items())
+        url = f'{self.url}?tab={tab}'
+        if query:
+            url += '&' + query
+        return self.client.get(url)
+
+    # 13. Distributor POs tab renders
+    def test_distributor_pos_tab_renders(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        resp = self._get_tab()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_tab'], 'distributor_pos')
+        self.assertIsNotNone(resp.context['pos_page_obj'])
+
+    # 14. Distributor POs tab excludes Invoiced POs
+    def test_distributor_pos_tab_excludes_invoiced(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        _make_po(self.dist, 2026, 6, status='invoiced')
+        resp = self._get_tab()
+        self.assertEqual(resp.status_code, 200)
+        count = resp.context['pos_page_obj'].paginator.count
+        self.assertEqual(count, 1)
+
+    # 15. Invoiced POs tab shows only Invoiced
+    def test_invoiced_pos_tab_only_invoiced(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        _make_po(self.dist, 2026, 6, status='invoiced')
+        resp = self._get_tab(tab='invoiced_pos')
+        self.assertEqual(resp.status_code, 200)
+        count = resp.context['pos_page_obj'].paginator.count
+        self.assertEqual(count, 1)
+        self.assertTrue(resp.context['is_invoiced_tab'])
+
+    # 16. Filter by status works
+    def test_distributor_pos_tab_filter_by_status(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        _make_po(self.dist, 2026, 6, status='actual', ext_po='PO123')
+        resp = self._get_tab(status='projected')
+        self.assertEqual(resp.status_code, 200)
+        count = resp.context['pos_page_obj'].paginator.count
+        self.assertEqual(count, 1)
+
+    # 17. Filter by distributor works
+    def test_distributor_pos_tab_filter_by_distributor(self):
+        other_dist = _make_distributor(self.company, 'Other Dist')
+        _make_po(self.dist, 2026, 5, status='projected')
+        _make_po(other_dist, 2026, 5, status='projected')
+        resp = self._get_tab(distributor=self.dist.pk)
+        self.assertEqual(resp.status_code, 200)
+        count = resp.context['pos_page_obj'].paginator.count
+        self.assertEqual(count, 1)
+
+    # 18. Sort by so_number works
+    def test_distributor_pos_tab_sort_by_so_number(self):
+        po1 = _make_po(self.dist, 2026, 5, status='submitted')
+        po1.so_number = 2010
+        po1.save(update_fields=['so_number'])
+        po2 = _make_po(self.dist, 2026, 6, status='submitted')
+        po2.so_number = 2005
+        po2.save(update_fields=['so_number'])
+        resp = self._get_tab(sort='so_number')
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.context['pos_rows']
+        so_values = [r['po'].so_number for r in rows]
+        self.assertEqual(so_values, sorted(so_values))
+
+    # 19. Paginator at 50 per page
+    def test_distributor_pos_tab_paginates_at_50(self):
+        for i in range(55):
+            _make_po(self.dist, 2025, (i % 12) + 1, status='projected')
+        resp = self._get_tab()
+        self.assertEqual(resp.status_code, 200)
+        page_obj = resp.context['pos_page_obj']
+        self.assertEqual(len(page_obj.object_list), 50)
+        self.assertEqual(page_obj.paginator.num_pages, 2)
