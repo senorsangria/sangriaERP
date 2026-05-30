@@ -109,6 +109,12 @@ class Item(TimeStampedModel):
         blank=True,
         help_text='Minimum on-hand inventory to trigger production. Used by production projections.',
     )
+    forecast_current_inventory = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        help_text='Ad-hoc current on-hand inventory (cases) for PO projection planning. Not tied to inventory imports.',
+    )
 
     class Meta:
         verbose_name = 'Item'

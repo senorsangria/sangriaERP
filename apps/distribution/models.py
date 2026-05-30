@@ -344,6 +344,10 @@ class DistributorPO(TimeStampedModel):
         help_text='True when created by the order-generation algorithm; False when manually entered.',
     )
     notes = models.TextField(blank=True, default='')
+    selected_for_projection = models.BooleanField(
+        default=False,
+        help_text='Whether this PO is selected in the inventory projection tool on the Distributor POs tab.',
+    )
     created_by = models.ForeignKey(
         'core.User',
         on_delete=models.SET_NULL,

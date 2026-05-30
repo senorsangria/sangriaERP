@@ -18,6 +18,7 @@ from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.views.decorators.http import require_POST
 
 from django.http import HttpResponseForbidden
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -466,6 +467,10 @@ def distributor_list(request):
     pos_active_filter_count = 0
     pos_filters_active = False
     pos_sort = 'po_month'
+    pos_data_json = '{}'
+    selected_totals_json = '{}'
+    current_inventory_json = '{}'
+    selected_po_count = 0
 
     if can_manage_inventory:
         inv_distributor_filter = request.GET.get('inv_distributor', '')
@@ -674,6 +679,7 @@ def distributor_list(request):
                 brand_groups.append({'brand_name': current_brand, 'items': current_brand_items})
 
             pos_rows = []
+            pos_data = {}  # {po_pk: {str(item_id): cases}} for current-page rows
             for po in pos_page_obj:
                 line_map = {line.item_id: float(line.quantity_cases) for line in po.lines.all()}
                 item_cases = [line_map.get(item.pk) for item in all_items]
@@ -683,7 +689,36 @@ def distributor_list(request):
                     'po': po,
                     'item_cases': item_cases,
                     'po_month_label': po_month_label,
+                    'is_selected': po.selected_for_projection,
                 })
+                pos_data[po.pk] = {str(k): v for k, v in line_map.items()}
+
+            # Projection tool: sum selected POs' cases per item across ALL pages
+            selected_pos = (
+                DistributorPO.objects.filter(
+                    distributor__company=company,
+                    selected_for_projection=True,
+                )
+                .prefetch_related('lines')
+            )
+            selected_totals = {}
+            selected_po_count = 0
+            for po in selected_pos:
+                selected_po_count += 1
+                for line in po.lines.all():
+                    selected_totals[line.item_id] = (
+                        selected_totals.get(line.item_id, 0) + float(line.quantity_cases)
+                    )
+
+            # Current inventory per item (ad-hoc, company-scoped)
+            current_inventory = {
+                str(item.pk): float(item.forecast_current_inventory or 0)
+                for item in all_items
+            }
+
+            pos_data_json = json.dumps(pos_data)
+            selected_totals_json = json.dumps({str(k): v for k, v in selected_totals.items()})
+            current_inventory_json = json.dumps(current_inventory)
 
             # Filter distributors: only those with POs in the unfiltered base queryset
             base_pos_qs = _get_filtered_distributor_pos_queryset(company, {})
@@ -736,6 +771,12 @@ def distributor_list(request):
         'pos_active_filter_count': pos_active_filter_count,
         'pos_filters_active': pos_filters_active,
         'pos_sort': pos_sort,
+        # Inventory projection tool
+        'pos_data_json': pos_data_json,
+        'selected_totals_json': selected_totals_json,
+        'current_inventory_json': current_inventory_json,
+        'selected_po_count': selected_po_count,
+        'all_items_for_inventory': all_items,
     })
 
 
@@ -2028,3 +2069,116 @@ def distributor_group_po_save(request, group_pk):
         )
 
     return JsonResponse({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# Inventory projection tool (Distributor POs tab)
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_POST
+def save_forecast_inventory(request):
+    """
+    Save ad-hoc current inventory values for items (company-scoped).
+    Expects JSON: {"inventory": {"<item_id>": <value>, ...}}
+    """
+    if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    try:
+        data = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    inventory = data.get('inventory', {})
+    if not isinstance(inventory, dict):
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+
+    company = request.user.company
+
+    # Only allow updating items belonging to this company
+    company_item_ids = set(
+        Item.objects.filter(brand__company=company).values_list('pk', flat=True)
+    )
+
+    updated = 0
+    with transaction.atomic():
+        for item_id_str, value in inventory.items():
+            try:
+                item_id = int(item_id_str)
+            except (ValueError, TypeError):
+                continue
+            if item_id not in company_item_ids:
+                continue
+            try:
+                dec_value = Decimal(str(value)) if value not in (None, '') else Decimal('0')
+            except (InvalidOperation, ValueError):
+                continue
+            Item.objects.filter(pk=item_id).update(forecast_current_inventory=dec_value)
+            updated += 1
+
+    return JsonResponse({'ok': True, 'updated': updated})
+
+
+@login_required
+@require_POST
+def toggle_po_selection(request):
+    """
+    Toggle selected_for_projection on a single PO (company-scoped).
+    Expects JSON: {"po_pk": <int>, "selected": <bool>}
+    """
+    if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    try:
+        data = json.loads(request.body)
+        po_pk = int(data['po_pk'])
+        selected = bool(data['selected'])
+    except (json.JSONDecodeError, ValueError, KeyError, TypeError):
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+
+    company = request.user.company
+
+    updated = DistributorPO.objects.filter(
+        pk=po_pk, distributor__company=company
+    ).update(selected_for_projection=selected)
+
+    if updated == 0:
+        return JsonResponse({'error': 'PO not found'}, status=404)
+
+    return JsonResponse({'ok': True})
+
+
+@login_required
+@require_POST
+def bulk_toggle_po_selection(request):
+    """
+    Set selected_for_projection for multiple POs at once (company-scoped).
+    Expects JSON: {"po_pks": [<int>, ...], "selected": <bool>}
+    """
+    if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    try:
+        data = json.loads(request.body)
+        po_pks = [int(p) for p in data['po_pks']]
+        selected = bool(data['selected'])
+    except (json.JSONDecodeError, ValueError, KeyError, TypeError):
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+
+    company = request.user.company
+
+    updated = DistributorPO.objects.filter(
+        pk__in=po_pks, distributor__company=company
+    ).update(selected_for_projection=selected)
+
+    return JsonResponse({'ok': True, 'updated': updated})

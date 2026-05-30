@@ -4473,3 +4473,17 @@ Established a canonical filter pattern for filtered list views. The account list
 - **PO Month format:** displays as `'YY-Mon` (e.g., `'26-Nov`) instead of `YYYY-MM`. Label built in the view (`po_month_label` per row) from `calendar.month_abbr` and the 2-digit year.
 - **Item code headers centered:** vertical (`writing-mode: vertical-rl`) item code headers now center over their 60px columns via `text-align: center` on `th.vertical-header` plus `margin: 0 auto; display: inline-block` on the `.vertical-text` span. Item data cells use `.item-cell` with `text-align: center` so numbers line up under their headers.
 - **Filter modal Apply/Clear buttons restored:** the `<form>` previously wrapped both `modal-body` and `modal-footer`, which broke the `modal-dialog-scrollable` flex layout and pushed the footer off-screen. Fixed by restructuring to the canonical pattern (matching `account_list.html`): the form lives inside `modal-body` and closes there; `modal-footer` is a sibling, with the submit button linked via `form="posFilterForm"`.
+
+### Distributor POs Tab — Inventory Projection Tool
+
+Ad-hoc planning tool to gauge whether current on-hand stock covers a selected set of POs.
+
+- **`Item.forecast_current_inventory`** (`DecimalField(10,2)`, default 0) — company-scoped ad-hoc current on-hand inventory (cases), separate from `InventorySnapshot` imports. One value per item. Note: this is company-global (per item), NOT per-distributor — it represents the supplier's own stock for planning.
+- **`DistributorPO.selected_for_projection`** (`BooleanField`, default False) — company-scoped PO selection state, persisted and shared across users/sessions.
+- **Two rows above the PO list** (scroll normally, not pinned): *Current Inventory* (edited via a modal, saved via AJAX) and *Projected Ending Inventory* (live JS calc).
+- **Calc:** Projected Ending = Current Inventory − Σ(selected POs' cases per item). Blank/unset inventory treated as 0. Negative projected ending shown in **red** (`text-danger fw-bold`) to flag a production/stock shortfall.
+- **Selection:** a checkbox per PO row (new leftmost sticky column) plus a header *select-all-visible* checkbox. Toggling persists immediately via AJAX. Selected POs count toward the calc **across all pages/filters** (persisted field) — the server computes `selected_totals` over every selected PO company-wide, and the `(N POs selected)` indicator reflects the company-wide total, not just the current page.
+- **Live calc** reads embedded JSON (`pos_data_json` for current-page per-PO per-item cases, `selected_totals_json` baseline across all selected POs, `current_inventory_json`), NOT formatted cell text. On-page toggles adjust the baseline by that PO's cases (from `pos_data`); off-page selections are already folded into the server baseline.
+- **Checkbox vs row-click:** the checkbox cell uses `onclick="event.stopPropagation()"`, and the row-click handler guards with `e.target.closest('.po-checkbox-col')` — so toggling a checkbox does not open the PO edit modal.
+- **Sticky columns:** two-level — checkbox column at `left:0` (`.sticky-left`, 40px), PO Month at `left:40px` (`.sticky-left-2`); both frozen on horizontal scroll. Dist column is not sticky.
+- **Endpoints:** `save_forecast_inventory` (bulk inventory save), `toggle_po_selection` (single PO), `bulk_toggle_po_selection` (select-all). All require `can_manage_distributor_inventory`, AJAX header, and scope writes to the user's company.

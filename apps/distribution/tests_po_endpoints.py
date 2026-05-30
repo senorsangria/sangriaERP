@@ -5,6 +5,7 @@ Phase 4-step-2b: 29 tests across 5 classes.
 """
 import json
 from datetime import date
+from decimal import Decimal
 from unittest.mock import patch
 
 from django.test import Client, TestCase
@@ -1063,3 +1064,131 @@ class DistributorCodeTest(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.context['active_tab'], 'distributors')
         self.assertIsNone(resp.context['pos_page_obj'])
+
+
+# ---------------------------------------------------------------------------
+# 11. Inventory projection tool (Distributor POs tab)
+# ---------------------------------------------------------------------------
+
+class InventoryProjectionTest(TestCase):
+
+    def setUp(self):
+        self.company = _make_company('Projection Co')
+        self.admin = _make_inventory_user(self.company, 'proj_admin')
+        self.dist = _make_distributor(self.company)
+        self.brand = _make_brand(self.company)
+        self.item = _make_item(self.brand, item_code='PROJIT')
+        self.client = Client()
+        self.client.login(username='proj_admin', password='testpass123')
+
+    # 1. Save inventory updates item field
+    def test_save_forecast_inventory_updates_items(self):
+        url = reverse('save_forecast_inventory')
+        resp = _ajax_post(self.client, url, {'inventory': {str(self.item.pk): 100}})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.forecast_current_inventory, Decimal('100'))
+
+    # 2. Only company-owned items are updated
+    def test_save_forecast_inventory_only_company_items(self):
+        other_co = _make_company('Other Proj Co')
+        other_brand = _make_brand(other_co, 'Other Brand')
+        other_item = _make_item(other_brand, name='Other Item', item_code='OTHPR')
+        url = reverse('save_forecast_inventory')
+        resp = _ajax_post(self.client, url, {'inventory': {str(other_item.pk): 999}})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['updated'], 0)
+        other_item.refresh_from_db()
+        self.assertEqual(other_item.forecast_current_inventory, Decimal('0'))
+
+    # 3. Requires permission
+    def test_save_forecast_inventory_requires_permission(self):
+        limited = _make_limited_user(self.company, 'proj_limited')
+        c = Client()
+        c.login(username='proj_limited', password='testpass123')
+        url = reverse('save_forecast_inventory')
+        resp = _ajax_post(c, url, {'inventory': {str(self.item.pk): 50}})
+        self.assertEqual(resp.status_code, 403)
+
+    # 4. Toggle sets the flag
+    def test_toggle_po_selection_sets_flag(self):
+        po = _make_po(self.dist, 2026, 5, status='projected')
+        url = reverse('toggle_po_selection')
+        resp = _ajax_post(self.client, url, {'po_pk': po.pk, 'selected': True})
+        self.assertEqual(resp.status_code, 200)
+        po.refresh_from_db()
+        self.assertTrue(po.selected_for_projection)
+
+    # 5. Toggle unsets the flag
+    def test_toggle_po_selection_unsets_flag(self):
+        po = _make_po(self.dist, 2026, 5, status='projected')
+        po.selected_for_projection = True
+        po.save(update_fields=['selected_for_projection'])
+        url = reverse('toggle_po_selection')
+        resp = _ajax_post(self.client, url, {'po_pk': po.pk, 'selected': False})
+        self.assertEqual(resp.status_code, 200)
+        po.refresh_from_db()
+        self.assertFalse(po.selected_for_projection)
+
+    # 6. Toggle on another company's PO → 404
+    def test_toggle_po_selection_other_company_404(self):
+        other_co = _make_company('Other Tog Co')
+        other_dist = _make_distributor(other_co, 'Other Tog Dist')
+        po = _make_po(other_dist, 2026, 5, status='projected')
+        url = reverse('toggle_po_selection')
+        resp = _ajax_post(self.client, url, {'po_pk': po.pk, 'selected': True})
+        self.assertEqual(resp.status_code, 404)
+        po.refresh_from_db()
+        self.assertFalse(po.selected_for_projection)
+
+    # 7. Bulk toggle flags multiple POs
+    def test_bulk_toggle_po_selection(self):
+        po1 = _make_po(self.dist, 2026, 5, status='projected')
+        po2 = _make_po(self.dist, 2026, 6, status='projected')
+        url = reverse('bulk_toggle_po_selection')
+        resp = _ajax_post(self.client, url, {'po_pks': [po1.pk, po2.pk], 'selected': True})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['updated'], 2)
+        po1.refresh_from_db()
+        po2.refresh_from_db()
+        self.assertTrue(po1.selected_for_projection)
+        self.assertTrue(po2.selected_for_projection)
+
+    # 8. Tab renders the two projection rows
+    def test_distributor_pos_tab_renders_projection_rows(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Current Inventory')
+        self.assertContains(resp, 'Projected Ending Inventory')
+
+    # 9. Selected PO renders a checked checkbox
+    def test_distributor_pos_tab_checkbox_reflects_selection(self):
+        po = _make_po(self.dist, 2026, 5, status='projected')
+        po.selected_for_projection = True
+        po.save(update_fields=['selected_for_projection'])
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        # The checkbox input carries data-po-pk + checked
+        self.assertContains(resp, f'data-po-pk="{po.pk}" checked')
+
+    # 10. selected_po_count reflects all selected POs (across pages)
+    def test_selected_po_count_in_context(self):
+        for m in (3, 4, 5):
+            po = _make_po(self.dist, 2026, m, status='projected')
+            po.selected_for_projection = True
+            po.save(update_fields=['selected_for_projection'])
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['selected_po_count'], 3)
+
+    # 11. pos_data_json carries per-item line quantities for current page
+    def test_pos_data_json_contains_line_quantities(self):
+        po = _make_po(self.dist, 2026, 5, status='projected')
+        _make_po_line(po, self.item, 42)
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        pos_data = json.loads(resp.context['pos_data_json'])
+        self.assertIn(str(po.pk), pos_data)
+        self.assertEqual(pos_data[str(po.pk)][str(self.item.pk)], 42.0)
