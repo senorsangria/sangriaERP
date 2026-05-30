@@ -4438,4 +4438,32 @@ Established a canonical filter pattern for filtered list views. The account list
 - Rationale: prevents successive "+ Add Order" clicks from proposing POs that cover only future months when all current-month (M+1) inventory needs are already satisfied by previously saved POs. A PO with no M+1 need is considered opportunistic and should not be auto-suggested.
 - Implementation: inner `run_pass(pass_num)` function uses `nonlocal remaining_capacity` to mutate capacity across passes. Returns count of items allocated in that pass.
 - Gate check: `pass_1_count = run_pass(0); if pass_1_count == 0: return {'lines': []}`.
+
+### Distributor Code Algorithm (revised)
+
+- Distributor codes are stored without state prefix in `Distributor.code` (e.g., `"SPD"`).
+- Display format: `STATE-CODE` (e.g., `"NJ-SPD"`), computed by `Distributor.display_code` property.
+- State prefix comes from `Distributor.state` field; falls back to code-only if state is blank.
+- Algorithm applied to `Distributor.name`:
+  1. Drop everything from `"- "` or `" - "` onward (strips city after hyphen, e.g. `"Corp.- Randolph, MA"` → `"Corp."`)
+  2. Drop everything after the LAST comma (strips state/city, e.g. `", NJ"` → removed)
+  3. Tokenize remaining words; skip legal suffixes (Inc, Corp, Co, LLC, Ltd, LP, LLP) and stop words (a, an, the, of, and, &)
+  4. Take first letter of each remaining word, uppercase, max 10 chars
+- All existing distributor codes regenerated via migration `0015_regenerate_distributor_codes.py` (overwrites previous codes; manual overrides must be re-set via admin/edit).
+- Examples: `"Shore Point Dist Co, NJ"` → `SPD`; `"Burke Distributing Corp.- Randolph, MA"` → `BD`; `"Atlas Distributing Inc., MA"` → `AD`.
+
+### Distributor POs Tab — Tab Consolidation
+
+- **Invoiced POs tab removed.** All PO statuses (Projected, Actual, Submitted, In Transit, Delivered, Invoiced, Cancelled) now appear in the Distributor POs tab.
+- Users filter by status via the filter modal to narrow the view.
+- Removed `_DEFAULT_INVOICED_POS_FILTERS` constant and `exclude_invoiced` parameter from `_get_filtered_distributor_pos_queryset`.
+- `invoiced_pos` tab name in URL falls through to the `distributors` default tab.
+
+### Distributor POs Tab — Layout Improvements
+
+- Page subtitle ("Distribution partners for …") removed; saves vertical space.
+- Filters button moved to page header row, right-aligned with "Distributors" h1.
+- Table header restructured: Row 1 shows brand-group column spans; Row 2 shows PO Month, Dist (with SO# stacked below as a secondary sort link), and vertical item codes. This aligns column labels with the data rows directly below.
+- SO# no longer occupies its own column; it is stacked under the Dist code in the same cell (saves one column of horizontal space).
+- Item code columns narrowed to 60px (`width/min-width/max-width: 60px`), appropriate for 5-digit case quantities.
 - If pass 1 allocates anything (even partially), passes 2–5 run normally to fill remaining capacity.

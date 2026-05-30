@@ -812,24 +812,20 @@ class DistributorPOsTabTest(TestCase):
         self.assertEqual(resp.context['active_tab'], 'distributor_pos')
         self.assertIsNotNone(resp.context['pos_page_obj'])
 
-    # 14. Distributor POs tab excludes Invoiced POs
-    def test_distributor_pos_tab_excludes_invoiced(self):
+    # 14. Distributor POs tab includes Invoiced POs (all statuses shown)
+    def test_distributor_pos_tab_includes_invoiced(self):
         _make_po(self.dist, 2026, 5, status='projected')
         _make_po(self.dist, 2026, 6, status='invoiced')
         resp = self._get_tab()
         self.assertEqual(resp.status_code, 200)
         count = resp.context['pos_page_obj'].paginator.count
-        self.assertEqual(count, 1)
+        self.assertEqual(count, 2)
 
-    # 15. Invoiced POs tab shows only Invoiced
-    def test_invoiced_pos_tab_only_invoiced(self):
-        _make_po(self.dist, 2026, 5, status='projected')
-        _make_po(self.dist, 2026, 6, status='invoiced')
+    # 15. Visiting invoiced_pos tab falls back to distributors tab (tab removed)
+    def test_invoiced_pos_tab_redirects_to_default(self):
         resp = self._get_tab(tab='invoiced_pos')
         self.assertEqual(resp.status_code, 200)
-        count = resp.context['pos_page_obj'].paginator.count
-        self.assertEqual(count, 1)
-        self.assertTrue(resp.context['is_invoiced_tab'])
+        self.assertEqual(resp.context['active_tab'], 'distributors')
 
     # 16. Filter by status works
     def test_distributor_pos_tab_filter_by_status(self):
@@ -884,14 +880,14 @@ class DistributorCodeTest(TestCase):
     def setUp(self):
         self.company = _make_company('Code Co')
 
-    # 1. Code auto-generated from name ("NJ" is one word → first letter 'N')
+    # 1. Code auto-generated from name (strips state after comma, strips Co suffix)
     def test_distributor_code_auto_generated_from_name(self):
         from apps.distribution.models import Distributor
         dist = Distributor.objects.create(
             company=self.company, name='Shore Point Dist Co, NJ'
         )
-        # "Shore Point Dist Co NJ" → S, P, D, C, NJ(→N) = "SPDCN"
-        self.assertEqual(dist.code, 'SPDCN')
+        # Strip ", NJ" → "Shore Point Dist Co" → strip "Co" suffix → S, P, D = "SPD"
+        self.assertEqual(dist.code, 'SPD')
 
     # 2. Code can be explicitly set and is preserved
     def test_distributor_code_can_be_overridden(self):
@@ -913,9 +909,36 @@ class DistributorCodeTest(TestCase):
     def test_distributor_code_skips_stop_words(self):
         from apps.distribution.models import Distributor
         code = Distributor._generate_code_from_name('Colonial Beverage of New Jersey')
-        # "of" skipped
+        # "of" skipped; no comma/hyphen → C, B, N, J = "CBNJ"
         self.assertNotIn('O', code.split('C')[0] if 'C' in code else '')
         self.assertEqual(code, 'CBNJ')
+
+    # New algorithm tests
+    def test_distributor_code_strips_state_after_comma(self):
+        from apps.distribution.models import Distributor
+        code = Distributor._generate_code_from_name('Peerless Beverage, NJ')
+        self.assertEqual(code, 'PB')
+
+    def test_distributor_code_strips_city_after_hyphen(self):
+        from apps.distribution.models import Distributor
+        code = Distributor._generate_code_from_name('Burke Distributing Corp.- Randolph, MA')
+        self.assertEqual(code, 'BD')
+
+    def test_distributor_code_excludes_legal_suffixes(self):
+        from apps.distribution.models import Distributor
+        self.assertEqual(Distributor._generate_code_from_name('Atlas Distributing Inc., MA'), 'AD')
+        self.assertEqual(Distributor._generate_code_from_name('Acme LLC, NY'), 'A')
+        self.assertEqual(Distributor._generate_code_from_name('Test Corp, NJ'), 'T')
+
+    def test_distributor_display_code_includes_state(self):
+        from apps.distribution.models import Distributor
+        dist = Distributor(company=self.company, name='Shore Point Dist', state='NJ', code='SPD')
+        self.assertEqual(dist.display_code, 'NJ-SPD')
+
+    def test_distributor_display_code_no_state(self):
+        from apps.distribution.models import Distributor
+        dist = Distributor(company=self.company, name='Shore Point Dist', state='', code='SPD')
+        self.assertEqual(dist.display_code, 'SPD')
 
     # 5. All 7 statuses in modal endpoint response
     def test_all_seven_statuses_in_po_status_choices(self):
@@ -984,3 +1007,41 @@ class DistributorCodeTest(TestCase):
         pos_active_filters = resp.context['pos_active_filters']
         self.assertNotIn('date_from', pos_active_filters)
         self.assertNotIn('date_to', pos_active_filters)
+
+    def test_invoiced_pos_appear_in_distributor_pos_tab(self):
+        company = _make_company('InvApp Co')
+        admin = _make_inventory_user(company, 'invapp_admin')
+        dist = _make_distributor(company)
+        _make_po(dist, 2026, 6, status='invoiced')
+        client = Client()
+        client.login(username='invapp_admin', password='testpass123')
+        resp = client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        count = resp.context['pos_page_obj'].paginator.count
+        self.assertGreaterEqual(count, 1)
+        po_statuses = [r['po'].status for r in resp.context['pos_rows']]
+        self.assertIn('invoiced', po_statuses)
+
+    def test_cancelled_pos_appear_in_distributor_pos_tab(self):
+        company = _make_company('CanApp Co')
+        admin = _make_inventory_user(company, 'canapp_admin')
+        dist = _make_distributor(company)
+        _make_po(dist, 2026, 6, status='cancelled')
+        client = Client()
+        client.login(username='canapp_admin', password='testpass123')
+        resp = client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        count = resp.context['pos_page_obj'].paginator.count
+        self.assertGreaterEqual(count, 1)
+        po_statuses = [r['po'].status for r in resp.context['pos_rows']]
+        self.assertIn('cancelled', po_statuses)
+
+    def test_invoiced_pos_tab_removed(self):
+        company = _make_company('TabRem Co')
+        admin = _make_inventory_user(company, 'tabrem_admin')
+        client = Client()
+        client.login(username='tabrem_admin', password='testpass123')
+        resp = client.get(reverse('distributor_list') + '?tab=invoiced_pos')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_tab'], 'distributors')
+        self.assertIsNone(resp.context['pos_page_obj'])

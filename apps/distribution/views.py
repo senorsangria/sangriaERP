@@ -358,21 +358,10 @@ _DEFAULT_DISTRIBUTOR_POS_FILTERS = {
     'so_number': '',
 }
 
-_DEFAULT_INVOICED_POS_FILTERS = {
-    'distributor': [],
-    'item': [],
-    'so_number': '',
-}
 
-
-def _get_filtered_distributor_pos_queryset(company, filters, exclude_invoiced=True):
-    """Return DistributorPO queryset for the new tab(s)."""
+def _get_filtered_distributor_pos_queryset(company, filters):
+    """Return DistributorPO queryset — all statuses, user filters via modal."""
     qs = DistributorPO.objects.filter(distributor__company=company).select_related('distributor')
-
-    if exclude_invoiced:
-        qs = qs.exclude(status=DistributorPO.Status.INVOICED)
-    else:
-        qs = qs.filter(status=DistributorPO.Status.INVOICED)
 
     statuses = filters.get('status', [])
     if statuses:
@@ -442,9 +431,9 @@ def distributor_list(request):
 
     search = q
     active_tab = request.GET.get('tab', 'distributors')
-    if active_tab not in ('distributors', 'inventory', 'forecast', 'distributor_pos', 'invoiced_pos'):
+    if active_tab not in ('distributors', 'inventory', 'forecast', 'distributor_pos'):
         active_tab = 'distributors'
-    if active_tab in ('inventory', 'forecast', 'distributor_pos', 'invoiced_pos') and not can_manage_inventory:
+    if active_tab in ('inventory', 'forecast', 'distributor_pos') and not can_manage_inventory:
         active_tab = 'distributors'
 
     # Inventory tab data
@@ -465,7 +454,7 @@ def distributor_list(request):
     available_distributors = []
     available_groups = []
 
-    # Distributor POs / Invoiced POs tab data
+    # Distributor POs tab data
     pos_page_obj = None
     pos_rows = []
     all_items = []
@@ -477,7 +466,6 @@ def distributor_list(request):
     pos_active_filter_count = 0
     pos_filters_active = False
     pos_sort = 'po_month'
-    is_invoiced_tab = False
 
     if can_manage_inventory:
         inv_distributor_filter = request.GET.get('inv_distributor', '')
@@ -629,21 +617,19 @@ def distributor_list(request):
         # Always available for modal status dropdown
         po_status_choices = DistributorPO.Status.choices
 
-        # Distributor POs / Invoiced POs tabs
-        if active_tab in ('distributor_pos', 'invoiced_pos'):
-            is_invoiced_tab = (active_tab == 'invoiced_pos')
-            session_key = 'invoiced_pos_filters' if is_invoiced_tab else 'distributor_pos_filters'
-            default_filters = _DEFAULT_INVOICED_POS_FILTERS if is_invoiced_tab else _DEFAULT_DISTRIBUTOR_POS_FILTERS
+        # Distributor POs tab
+        if active_tab == 'distributor_pos':
+            session_key = 'distributor_pos_filters'
 
             if request.GET.get('clear_filters') == '1':
                 request.session.pop(session_key, None)
                 return redirect(f"{reverse('distributor_list')}?tab={active_tab}")
 
-            pos_active_filters, _ = apply_session_filters(request, session_key, default_filters)
-
-            pos_qs = _get_filtered_distributor_pos_queryset(
-                company, pos_active_filters, exclude_invoiced=not is_invoiced_tab
+            pos_active_filters, _ = apply_session_filters(
+                request, session_key, _DEFAULT_DISTRIBUTOR_POS_FILTERS
             )
+
+            pos_qs = _get_filtered_distributor_pos_queryset(company, pos_active_filters)
 
             # Sorting — default ascending (oldest first)
             pos_sort = request.GET.get('sort', 'po_month')
@@ -693,22 +679,18 @@ def distributor_list(request):
                 item_cases = [line_map.get(item.pk) for item in all_items]
                 pos_rows.append({'po': po, 'item_cases': item_cases})
 
-            # Filter distributors: only those with POs in the current (unfiltered) base queryset
-            base_pos_qs = _get_filtered_distributor_pos_queryset(
-                company, {}, exclude_invoiced=not is_invoiced_tab
-            )
+            # Filter distributors: only those with POs in the unfiltered base queryset
+            base_pos_qs = _get_filtered_distributor_pos_queryset(company, {})
             filter_dist_ids = base_pos_qs.values_list('distributor_id', flat=True).distinct()
             all_distributors_for_filter = list(
                 Distributor.objects.filter(pk__in=filter_dist_ids, company=company).order_by('name')
             )
 
-            status_choices_all = DistributorPO.Status.choices
-            if is_invoiced_tab:
-                status_choices = [(s, l) for s, l in status_choices_all if s == DistributorPO.Status.INVOICED]
-            else:
-                status_choices = status_choices_all
+            status_choices = DistributorPO.Status.choices
 
-            pos_active_filter_count = compute_active_filter_count(pos_active_filters, default_filters)
+            pos_active_filter_count = compute_active_filter_count(
+                pos_active_filters, _DEFAULT_DISTRIBUTOR_POS_FILTERS
+            )
             pos_filters_active = pos_active_filter_count > 0
 
     return render(request, 'distribution/distributor_list.html', {
@@ -748,7 +730,6 @@ def distributor_list(request):
         'pos_active_filter_count': pos_active_filter_count,
         'pos_filters_active': pos_filters_active,
         'pos_sort': pos_sort,
-        'is_invoiced_tab': is_invoiced_tab,
     })
 
 

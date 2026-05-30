@@ -102,19 +102,54 @@ class Distributor(TimeStampedModel):
     def _generate_code_from_name(name):
         """
         Generate a default code from a distributor name.
-        Takes the first letter of each significant word, uppercased, max 10 chars.
+
+        Algorithm:
+        1. Drop everything from " - " or "- " onward (strips city after hyphen)
+        2. Drop everything after the LAST comma (strips state/city after comma)
+        3. Strip legal suffixes: Inc, Corp, Co, LLC, Ltd, LP, LLP (case-insensitive)
+        4. First letter of each remaining significant word (skip a/an/the/of/and/&)
+        5. Uppercase, max 10 chars
 
         Examples:
-          "Shore Point Dist Co, NJ"       → "SPDCNJ"
-          "Colonial Beverage Wholesaler, MA" → "CBWMA"
-          "Peerless Beverage, NJ"         → "PBNJ"
+          "Shore Point Dist Co, NJ"              → "SPD"
+          "Burke Distributing Corp.- Randolph, MA" → "BD"
+          "Colonial Beverage Wholesaler, MA"      → "CBW"
+          "Peerless Beverage, NJ"                → "PB"
+          "Atlas Distributing Inc., MA"           → "AD"
         """
         if not name:
             return ''
+
+        # Step 1: Drop everything from "- " or " - " onward
+        working = re.split(r'\s*-\s+', name, maxsplit=1)[0]
+
+        # Step 2: Drop everything after the LAST comma
+        if ',' in working:
+            working = working.rsplit(',', 1)[0]
+
+        # Step 3: Tokenize and filter
+        words = re.findall(r'[A-Za-z0-9]+', working)
+
+        legal_suffixes = {'inc', 'corp', 'co', 'llc', 'ltd', 'lp', 'llp'}
         skip_words = {'a', 'an', 'the', 'of', 'and', '&'}
-        words = re.findall(r'[A-Za-z0-9]+', name)
-        code_chars = [w[0].upper() for w in words if w.lower() not in skip_words]
+
+        code_chars = []
+        for word in words:
+            word_lower = word.lower()
+            if word_lower in legal_suffixes:
+                continue
+            if word_lower in skip_words:
+                continue
+            code_chars.append(word[0].upper())
+
         return ''.join(code_chars)[:10]
+
+    @property
+    def display_code(self):
+        """Returns code prefixed with state, e.g. 'NJ-SPD'. Falls back gracefully."""
+        if self.state and self.code:
+            return f"{self.state}-{self.code}"
+        return self.code or self.name
 
     def save(self, *args, **kwargs):
         if not self.code and self.name:

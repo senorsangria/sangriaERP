@@ -23,11 +23,14 @@
 
 {% block content %}
 
-<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
-  <div>
-    <h1 class="h3 mb-0 fw-bold">Distributors</h1>
-    <p class="text-muted small mb-0">Distribution partners for {{ user.company.name }}</p>
-  </div>
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h3 mb-0 fw-bold">Distributors</h1>
+  {% if active_tab == 'distributor_pos' %}
+  <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#posFilterModal">
+    <i class="bi bi-funnel"></i> Filters
+    <span class="badge bg-warning text-dark ms-1 {% if not pos_filters_active %}d-none{% endif %}">{{ pos_active_filter_count }}</span>
+  </button>
+  {% endif %}
 </div>
 
 <!-- Tab nav -->
@@ -69,10 +72,6 @@
   <li class="nav-item" role="presentation">
     <a class="nav-link {% if active_tab == 'distributor_pos' %}active{% endif %}"
        href="?tab=distributor_pos">Distributor POs</a>
-  </li>
-  <li class="nav-item" role="presentation">
-    <a class="nav-link {% if active_tab == 'invoiced_pos' %}active{% endif %}"
-       href="?tab=invoiced_pos">Invoiced POs</a>
   </li>
   {% endif %}
 </ul>
@@ -766,8 +765,8 @@
   </div>
   {% endif %}
 
-  <!-- TAB 4: Distributor POs / TAB 5: Invoiced POs -->
-  {% if active_tab == 'distributor_pos' or active_tab == 'invoiced_pos' %}
+  <!-- TAB 4: Distributor POs -->
+  {% if active_tab == 'distributor_pos' %}
   {% load humanize %}
   <style>
   .vertical-header {
@@ -775,7 +774,9 @@
     vertical-align: bottom;
     padding: 0.5rem 0.1rem;
     text-align: center;
-    min-width: 28px;
+    width: 60px;
+    min-width: 60px;
+    max-width: 60px;
   }
   .vertical-text {
     writing-mode: vertical-rl;
@@ -789,41 +790,39 @@
   .brand-header { background: var(--bs-info-bg-subtle, #e7f3ff); border-bottom: 2px solid var(--bs-border-color); font-weight: 500; font-size: .82rem; }
   .po-row:hover { background-color: var(--bs-secondary-bg, #f8f9fa); cursor: pointer; }
   .po-table th a { color: inherit; text-decoration: none; }
+  .po-table td.item-col { width: 60px; min-width: 60px; max-width: 60px; }
   </style>
-
-  <div class="d-flex justify-content-end mb-2">
-    <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#posFilterModal">
-      <i class="bi bi-funnel"></i> Filters
-      <span class="badge bg-warning text-dark ms-1 {% if not pos_filters_active %}d-none{% endif %}">{{ pos_active_filter_count }}</span>
-    </button>
-  </div>
 
   <div class="table-responsive border rounded">
     <table class="table table-sm po-table mb-0">
       <thead class="table-light">
         <tr>
+          {# Row 1: brand group spans; PO Month and Dist columns are blank #}
+          <th class="sticky-left" style="min-width:90px;"></th>
+          <th style="min-width:80px;"></th>
+          {% for brand in brand_groups %}
+            <th colspan="{{ brand.items|length }}" class="brand-header text-center">{{ brand.brand_name }}</th>
+          {% endfor %}
+        </tr>
+        <tr>
+          {# Row 2: column headers aligned with item codes #}
           <th class="sticky-left" style="min-width:90px;">
             <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'po_month' %}-po_month{% else %}po_month{% endif %}">
               PO Month{% if 'po_month' in pos_sort %} {% if pos_sort == 'po_month' %}&uarr;{% else %}&darr;{% endif %}{% endif %}
             </a>
           </th>
-          <th style="min-width:70px;">
-            <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'distributor' %}-distributor{% else %}distributor{% endif %}">
-              Dist{% if 'distributor' in pos_sort %} {% if pos_sort == 'distributor' %}&uarr;{% else %}&darr;{% endif %}{% endif %}
-            </a>
+          <th style="min-width:80px;">
+            <div>
+              <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'distributor' %}-distributor{% else %}distributor{% endif %}">
+                Dist{% if 'distributor' in pos_sort %} {% if pos_sort == 'distributor' %}&uarr;{% else %}&darr;{% endif %}{% endif %}
+              </a>
+            </div>
+            <div class="text-muted" style="font-size:.8rem;">
+              <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'so_number' %}-so_number{% else %}so_number{% endif %}" style="color:inherit;text-decoration:none;">
+                SO#{% if 'so_number' in pos_sort %} {% if pos_sort == 'so_number' %}&uarr;{% else %}&darr;{% endif %}{% endif %}
+              </a>
+            </div>
           </th>
-          {% for brand in brand_groups %}
-            <th colspan="{{ brand.items|length }}" class="brand-header text-center">{{ brand.brand_name }}</th>
-          {% endfor %}
-          <th style="min-width:60px;">
-            <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'so_number' %}-so_number{% else %}so_number{% endif %}">
-              SO#{% if 'so_number' in pos_sort %} {% if pos_sort == 'so_number' %}&uarr;{% else %}&darr;{% endif %}{% endif %}
-            </a>
-          </th>
-        </tr>
-        <tr>
-          <th class="sticky-left"></th>
-          <th></th>
           {% for brand in brand_groups %}
             {% for item in brand.items %}
               <th class="vertical-header">
@@ -831,7 +830,6 @@
               </th>
             {% endfor %}
           {% endfor %}
-          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -846,18 +844,20 @@
               <div class="text-muted" style="font-size:.75rem;">{{ row.po.get_status_display }}</div>
             </td>
             <td class="small">
-              <span title="{{ row.po.distributor.name }}" data-bs-toggle="tooltip" data-bs-placement="top">
-                {{ row.po.distributor.code|default:row.po.distributor.name }}
-              </span>
+              <div>
+                <span title="{{ row.po.distributor.name }}" data-bs-toggle="tooltip" data-bs-placement="top">
+                  {{ row.po.distributor.display_code }}
+                </span>
+              </div>
+              <div class="text-muted" style="font-size:.75rem;">{{ row.po.so_number|default:"—" }}</div>
             </td>
             {% for cases in row.item_cases %}
-              <td class="text-end small">{% if cases %}{{ cases|floatformat:0|intcomma }}{% else %}—{% endif %}</td>
+              <td class="text-end small item-col">{% if cases %}{{ cases|floatformat:0|intcomma }}{% else %}—{% endif %}</td>
             {% endfor %}
-            <td class="small">{{ row.po.so_number|default:"—" }}</td>
           </tr>
         {% empty %}
           <tr>
-            <td colspan="{{ all_items|length|add:3 }}" class="text-center text-muted py-4">No POs found.</td>
+            <td colspan="{{ all_items|length|add:2 }}" class="text-center text-muted py-4">No POs found.</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -891,7 +891,6 @@
           <div class="modal-body">
             <input type="hidden" name="tab" value="{{ active_tab }}">
 
-            {% if not is_invoiced_tab %}
             <div class="mb-3">
               <label class="filter-section-label">Status</label>
               <div class="filter-checkbox-scroll">
@@ -904,7 +903,6 @@
                 {% endfor %}
               </div>
             </div>
-            {% endif %}
 
             <div class="mb-3">
               <label class="filter-section-label">Distributor</label>
@@ -978,7 +976,7 @@
     }
   })();
   </script>
-  {% endif %}{# active_tab in distributor_pos / invoiced_pos #}
+  {% endif %}{# active_tab == distributor_pos #}
 
   {% endif %}{# can_manage_inventory #}
 
