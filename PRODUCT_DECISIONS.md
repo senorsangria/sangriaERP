@@ -4467,3 +4467,9 @@ Established a canonical filter pattern for filtered list views. The account list
 - SO# no longer occupies its own column; it is stacked under the Dist code in the same cell (saves one column of horizontal space).
 - Item code columns narrowed to 60px (`width/min-width/max-width: 60px`), appropriate for 5-digit case quantities.
 - If pass 1 allocates anything (even partially), passes 2–5 run normally to fill remaining capacity.
+
+### Distributor POs Tab — UI Fixes
+
+- **PO Month format:** displays as `'YY-Mon` (e.g., `'26-Nov`) instead of `YYYY-MM`. Label built in the view (`po_month_label` per row) from `calendar.month_abbr` and the 2-digit year.
+- **Item code headers centered:** vertical (`writing-mode: vertical-rl`) item code headers now center over their 60px columns via `text-align: center` on `th.vertical-header` plus `margin: 0 auto; display: inline-block` on the `.vertical-text` span. Item data cells use `.item-cell` with `text-align: center` so numbers line up under their headers.
+- **Filter modal Apply/Clear buttons restored:** the `<form>` previously wrapped both `modal-body` and `modal-footer`, which broke the `modal-dialog-scrollable` flex layout and pushed the footer off-screen. Fixed by restructuring to the canonical pattern (matching `account_list.html`): the form lives inside `modal-body` and closes there; `modal-footer` is a sibling, with the submit button linked via `form="posFilterForm"`.

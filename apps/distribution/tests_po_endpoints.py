@@ -870,6 +870,24 @@ class DistributorPOsTabTest(TestCase):
         self.assertEqual(len(page_obj.object_list), 50)
         self.assertEqual(page_obj.paginator.num_pages, 2)
 
+    # 20. PO Month label rendered as 'YY-Mon (e.g., '26-Nov)
+    def test_po_month_label_format(self):
+        _make_po(self.dist, 2026, 11, status='projected')
+        resp = self._get_tab()
+        self.assertEqual(resp.status_code, 200)
+        labels = [r['po_month_label'] for r in resp.context['pos_rows']]
+        self.assertIn("'26-Nov", labels)
+        # Apostrophe is HTML-escaped to &#x27; in rendered output
+        self.assertContains(resp, "26-Nov")
+
+    # 21. Filter modal has Apply and Clear buttons
+    def test_filter_modal_has_apply_and_clear_buttons(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        resp = self._get_tab()
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Apply Filters')
+        self.assertContains(resp, 'Clear All')
+
 
 # ---------------------------------------------------------------------------
 # 10. Distributor.code tests + new tab refinements

@@ -677,7 +677,13 @@ def distributor_list(request):
             for po in pos_page_obj:
                 line_map = {line.item_id: float(line.quantity_cases) for line in po.lines.all()}
                 item_cases = [line_map.get(item.pk) for item in all_items]
-                pos_rows.append({'po': po, 'item_cases': item_cases})
+                # PO Month label as 'YY-Mon (e.g., "'26-Nov")
+                po_month_label = f"'{str(po.year)[-2:]}-{calendar.month_abbr[po.month]}"
+                pos_rows.append({
+                    'po': po,
+                    'item_cases': item_cases,
+                    'po_month_label': po_month_label,
+                })
 
             # Filter distributors: only those with POs in the unfiltered base queryset
             base_pos_qs = _get_filtered_distributor_pos_queryset(company, {})
