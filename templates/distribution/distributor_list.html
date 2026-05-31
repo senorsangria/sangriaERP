@@ -1020,190 +1020,6 @@
     </div>
   </div>
 
-  <script>
-  (function () {
-    'use strict';
-
-    // Initialize Bootstrap tooltips for distributor codes
-    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
-      new bootstrap.Tooltip(el);
-    });
-
-    // Whole-row click opens PO modal — but NOT when the click is on the
-    // checkbox cell (selection toggle must not open the modal).
-    document.querySelectorAll('.po-row').forEach(function (row) {
-      row.addEventListener('click', function (e) {
-        if (e.target.closest('.po-checkbox-col') || e.target.closest('.po-select-checkbox')) {
-          return;
-        }
-        openPoModalFromRow(row);
-      });
-    });
-
-    function openPoModalFromRow(row) {
-      var distPk = row.dataset.distPk;
-      var year   = parseInt(row.dataset.year, 10);
-      var month  = parseInt(row.dataset.month, 10);
-      var dataUrl = '/distributors/' + distPk + '/po/' + year + '/' + month + '/';
-      var saveUrl = '/distributors/' + distPk + '/po/save/';
-      var deleteBase = '/distributors/' + distPk + '/po/';
-      var suggestPattern = '/distributors/' + distPk + '/po/YEAR/MONTH/suggest/';
-      if (typeof window.openDistributorPoModal === 'function') {
-        window.openDistributorPoModal(dataUrl, year, month, saveUrl, deleteBase, suggestPattern);
-      } else {
-        alert('PO modal not available. Ensure a distributor exists for the Forecast tab.');
-      }
-    }
-
-    // ------------------------------------------------------------------
-    // Inventory projection logic
-    // ------------------------------------------------------------------
-
-    var posData = JSON.parse('{{ pos_data_json|escapejs }}');               // {po_pk: {item_id: cases}}
-    var selectedTotals = JSON.parse('{{ selected_totals_json|escapejs }}'); // {item_id: total cases} across ALL selected POs
-    var currentInventory = JSON.parse('{{ current_inventory_json|escapejs }}'); // {item_id: cases}
-    var selectedPoCount = {{ selected_po_count }};
-
-    function csrf() {
-      var el = document.querySelector('[name=csrfmiddlewaretoken]');
-      if (el) return el.value;
-      var m = document.cookie.match(/csrftoken=([^;]+)/);
-      return m ? m[1] : '';
-    }
-
-    function recalcProjection() {
-      document.querySelectorAll('.projected-cell').forEach(function (cell) {
-        var itemId = cell.dataset.itemId;
-        var current = currentInventory[itemId] || 0;
-        var selected = selectedTotals[itemId] || 0;
-        var projected = current - selected;
-        cell.textContent = projected.toLocaleString();
-        if (projected < 0) {
-          cell.classList.add('text-danger', 'fw-bold');
-        } else {
-          cell.classList.remove('text-danger', 'fw-bold');
-        }
-      });
-    }
-
-    function updateSelectedCountLabel() {
-      var el = document.getElementById('selected-po-count');
-      if (el) el.textContent = selectedPoCount;
-    }
-
-    function applyPoDelta(poPk, selected) {
-      var poItems = posData[poPk] || {};
-      for (var itemId in poItems) {
-        var delta = poItems[itemId] * (selected ? 1 : -1);
-        selectedTotals[itemId] = (selectedTotals[itemId] || 0) + delta;
-      }
-      selectedPoCount += selected ? 1 : -1;
-    }
-
-    // Per-checkbox toggle (persists immediately)
-    document.querySelectorAll('.po-select-checkbox').forEach(function (cb) {
-      cb.addEventListener('change', function () {
-        var poPk = cb.dataset.poPk;
-        var selected = cb.checked;
-        applyPoDelta(poPk, selected);
-        recalcProjection();
-        updateSelectedCountLabel();
-        syncSelectAllState();
-
-        fetch('{% url "toggle_po_selection" %}', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf() },
-          credentials: 'same-origin',
-          body: JSON.stringify({ po_pk: parseInt(poPk, 10), selected: selected }),
-        }).catch(function () { /* network error: local state already updated */ });
-      });
-    });
-
-    // Select all / deselect all VISIBLE rows
-    var selectAll = document.getElementById('po-select-all');
-
-    function syncSelectAllState() {
-      if (!selectAll) return;
-      var boxes = document.querySelectorAll('.po-select-checkbox');
-      var checked = 0;
-      boxes.forEach(function (cb) { if (cb.checked) checked++; });
-      selectAll.checked = boxes.length > 0 && checked === boxes.length;
-      selectAll.indeterminate = checked > 0 && checked < boxes.length;
-    }
-
-    if (selectAll) {
-      selectAll.addEventListener('change', function () {
-        var checked = selectAll.checked;
-        var changedPks = [];
-        document.querySelectorAll('.po-select-checkbox').forEach(function (cb) {
-          if (cb.checked !== checked) {
-            cb.checked = checked;
-            changedPks.push(parseInt(cb.dataset.poPk, 10));
-            applyPoDelta(cb.dataset.poPk, checked);
-          }
-        });
-        recalcProjection();
-        updateSelectedCountLabel();
-
-        if (changedPks.length) {
-          fetch('{% url "bulk_toggle_po_selection" %}', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf() },
-            credentials: 'same-origin',
-            body: JSON.stringify({ po_pks: changedPks, selected: checked }),
-          }).catch(function () {});
-        }
-      });
-    }
-
-    // Inventory modal open + save
-    var editInvBtn = document.getElementById('edit-inventory-btn');
-    if (editInvBtn) {
-      editInvBtn.addEventListener('click', function () {
-        new bootstrap.Modal(document.getElementById('inventoryModal')).show();
-      });
-    }
-
-    var saveInvBtn = document.getElementById('save-inventory-btn');
-    if (saveInvBtn) {
-      saveInvBtn.addEventListener('click', function () {
-        var inventory = {};
-        document.querySelectorAll('.inventory-input').forEach(function (input) {
-          inventory[input.dataset.itemId] = input.value === '' ? 0 : parseFloat(input.value);
-        });
-
-        saveInvBtn.disabled = true;
-        fetch('{% url "save_forecast_inventory" %}', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf() },
-          credentials: 'same-origin',
-          body: JSON.stringify({ inventory: inventory }),
-        })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          if (data.ok) {
-            for (var itemId in inventory) {
-              currentInventory[itemId] = inventory[itemId];
-              var cell = document.querySelector('.inventory-cell[data-item-id="' + itemId + '"]');
-              if (cell) cell.textContent = Math.round(inventory[itemId]).toLocaleString();
-            }
-            recalcProjection();
-            bootstrap.Modal.getInstance(document.getElementById('inventoryModal')).hide();
-          } else {
-            alert('Failed to save inventory: ' + (data.error || 'unknown error'));
-          }
-        })
-        .catch(function (err) { alert('Failed to save inventory: ' + err.message); })
-        .finally(function () { saveInvBtn.disabled = false; });
-      });
-    }
-
-    // Initial render
-    recalcProjection();
-    updateSelectedCountLabel();
-    syncSelectAllState();
-  })();
-  </script>
   {% endif %}{# active_tab == distributor_pos #}
 
   {% endif %}{# can_manage_inventory #}
@@ -1699,5 +1515,192 @@
   };
 })();
 </script>
+
+  {# Distributor POs tab script — must run after the Bootstrap bundle (loaded in base.html) #}
+  <script>
+  (function () {
+    'use strict';
+
+    // Initialize Bootstrap tooltips for distributor codes
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+      new bootstrap.Tooltip(el);
+    });
+
+    // Whole-row click opens PO modal — but NOT when the click is on the
+    // checkbox cell (selection toggle must not open the modal).
+    document.querySelectorAll('.po-row').forEach(function (row) {
+      row.addEventListener('click', function (e) {
+        if (e.target.closest('.po-checkbox-col') || e.target.closest('.po-select-checkbox')) {
+          return;
+        }
+        openPoModalFromRow(row);
+      });
+    });
+
+    function openPoModalFromRow(row) {
+      var distPk = row.dataset.distPk;
+      var year   = parseInt(row.dataset.year, 10);
+      var month  = parseInt(row.dataset.month, 10);
+      var dataUrl = '/distributors/' + distPk + '/po/' + year + '/' + month + '/';
+      var saveUrl = '/distributors/' + distPk + '/po/save/';
+      var deleteBase = '/distributors/' + distPk + '/po/';
+      var suggestPattern = '/distributors/' + distPk + '/po/YEAR/MONTH/suggest/';
+      if (typeof window.openDistributorPoModal === 'function') {
+        window.openDistributorPoModal(dataUrl, year, month, saveUrl, deleteBase, suggestPattern);
+      } else {
+        alert('PO modal not available. Ensure a distributor exists for the Forecast tab.');
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Inventory projection logic
+    // ------------------------------------------------------------------
+
+    var posData = JSON.parse('{{ pos_data_json|escapejs }}');               // {po_pk: {item_id: cases}}
+    var selectedTotals = JSON.parse('{{ selected_totals_json|escapejs }}'); // {item_id: total cases} across ALL selected POs
+    var currentInventory = JSON.parse('{{ current_inventory_json|escapejs }}'); // {item_id: cases}
+    var selectedPoCount = {{ selected_po_count }};
+
+    function csrf() {
+      var el = document.querySelector('[name=csrfmiddlewaretoken]');
+      if (el) return el.value;
+      var m = document.cookie.match(/csrftoken=([^;]+)/);
+      return m ? m[1] : '';
+    }
+
+    function recalcProjection() {
+      document.querySelectorAll('.projected-cell').forEach(function (cell) {
+        var itemId = cell.dataset.itemId;
+        var current = currentInventory[itemId] || 0;
+        var selected = selectedTotals[itemId] || 0;
+        var projected = current - selected;
+        cell.textContent = projected.toLocaleString();
+        if (projected < 0) {
+          cell.classList.add('text-danger', 'fw-bold');
+        } else {
+          cell.classList.remove('text-danger', 'fw-bold');
+        }
+      });
+    }
+
+    function updateSelectedCountLabel() {
+      var el = document.getElementById('selected-po-count');
+      if (el) el.textContent = selectedPoCount;
+    }
+
+    function applyPoDelta(poPk, selected) {
+      var poItems = posData[poPk] || {};
+      for (var itemId in poItems) {
+        var delta = poItems[itemId] * (selected ? 1 : -1);
+        selectedTotals[itemId] = (selectedTotals[itemId] || 0) + delta;
+      }
+      selectedPoCount += selected ? 1 : -1;
+    }
+
+    // Per-checkbox toggle (persists immediately)
+    document.querySelectorAll('.po-select-checkbox').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var poPk = cb.dataset.poPk;
+        var selected = cb.checked;
+        applyPoDelta(poPk, selected);
+        recalcProjection();
+        updateSelectedCountLabel();
+        syncSelectAllState();
+
+        fetch('{% url "toggle_po_selection" %}', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf() },
+          credentials: 'same-origin',
+          body: JSON.stringify({ po_pk: parseInt(poPk, 10), selected: selected }),
+        }).catch(function () { /* network error: local state already updated */ });
+      });
+    });
+
+    // Select all / deselect all VISIBLE rows
+    var selectAll = document.getElementById('po-select-all');
+
+    function syncSelectAllState() {
+      if (!selectAll) return;
+      var boxes = document.querySelectorAll('.po-select-checkbox');
+      var checked = 0;
+      boxes.forEach(function (cb) { if (cb.checked) checked++; });
+      selectAll.checked = boxes.length > 0 && checked === boxes.length;
+      selectAll.indeterminate = checked > 0 && checked < boxes.length;
+    }
+
+    if (selectAll) {
+      selectAll.addEventListener('change', function () {
+        var checked = selectAll.checked;
+        var changedPks = [];
+        document.querySelectorAll('.po-select-checkbox').forEach(function (cb) {
+          if (cb.checked !== checked) {
+            cb.checked = checked;
+            changedPks.push(parseInt(cb.dataset.poPk, 10));
+            applyPoDelta(cb.dataset.poPk, checked);
+          }
+        });
+        recalcProjection();
+        updateSelectedCountLabel();
+
+        if (changedPks.length) {
+          fetch('{% url "bulk_toggle_po_selection" %}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf() },
+            credentials: 'same-origin',
+            body: JSON.stringify({ po_pks: changedPks, selected: checked }),
+          }).catch(function () {});
+        }
+      });
+    }
+
+    // Inventory modal open + save
+    var editInvBtn = document.getElementById('edit-inventory-btn');
+    if (editInvBtn) {
+      editInvBtn.addEventListener('click', function () {
+        new bootstrap.Modal(document.getElementById('inventoryModal')).show();
+      });
+    }
+
+    var saveInvBtn = document.getElementById('save-inventory-btn');
+    if (saveInvBtn) {
+      saveInvBtn.addEventListener('click', function () {
+        var inventory = {};
+        document.querySelectorAll('.inventory-input').forEach(function (input) {
+          inventory[input.dataset.itemId] = input.value === '' ? 0 : parseFloat(input.value);
+        });
+
+        saveInvBtn.disabled = true;
+        fetch('{% url "save_forecast_inventory" %}', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf() },
+          credentials: 'same-origin',
+          body: JSON.stringify({ inventory: inventory }),
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.ok) {
+            for (var itemId in inventory) {
+              currentInventory[itemId] = inventory[itemId];
+              var cell = document.querySelector('.inventory-cell[data-item-id="' + itemId + '"]');
+              if (cell) cell.textContent = Math.round(inventory[itemId]).toLocaleString();
+            }
+            recalcProjection();
+            bootstrap.Modal.getInstance(document.getElementById('inventoryModal')).hide();
+          } else {
+            alert('Failed to save inventory: ' + (data.error || 'unknown error'));
+          }
+        })
+        .catch(function (err) { alert('Failed to save inventory: ' + err.message); })
+        .finally(function () { saveInvBtn.disabled = false; });
+      });
+    }
+
+    // Initial render
+    recalcProjection();
+    updateSelectedCountLabel();
+    syncSelectAllState();
+  })();
+  </script>
+
 {% endif %}
 {% endblock %}

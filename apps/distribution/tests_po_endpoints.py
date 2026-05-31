@@ -1192,3 +1192,30 @@ class InventoryProjectionTest(TestCase):
         pos_data = json.loads(resp.context['pos_data_json'])
         self.assertIn(str(po.pk), pos_data)
         self.assertEqual(pos_data[str(po.pk)][str(self.item.pk)], 42.0)
+
+    # 12. POs-tab script must render AFTER the bootstrap bundle, so the IIFE's
+    #     `new bootstrap.Tooltip()` call does not throw on an undefined global.
+    def test_pos_tab_script_loads_after_bootstrap(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+
+        bootstrap_pos = content.find('bootstrap.bundle')
+        # `recalcProjection` is defined only inside the moved POs-tab script.
+        script_pos = content.find('recalcProjection')
+
+        self.assertGreater(bootstrap_pos, 0, 'Bootstrap bundle not found')
+        self.assertGreater(script_pos, 0, 'POs tab script not found')
+        self.assertLess(
+            bootstrap_pos, script_pos,
+            'POs tab script must load AFTER the bootstrap bundle',
+        )
+
+    # 13. Inventory edit modal renders an input row per active item.
+    def test_inventory_modal_renders_item_inputs(self):
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        self.assertIn('class="form-control form-control-sm inventory-input"', content)
+        self.assertIn(f'data-item-id="{self.item.pk}"', content)
