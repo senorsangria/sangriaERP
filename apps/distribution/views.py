@@ -15,6 +15,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
+from django.db.models import Case, IntegerField, Value, When
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -636,19 +637,38 @@ def distributor_list(request):
 
             pos_qs = _get_filtered_distributor_pos_queryset(company, pos_active_filters)
 
-            # Sorting — default ascending (oldest first)
+            # Rank status by workflow order (not alphabetical) so both the
+            # default sort and the explicit Status sort follow the lifecycle.
+            STATUS_WORKFLOW_ORDER = [
+                DistributorPO.Status.PROJECTED,
+                DistributorPO.Status.ACTUAL,
+                DistributorPO.Status.SUBMITTED,
+                DistributorPO.Status.IN_TRANSIT,
+                DistributorPO.Status.DELIVERED,
+                DistributorPO.Status.INVOICED,
+                DistributorPO.Status.CANCELLED,
+            ]
+            status_rank = Case(
+                *[When(status=s, then=Value(i)) for i, s in enumerate(STATUS_WORKFLOW_ORDER)],
+                default=Value(99),
+                output_field=IntegerField(),
+            )
+            pos_qs = pos_qs.annotate(_status_rank=status_rank)
+
+            # Sorting — default ascending (oldest first). The default groups by
+            # PO Month, then workflow status, then distributor name.
             pos_sort = request.GET.get('sort', 'po_month')
             sort_map = {
-                'po_month':     ['year', 'month'],
-                '-po_month':    ['-year', '-month'],
-                'status':       ['status'],
-                '-status':      ['-status'],
+                'po_month':     ['year', 'month', '_status_rank', 'distributor__name'],
+                '-po_month':    ['-year', '-month', '_status_rank', 'distributor__name'],
+                'status':       ['_status_rank'],
+                '-status':      ['-_status_rank'],
                 'distributor':  ['distributor__name'],
                 '-distributor': ['-distributor__name'],
                 'so_number':    ['so_number'],
                 '-so_number':   ['-so_number'],
             }
-            order_fields = sort_map.get(pos_sort, ['year', 'month'])
+            order_fields = sort_map.get(pos_sort, ['year', 'month', '_status_rank', 'distributor__name'])
             pos_qs = pos_qs.order_by(*order_fields)
 
             pos_qs = pos_qs.prefetch_related('lines__item__brand')
@@ -1351,12 +1371,18 @@ def distributor_po_modal_data(request, dist_pk, year, month):
         .order_by('brand__name', 'sort_order', 'name')
     )
 
-    # Saved POs for this month
-    saved_pos = list(
+    # Saved POs for this month. Optional ?po_pk=N narrows the modal to a single
+    # PO (clicking a specific PO row), so two POs in the same month don't both
+    # open. Response shape is identical either way.
+    saved_pos_qs = (
         DistributorPO.objects.filter(distributor=distributor, year=year, month=month)
         .prefetch_related('lines__item')
         .order_by('pk')
     )
+    po_pk = request.GET.get('po_pk')
+    if po_pk:
+        saved_pos_qs = saved_pos_qs.filter(pk=po_pk)
+    saved_pos = list(saved_pos_qs)
 
     items_data = [
         {

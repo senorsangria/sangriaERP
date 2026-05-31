@@ -889,6 +889,94 @@ class DistributorPOsTabTest(TestCase):
         self.assertContains(resp, 'Apply Filters')
         self.assertContains(resp, 'Clear All')
 
+    # 22. Default sort: PO Month, then workflow status, then distributor name
+    def test_default_sort_is_month_then_status_then_distributor(self):
+        alpha = _make_distributor(self.company, 'Alpha Dist')
+        zeta = _make_distributor(self.company, 'Zeta Dist')
+        _make_po(zeta, 2026, 5, status='projected')
+        _make_po(alpha, 2026, 5, status='projected')
+        _make_po(alpha, 2026, 5, status='actual', ext_po='PO-A5')
+        _make_po(alpha, 2026, 6, status='projected')
+        resp = self._get_tab()  # no ?sort param → default ordering
+        self.assertEqual(resp.status_code, 200)
+        order = [
+            (r['po'].month, r['po'].status, r['po'].distributor.name)
+            for r in resp.context['pos_rows']
+        ]
+        self.assertEqual(order, [
+            (5, 'projected', 'Alpha Dist'),   # month, then status rank, then dist name
+            (5, 'projected', 'Zeta Dist'),
+            (5, 'actual', 'Alpha Dist'),
+            (6, 'projected', 'Alpha Dist'),
+        ])
+
+    # 23. Explicit Status sort follows workflow order, not alphabetical
+    def test_status_sort_uses_workflow_order(self):
+        _make_po(self.dist, 2026, 5, status='cancelled')
+        _make_po(self.dist, 2026, 5, status='projected')
+        _make_po(self.dist, 2026, 5, status='submitted')
+        _make_po(self.dist, 2026, 5, status='actual', ext_po='PO-X')
+        resp = self._get_tab(sort='status')
+        self.assertEqual(resp.status_code, 200)
+        statuses = [r['po'].status for r in resp.context['pos_rows']]
+        # Workflow order, NOT alphabetical (which would be actual/cancelled/projected/submitted)
+        self.assertEqual(statuses, ['projected', 'actual', 'submitted', 'cancelled'])
+
+    # 24. Filters button renders only on the Distributor POs tab
+    def test_filter_button_only_on_distributor_pos_tab(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        resp = self._get_tab(tab='distributor_pos')
+        self.assertContains(resp, 'data-bs-target="#posFilterModal"')
+        resp_forecast = self._get_tab(tab='forecast')
+        self.assertNotContains(resp_forecast, 'data-bs-target="#posFilterModal"')
+
+    # 25. Selected-PO count renders (now in the brand-name header row)
+    def test_selected_count_in_header_row(self):
+        for m in (5, 6):
+            po = _make_po(self.dist, 2026, m, status='projected')
+            po.selected_for_projection = True
+            po.save(update_fields=['selected_for_projection'])
+        resp = self._get_tab()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['selected_po_count'], 2)
+        self.assertContains(resp, 'POs selected')
+        self.assertContains(resp, 'id="selected-po-count">2<')
+
+    # 26. PO row click path: v1 endpoint with ?po_pk returns only that PO
+    def test_po_modal_single_po_mode(self):
+        po1 = _make_po(self.dist, 2026, 5, status='projected')
+        _make_po_line(po1, self.item, 10)
+        po2 = _make_po(self.dist, 2026, 5, status='actual', ext_po='PO-2')
+        _make_po_line(po2, self.item, 20)
+        base = reverse('distributor_po_modal_data', args=[self.dist.pk, 2026, 5])
+
+        single = self.client.get(
+            f'{base}?po_pk={po1.pk}', HTTP_X_REQUESTED_WITH='XMLHttpRequest'
+        )
+        self.assertEqual(single.status_code, 200)
+        saved = single.json()['saved_orders']
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]['id'], po1.pk)
+
+        # Without ?po_pk, both POs for the month are returned (multi-PO mode)
+        both = self.client.get(base, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(len(both.json()['saved_orders']), 2)
+
+    # 27. Inventory modal groups items under brand headers (no repeated brand name)
+    def test_inventory_modal_groups_by_brand(self):
+        brand2 = _make_brand(self.company, 'Second Brand')
+        _make_item(brand2, name='Item Two', item_code='ITM2')
+        resp = self._get_tab()
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        # Brand-group header markup present, with each brand name as a header
+        self.assertIn(f'text-muted mt-3 mb-1">{self.brand.name}</div>', content)
+        self.assertIn('text-muted mt-3 mb-1">Second Brand</div>', content)
+        # Item names appear; the old "Brand — Item" combined label is gone
+        self.assertIn('Item Two', content)
+        self.assertNotIn(f'{self.brand.name} &mdash; ', content)
+        self.assertNotIn(f'{self.brand.name} — ', content)
+
 
 # ---------------------------------------------------------------------------
 # 10. Distributor.code tests + new tab refinements

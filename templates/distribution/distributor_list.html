@@ -809,10 +809,11 @@
     <table class="table table-sm po-table mb-0">
       <thead class="table-light">
         <tr>
-          {# Row 1: checkbox col + PO Month + Dist blank; brand group spans #}
+          {# Row 1: checkbox col blank; selected-count spans PO Month + Dist; brand group spans #}
           <th class="sticky-left po-checkbox-col"></th>
-          <th class="sticky-left-2" style="min-width:90px;"></th>
-          <th style="min-width:80px;"></th>
+          <th colspan="2" class="text-muted small fw-normal align-bottom">
+            (<span id="selected-po-count">{{ selected_po_count }}</span> POs selected)
+          </th>
           {% for brand in brand_groups %}
             <th colspan="{{ brand.items|length }}" class="brand-header text-center">{{ brand.brand_name }}</th>
           {% endfor %}
@@ -852,7 +853,7 @@
         {# Projection row 1: Current Inventory (edited via modal) #}
         <tr class="projection-row current-inventory-row">
           <td class="sticky-left po-checkbox-col"></td>
-          <td colspan="2">
+          <td colspan="2" class="text-end">
             Current Inventory
             <button type="button" class="btn btn-sm btn-outline-secondary ms-2 py-0 px-1" id="edit-inventory-btn" title="Edit current inventory">
               <i class="bi bi-pencil"></i>
@@ -867,9 +868,8 @@
         {# Projection row 2: Projected Ending Inventory (live JS calc) #}
         <tr class="projection-row projected-ending-row">
           <td class="sticky-left po-checkbox-col"></td>
-          <td colspan="2">
+          <td colspan="2" class="text-end">
             Projected Ending Inventory
-            <span class="text-muted small">(<span id="selected-po-count">{{ selected_po_count }}</span> POs selected)</span>
           </td>
           {% for item in all_items %}
             <td class="text-center small item-cell projected-cell" data-item-id="{{ item.pk }}">—</td>
@@ -1001,14 +1001,18 @@
         <div class="modal-body">
           <p class="text-muted small">Enter current on-hand cases per item. Used for projection only — not tied to inventory imports.</p>
           <form id="inventoryForm">
-            {% for item in all_items_for_inventory %}
-              <div class="mb-2 row align-items-center">
-                <label class="col-7 col-form-label small">{{ item.brand.name }} — {{ item.name }}</label>
-                <div class="col-5">
-                  <input type="number" step="0.01" min="0" class="form-control form-control-sm inventory-input"
-                         data-item-id="{{ item.pk }}" value="{{ item.forecast_current_inventory|floatformat:'-2' }}">
+            {% regroup all_items_for_inventory by brand.name as inventory_brand_list %}
+            {% for brand_group in inventory_brand_list %}
+              <div class="fw-bold text-uppercase small text-muted mt-3 mb-1">{{ brand_group.grouper }}</div>
+              {% for item in brand_group.list %}
+                <div class="mb-2 row align-items-center">
+                  <label class="col-7 col-form-label small">{{ item.name }}</label>
+                  <div class="col-5">
+                    <input type="number" step="0.01" min="0" class="form-control form-control-sm inventory-input"
+                           data-item-id="{{ item.pk }}" value="{{ item.forecast_current_inventory|floatformat:'-2' }}">
+                  </div>
                 </div>
-              </div>
+              {% endfor %}
             {% endfor %}
           </form>
         </div>
@@ -1539,9 +1543,12 @@
 
     function openPoModalFromRow(row) {
       var distPk = row.dataset.distPk;
+      var poPk   = row.dataset.poPk;
       var year   = parseInt(row.dataset.year, 10);
       var month  = parseInt(row.dataset.month, 10);
-      var dataUrl = '/distributors/' + distPk + '/po/' + year + '/' + month + '/';
+      // ?po_pk scopes the modal to ONLY the clicked PO (single-PO mode), so a
+      // distributor with multiple POs in one month doesn't open them all.
+      var dataUrl = '/distributors/' + distPk + '/po/' + year + '/' + month + '/?po_pk=' + poPk;
       var saveUrl = '/distributors/' + distPk + '/po/save/';
       var deleteBase = '/distributors/' + distPk + '/po/';
       var suggestPattern = '/distributors/' + distPk + '/po/YEAR/MONTH/suggest/';
