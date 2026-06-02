@@ -30,6 +30,22 @@ from apps.distribution.tests_forecast import (
 # Extra helpers
 # ---------------------------------------------------------------------------
 
+class _FrozenApril2026Date(date):
+    """Frozen "today" = 2026-04-15 for forecast/suggestion tests.
+
+    The forecast pivots past-vs-future on ``date.today()`` (referenced as
+    ``apps.distribution.forecast.date``). Fixtures that anchor a snapshot at
+    April 2026 with a May 2026 lookahead require "now" to be on/before April
+    2026 so the lookahead month stays a *future* projection month and uses the
+    prior-year (May 2025) sales path. Patch ``apps.distribution.forecast.date``
+    with this subclass to make those tests time-independent.
+    """
+
+    @classmethod
+    def today(cls):
+        return cls(2026, 4, 15)
+
+
 def _make_inventory_user(company, username):
     """Supplier admin WITH can_manage_distributor_inventory permission."""
     return _make_supplier_admin(company, username)
@@ -546,6 +562,7 @@ class SuggestEndpointTest(TestCase):
                            kwargs={'dist_pk': self.dist.pk, 'year': 2026, 'month': 4})
 
     # 13. Suggest endpoint returns correct lines when shortage exists
+    @patch('apps.distribution.forecast.date', _FrozenApril2026Date)
     def test_suggest_endpoint_returns_correct_lines(self):
         resp = self.client.get(self.url)
         self.assertEqual(resp.status_code, 200)

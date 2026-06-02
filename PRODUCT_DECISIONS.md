@@ -860,6 +860,34 @@ The status dropdown in the modal form now shows all 7 statuses (driven by `po_st
 
 ---
 
+### Testing Convention — Date-Independence in Forecast/Suggestion Tests
+
+The forecast (`apps/distribution/forecast.py`) pivots each horizon cell past-vs-future on
+`date.today()` (`(year, month) < (today.year, today.month)`): past months use that month's
+**actual** sales; the current month and future months project from **prior-year** same-month
+sales. Because that pivot reads the real wall clock, any test fixture that hardcodes absolute
+dates (e.g. a snapshot anchored at April 2026 with a May 2026 lookahead) silently changes
+behavior once the real calendar moves past the assumed "now."
+
+This bit three suggest-endpoint tests on **2026-06-01**: their lookahead month (May 2026)
+flipped from a future projection cell (using May 2025 prior-year sales → shortage → suggestion
+lines) into a past cell (using May 2026 actuals, of which the fixtures created none → zero
+depletion → zero shortage → zero lines), failing the "expect ≥1 line" assertions. The
+algorithm and forecast were correct; only the fixtures baked in an implicit "now."
+
+**Rule for forecast/suggestion tests:**
+- Unit tests that call `compute_distributor_forecast` / `compute_group_forecast` directly must
+  pass an explicit `today=date(...)` (these functions already accept it). Most already do.
+- Tests that exercise the **endpoints** (which do not accept a `today` override) must freeze the
+  clock by patching `apps.distribution.forecast.date` (the symbol is `from datetime import date`).
+  The shared `_FrozenApril2026Date` subclass in `tests_po_endpoints.py` does this; apply it with
+  `@patch('apps.distribution.forecast.date', _FrozenApril2026Date)`. Do **not** add a `today`
+  parameter to production endpoints just to satisfy tests.
+- Prefer freezing to a date where the lookahead month remains in the future relative to the
+  frozen now, so the intended prior-year projection path produces the expected shortage.
+
+---
+
 ### Algorithm UX Change — Suggestions On-Demand (replaces auto-suggest)
 
 - Modal open now shows only saved POs; no algorithm-generated tabs are pre-populated
