@@ -698,6 +698,19 @@ def distributor_list(request):
             if current_brand_items:
                 brand_groups.append({'brand_name': current_brand, 'items': current_brand_items})
 
+            # Compute month parity across the full ordered queryset for page-stable banding.
+            # Walk distinct (year, month) in render order and assign alternating 0/1 parity.
+            month_parity_map = {}
+            _parity = 0
+            _prev_ym = None
+            for (_y, _m) in pos_qs.values_list('year', 'month'):
+                _ym = (_y, _m)
+                if _ym not in month_parity_map:
+                    if _prev_ym is not None:
+                        _parity = 1 - _parity
+                    month_parity_map[_ym] = _parity
+                    _prev_ym = _ym
+
             pos_rows = []
             pos_data = {}  # {po_pk: {str(item_id): cases}} for current-page rows
             for po in pos_page_obj:
@@ -710,6 +723,7 @@ def distributor_list(request):
                     'item_cases': item_cases,
                     'po_month_label': po_month_label,
                     'is_selected': po.selected_for_projection,
+                    'band_parity': month_parity_map.get((po.year, po.month), 0),
                 })
                 pos_data[po.pk] = {str(k): v for k, v in line_map.items()}
 
@@ -1610,95 +1624,6 @@ def distributor_po_delete(request, dist_pk, po_pk):
     po.delete()
 
     return JsonResponse({'ok': True})
-
-
-# ---------------------------------------------------------------------------
-# New PO modal endpoint (v2) — single-PO and multi-PO modes
-# ---------------------------------------------------------------------------
-
-def _serialize_po(po):
-    """Return a dict representation of a PO for modal display."""
-    return {
-        'pk': po.pk,
-        'distributor_id': po.distributor_id,
-        'distributor_name': po.distributor.name,
-        'year': po.year,
-        'month': po.month,
-        'status': po.status,
-        'external_po_number': po.external_po_number or '',
-        'so_number': po.so_number,
-        'notes': po.notes or '',
-        'lines': [
-            {
-                'item_id': line.item_id,
-                'item_name': line.item.name,
-                'cases': float(line.quantity_cases),
-            }
-            for line in po.lines.all()
-        ],
-    }
-
-
-@login_required
-def distributor_po_modal_data_v2(request):
-    """
-    New modal data endpoint supporting both single-PO and multi-PO modes.
-
-    Single PO mode: ?po_pk=N
-    Multi PO mode: ?distributor=N&year=YYYY&month=M
-    """
-    if not request.user.has_permission('can_manage_distributor_inventory'):
-        return JsonResponse({'error': 'Permission denied'}, status=403)
-
-    company = request.user.company
-    po_pk = request.GET.get('po_pk')
-
-    if po_pk:
-        try:
-            po = (
-                DistributorPO.objects
-                .select_related('distributor')
-                .prefetch_related('lines__item')
-                .get(pk=po_pk, distributor__company=company)
-            )
-        except DistributorPO.DoesNotExist:
-            return JsonResponse({'error': 'PO not found'}, status=404)
-
-        pos_list = [_serialize_po(po)]
-        distributor = po.distributor
-    else:
-        try:
-            dist_pk = int(request.GET.get('distributor'))
-            year = int(request.GET.get('year'))
-            month = int(request.GET.get('month'))
-        except (TypeError, ValueError):
-            return JsonResponse({'error': 'Missing distributor, year, or month'}, status=400)
-
-        distributor = get_object_or_404(Distributor, pk=dist_pk, company=company)
-
-        pos_qs = (
-            DistributorPO.objects
-            .filter(distributor=distributor, year=year, month=month)
-            .select_related('distributor')
-            .prefetch_related('lines__item')
-        )
-        pos_list = [_serialize_po(po) for po in pos_qs]
-
-    items = list(
-        Item.objects.filter(brand__company=company, is_active=True)
-        .select_related('brand')
-        .order_by('brand__name', 'name')
-    )
-    items_data = [
-        {'pk': i.pk, 'name': i.name, 'brand': i.brand.name, 'item_code': i.item_code or ''}
-        for i in items
-    ]
-
-    return JsonResponse({
-        'pos': pos_list,
-        'items': items_data,
-        'distributor': {'pk': distributor.pk, 'name': distributor.name},
-    })
 
 
 # ---------------------------------------------------------------------------

@@ -719,70 +719,6 @@ class SONumberAssignmentTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 8. distributor_po_modal_data_v2 endpoint tests
-# ---------------------------------------------------------------------------
-
-class DistributorPOModalDataV2Test(TestCase):
-
-    def setUp(self):
-        self.company = _make_company('V2 Modal Co')
-        self.admin = _make_inventory_user(self.company, 'v2_admin')
-        self.dist = _make_distributor(self.company)
-        self.brand = _make_brand(self.company)
-        self.item = _make_item(self.brand, item_code='V2ITEM')
-        self.client = Client()
-        self.client.login(username='v2_admin', password='testpass123')
-        self.url = reverse('distributor_po_modal_data_v2')
-
-    # 9. Single PO mode returns one PO entry
-    def test_modal_data_v2_single_po_mode(self):
-        po = _make_po(self.dist, 2026, 5, status='projected')
-        _make_po_line(po, self.item, 48)
-        resp = self.client.get(self.url + f'?po_pk={po.pk}')
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertIn('pos', data)
-        self.assertEqual(len(data['pos']), 1)
-        self.assertEqual(data['pos'][0]['pk'], po.pk)
-        self.assertEqual(data['pos'][0]['year'], 2026)
-        self.assertEqual(data['pos'][0]['month'], 5)
-        self.assertEqual(len(data['pos'][0]['lines']), 1)
-        self.assertIn('items', data)
-        self.assertIn('distributor', data)
-
-    # 10. Multi-PO mode returns all POs for that distributor/month
-    def test_modal_data_v2_multi_po_mode(self):
-        po1 = _make_po(self.dist, 2026, 5)
-        po2 = _make_po(self.dist, 2026, 5)
-        resp = self.client.get(
-            self.url + f'?distributor={self.dist.pk}&year=2026&month=5'
-        )
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertEqual(len(data['pos']), 2)
-        pks = {p['pk'] for p in data['pos']}
-        self.assertIn(po1.pk, pks)
-        self.assertIn(po2.pk, pks)
-
-    # 11. Requires can_manage_distributor_inventory
-    def test_modal_data_v2_requires_permission(self):
-        limited = _make_limited_user(self.company, 'v2_limited')
-        c = Client()
-        c.login(username='v2_limited', password='testpass123')
-        po = _make_po(self.dist, 2026, 5)
-        resp = c.get(self.url + f'?po_pk={po.pk}')
-        self.assertEqual(resp.status_code, 403)
-
-    # 12. Returns 404 for PO belonging to a different company
-    def test_modal_data_v2_404_for_other_company_po(self):
-        other_co = _make_company('Other V2 Co')
-        other_dist = _make_distributor(other_co, 'Other V2 Dist')
-        po = _make_po(other_dist, 2026, 5)
-        resp = self.client.get(self.url + f'?po_pk={po.pk}')
-        self.assertEqual(resp.status_code, 404)
-
-
-# ---------------------------------------------------------------------------
 # 9. Distributor POs tab view tests
 # ---------------------------------------------------------------------------
 
@@ -1307,3 +1243,67 @@ class InventoryProjectionTest(TestCase):
         content = resp.content.decode()
         self.assertIn('class="form-control form-control-sm inventory-input"', content)
         self.assertIn(f'data-item-id="{self.item.pk}"', content)
+
+
+# ---------------------------------------------------------------------------
+# 11. Cleanup tests — v2 removal, band parity, v1 regression guard
+# ---------------------------------------------------------------------------
+
+class DistributorPOCleanupTest(TestCase):
+
+    def setUp(self):
+        self.company = _make_company('Cleanup Co')
+        self.admin = _make_inventory_user(self.company, 'cleanup_admin')
+        self.dist = _make_distributor(self.company)
+        self.brand = _make_brand(self.company)
+        self.item = _make_item(self.brand, item_code='CLNIT')
+        self.client = Client()
+        self.client.login(username='cleanup_admin', password='testpass123')
+
+    # 1. v2 endpoint removed — URL resolves to nothing
+    def test_v2_endpoint_removed(self):
+        from django.urls import NoReverseMatch
+        with self.assertRaises(NoReverseMatch):
+            reverse('distributor_po_modal_data_v2')
+
+    # 2. Band parity alternates by month; same month shares parity
+    def test_band_parity_alternates_by_month(self):
+        # Create POs in 3 distinct months (month order: 3, 4, 5 ascending = default sort)
+        po_m3a = _make_po(self.dist, 2026, 3, status='projected')
+        po_m3b = _make_po(self.dist, 2026, 3, status='actual', ext_po='PO-3B')
+        po_m4 = _make_po(self.dist, 2026, 4, status='projected')
+        po_m5 = _make_po(self.dist, 2026, 5, status='projected')
+        resp = self.client.get(
+            reverse('distributor_list') + '?tab=distributor_pos&sort=po_month'
+        )
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.context['pos_rows']
+        parity_by_pk = {r['po'].pk: r['band_parity'] for r in rows}
+        # Both March POs share the same parity
+        self.assertEqual(parity_by_pk[po_m3a.pk], parity_by_pk[po_m3b.pk])
+        # Consecutive months alternate
+        self.assertNotEqual(parity_by_pk[po_m3a.pk], parity_by_pk[po_m4.pk])
+        self.assertNotEqual(parity_by_pk[po_m4.pk], parity_by_pk[po_m5.pk])
+        # Parity values are 0 or 1 only
+        for r in rows:
+            self.assertIn(r['band_parity'], (0, 1))
+        # Band classes rendered in HTML
+        content = resp.content.decode()
+        self.assertIn('band-0', content)
+        self.assertIn('band-1', content)
+
+    # 3. v1 endpoint still handles ?po_pk regression guard
+    #    (Covered by test #26 test_po_modal_single_po_mode; this confirms it
+    #     remains exercised after the v2 removal.)
+    def test_v1_po_pk_still_works(self):
+        po = _make_po(self.dist, 2026, 6, status='projected')
+        _make_po_line(po, self.item, 12)
+        base = reverse('distributor_po_modal_data', args=[self.dist.pk, 2026, 6])
+        resp = self.client.get(
+            f'{base}?po_pk={po.pk}', HTTP_X_REQUESTED_WITH='XMLHttpRequest'
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        saved = data['saved_orders']
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]['id'], po.pk)

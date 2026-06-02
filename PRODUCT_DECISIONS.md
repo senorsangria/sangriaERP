@@ -843,6 +843,23 @@ The status dropdown in the modal form now shows all 7 statuses (driven by `po_st
 
 ---
 
+### Distributor POs Tab Cleanup
+
+- **Removed dead v2 endpoint:** `distributor_po_modal_data_v2` and its only-consumer helper
+  `_serialize_po` removed (zero live callers — the PO row click uses the v1 endpoint
+  `distributor_po_modal_data` with `?po_pk`; v2 had no template/JS callers). URL pattern
+  and test class also removed.
+- **Current Inventory pencil icon moved left:** The pencil button now appears to the left of the
+  "Current Inventory" label in the projection row. The cell remains right-aligned (`text-end`);
+  `ms-2` changed to `me-2` so spacing sits correctly with the button preceding the text.
+- **Month-based row banding:** PO rows alternate background by `(year, month)` — all rows in
+  the same month share a shade, consecutive months alternate. Parity computed server-side
+  across the full ordered queryset before pagination, so a month spanning a page boundary
+  keeps a consistent color. Sticky columns (`sticky-left`, `sticky-left-2`) carry the band
+  background to occlude scrolled content correctly.
+
+---
+
 ### Algorithm UX Change — Suggestions On-Demand (replaces auto-suggest)
 
 - Modal open now shows only saved POs; no algorithm-generated tabs are pre-populated

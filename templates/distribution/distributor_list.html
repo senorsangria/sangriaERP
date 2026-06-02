@@ -803,6 +803,11 @@
   .po-table .projection-row td { background: var(--bs-tertiary-bg, #f1f3f5); border-bottom: 2px solid var(--bs-border-color); font-weight: 500; }
   .po-table .projection-row td.sticky-left { background: var(--bs-tertiary-bg, #f1f3f5); }
   .po-checkbox-col { width: 40px; min-width: 40px; max-width: 40px; text-align: center; }
+  /* Month-based row banding — band-1 rows get a subtle alternate background */
+  .po-table tr.po-row.band-1 td { background-color: var(--bs-tertiary-bg, #f1f3f5); }
+  /* Sticky columns carry their own bg to occlude scrolled content; banding must override */
+  .po-table tr.po-row.band-1 td.sticky-left,
+  .po-table tr.po-row.band-1 td.sticky-left-2 { background-color: var(--bs-tertiary-bg, #f1f3f5); }
   </style>
 
   <div class="table-responsive border rounded">
@@ -854,10 +859,10 @@
         <tr class="projection-row current-inventory-row">
           <td class="sticky-left po-checkbox-col"></td>
           <td colspan="2" class="text-end">
-            Current Inventory
-            <button type="button" class="btn btn-sm btn-outline-secondary ms-2 py-0 px-1" id="edit-inventory-btn" title="Edit current inventory">
+            <button type="button" class="btn btn-sm btn-outline-secondary me-2 py-0 px-1" id="edit-inventory-btn" title="Edit current inventory">
               <i class="bi bi-pencil"></i>
             </button>
+            Current Inventory
           </td>
           {% for item in all_items %}
             <td class="text-center small item-cell inventory-cell" data-item-id="{{ item.pk }}">
@@ -876,7 +881,7 @@
           {% endfor %}
         </tr>
         {% for row in pos_rows %}
-          <tr class="po-row"
+          <tr class="po-row band-{{ row.band_parity }}"
               data-po-pk="{{ row.po.pk }}"
               data-dist-pk="{{ row.po.distributor_id }}"
               data-year="{{ row.po.year }}"
