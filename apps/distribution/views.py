@@ -15,7 +15,6 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Case, IntegerField, Value, When
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -467,7 +466,7 @@ def distributor_list(request):
     pos_active_filters = {}
     pos_active_filter_count = 0
     pos_filters_active = False
-    pos_sort = 'po_month'
+    move_modal_data_json = '{}'
     pos_data_json = '{}'
     selected_totals_json = '{}'
     current_inventory_json = '{}'
@@ -637,39 +636,11 @@ def distributor_list(request):
 
             pos_qs = _get_filtered_distributor_pos_queryset(company, pos_active_filters)
 
-            # Rank status by workflow order (not alphabetical) so both the
-            # default sort and the explicit Status sort follow the lifecycle.
-            STATUS_WORKFLOW_ORDER = [
-                DistributorPO.Status.PROJECTED,
-                DistributorPO.Status.ACTUAL,
-                DistributorPO.Status.SUBMITTED,
-                DistributorPO.Status.IN_TRANSIT,
-                DistributorPO.Status.DELIVERED,
-                DistributorPO.Status.INVOICED,
-                DistributorPO.Status.CANCELLED,
-            ]
-            status_rank = Case(
-                *[When(status=s, then=Value(i)) for i, s in enumerate(STATUS_WORKFLOW_ORDER)],
-                default=Value(99),
-                output_field=IntegerField(),
-            )
-            pos_qs = pos_qs.annotate(_status_rank=status_rank)
-
-            # Sorting — default ascending (oldest first). The default groups by
-            # PO Month, then workflow status, then distributor name.
-            pos_sort = request.GET.get('sort', 'po_month')
-            sort_map = {
-                'po_month':     ['year', 'month', '_status_rank', 'distributor__name'],
-                '-po_month':    ['-year', '-month', '_status_rank', 'distributor__name'],
-                'status':       ['_status_rank'],
-                '-status':      ['-_status_rank'],
-                'distributor':  ['distributor__name'],
-                '-distributor': ['-distributor__name'],
-                'so_number':    ['so_number'],
-                '-so_number':   ['-so_number'],
-            }
-            order_fields = sort_map.get(pos_sort, ['year', 'month', '_status_rank', 'distributor__name'])
-            pos_qs = pos_qs.order_by(*order_fields)
+            # Ordering is fixed: year, month, then manual within-month position.
+            # There are no column-header sorts — manual sort_position is the only
+            # within-month order (seeded by data migration, maintained by the move
+            # endpoint). distributor__name is a final tiebreaker.
+            pos_qs = pos_qs.order_by('year', 'month', 'sort_position', 'distributor__name')
 
             pos_qs = pos_qs.prefetch_related('lines__item__brand')
 
@@ -724,6 +695,10 @@ def distributor_list(request):
                     'po_month_label': po_month_label,
                     'is_selected': po.selected_for_projection,
                     'band_parity': month_parity_map.get((po.year, po.month), 0),
+                    # sort_position is maintained as clean 1..N per month (seeding +
+                    # move endpoint), so it IS the per-month display position and is
+                    # page-stable by construction (no walking counter needed).
+                    'display_position': po.sort_position,
                 })
                 pos_data[po.pk] = {str(k): v for k, v in line_map.items()}
 
@@ -760,6 +735,26 @@ def distributor_list(request):
             all_distributors_for_filter = list(
                 Distributor.objects.filter(pk__in=filter_dist_ids, company=company).order_by('name')
             )
+
+            # Move-modal reference data: month ("YYYY-MM") -> ordered PO list
+            # (pk, position, label). Company-wide, all months, so the move modal can
+            # show any target month's current order without an extra round trip.
+            all_company_pos = (
+                DistributorPO.objects.filter(distributor__company=company)
+                .select_related('distributor')
+                .order_by('year', 'month', 'sort_position', 'distributor__name')
+            )
+            move_modal_data = {}
+            for po in all_company_pos:
+                key = f"{po.year}-{po.month:02d}"
+                month_list = move_modal_data.setdefault(key, [])
+                so_suffix = f" — SO# {po.so_number}" if po.so_number else ''
+                month_list.append({
+                    'pk': po.pk,
+                    'position': len(month_list) + 1,  # 1-based within month
+                    'label': f"{po.distributor.display_code} — {po.get_status_display()}{so_suffix}",
+                })
+            move_modal_data_json = json.dumps(move_modal_data)
 
             status_choices = DistributorPO.Status.choices
 
@@ -804,7 +799,7 @@ def distributor_list(request):
         'pos_active_filters': pos_active_filters,
         'pos_active_filter_count': pos_active_filter_count,
         'pos_filters_active': pos_filters_active,
-        'pos_sort': pos_sort,
+        'move_modal_data_json': move_modal_data_json,
         # Inventory projection tool
         'pos_data_json': pos_data_json,
         'selected_totals_json': selected_totals_json,
@@ -2133,3 +2128,73 @@ def bulk_toggle_po_selection(request):
     ).update(selected_for_projection=selected)
 
     return JsonResponse({'ok': True, 'updated': updated})
+
+
+@login_required
+@require_POST
+def move_distributor_po(request):
+    """
+    Move a PO to a target month + position. Renumbers affected month(s).
+    Expects JSON: {"po_pk": <int>, "target_year": <int>, "target_month": <int>, "target_position": <int>}
+    target_position is 1-based; the PO is inserted at that position and others slide down.
+    """
+    if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+    if not request.user.has_permission('can_manage_distributor_inventory'):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    try:
+        data = json.loads(request.body)
+        po_pk = int(data['po_pk'])
+        target_year = int(data['target_year'])
+        target_month = int(data['target_month'])
+        target_position = int(data['target_position'])
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+
+    company = request.user.company
+
+    try:
+        po = DistributorPO.objects.select_related('distributor').get(
+            pk=po_pk, distributor__company=company
+        )
+    except DistributorPO.DoesNotExist:
+        return JsonResponse({'error': 'PO not found'}, status=404)
+
+    old_year, old_month = po.year, po.month
+    cross_month = (old_year, old_month) != (target_year, target_month)
+
+    with transaction.atomic():
+        # Move the PO to the target month (year/month may change).
+        po.year = target_year
+        po.month = target_month
+        po.save(update_fields=['year', 'month'])
+
+        # Renumber the TARGET month with the PO inserted at target_position.
+        target_pos_qs = list(
+            DistributorPO.objects.filter(
+                distributor__company=company, year=target_year, month=target_month
+            ).exclude(pk=po.pk).order_by('sort_position', 'distributor__name')
+        )
+        # Clamp target_position into valid range [1, len+1].
+        pos = max(1, min(target_position, len(target_pos_qs) + 1))
+        # Insert po at index pos-1.
+        target_pos_qs.insert(pos - 1, po)
+        for idx, p in enumerate(target_pos_qs, start=1):
+            if p.sort_position != idx:
+                p.sort_position = idx
+                p.save(update_fields=['sort_position'])
+
+        # If cross-month, renumber the OLD month to close the gap.
+        if cross_month:
+            old_pos_qs = list(
+                DistributorPO.objects.filter(
+                    distributor__company=company, year=old_year, month=old_month
+                ).order_by('sort_position', 'distributor__name')
+            )
+            for idx, p in enumerate(old_pos_qs, start=1):
+                if p.sort_position != idx:
+                    p.sort_position = idx
+                    p.save(update_fields=['sort_position'])
+
+    return JsonResponse({'ok': True})

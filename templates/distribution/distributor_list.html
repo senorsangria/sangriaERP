@@ -788,8 +788,10 @@
     margin: 0 auto;
     display: inline-block;
   }
+  /* Three frozen left columns: checkbox (0–40px), Order (40–104px), PO Month (104px+). */
   .po-table .sticky-left { position: sticky; left: 0; background: var(--bs-body-bg, white); z-index: 2; }
-  .po-table .sticky-left-2 { position: sticky; left: 40px; background: var(--bs-body-bg, white); z-index: 2; }
+  .po-table .sticky-left-order { position: sticky; left: 40px; background: var(--bs-body-bg, white); z-index: 2; }
+  .po-table .sticky-left-2 { position: sticky; left: 104px; background: var(--bs-body-bg, white); z-index: 2; }
   .brand-header { background: var(--bs-info-bg-subtle, #e7f3ff); border-bottom: 2px solid var(--bs-border-color); font-weight: 500; font-size: .82rem; }
   .po-row:hover { background-color: var(--bs-secondary-bg, #f8f9fa); cursor: pointer; }
   .po-table th a { color: inherit; text-decoration: none; }
@@ -799,14 +801,21 @@
     max-width: 60px;
     text-align: center;
   }
+  /* Order column (per-month position number + move icon) */
+  .po-table .order-col { width: 64px; min-width: 64px; max-width: 64px; white-space: nowrap; text-align: center; }
+  .po-table .order-number { font-weight: 600; }
+  .move-po-btn { color: var(--bs-secondary, #6c757d); }
+  .move-po-btn:hover { color: var(--bs-primary, #0d6efd); }
   /* Inventory projection rows (scroll normally; not pinned to top) */
   .po-table .projection-row td { background: var(--bs-tertiary-bg, #f1f3f5); border-bottom: 2px solid var(--bs-border-color); font-weight: 500; }
-  .po-table .projection-row td.sticky-left { background: var(--bs-tertiary-bg, #f1f3f5); }
+  .po-table .projection-row td.sticky-left,
+  .po-table .projection-row td.sticky-left-order { background: var(--bs-tertiary-bg, #f1f3f5); }
   .po-checkbox-col { width: 40px; min-width: 40px; max-width: 40px; text-align: center; }
   /* Month-based row banding — band-1 rows get a subtle alternate background */
   .po-table tr.po-row.band-1 td { background-color: var(--bs-tertiary-bg, #f1f3f5); }
   /* Sticky columns carry their own bg to occlude scrolled content; banding must override */
   .po-table tr.po-row.band-1 td.sticky-left,
+  .po-table tr.po-row.band-1 td.sticky-left-order,
   .po-table tr.po-row.band-1 td.sticky-left-2 { background-color: var(--bs-tertiary-bg, #f1f3f5); }
   </style>
 
@@ -814,8 +823,9 @@
     <table class="table table-sm po-table mb-0">
       <thead class="table-light">
         <tr>
-          {# Row 1: checkbox col blank; selected-count spans PO Month + Dist; brand group spans #}
+          {# Row 1: checkbox + Order cols blank; selected-count spans PO Month + Dist; brand group spans #}
           <th class="sticky-left po-checkbox-col"></th>
+          <th class="sticky-left-order order-col"></th>
           <th colspan="2" class="text-muted small fw-normal align-bottom">
             (<span id="selected-po-count">{{ selected_po_count }}</span> POs selected)
           </th>
@@ -824,26 +834,16 @@
           {% endfor %}
         </tr>
         <tr>
-          {# Row 2: column headers aligned with item codes #}
+          {# Row 2: column headers aligned with item codes. No sort links —
+             within-month order is the manual sort_position (use the move icon). #}
           <th class="sticky-left po-checkbox-col">
             <input type="checkbox" id="po-select-all" title="Select/deselect all visible">
           </th>
-          <th class="sticky-left-2" style="min-width:90px;">
-            <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'po_month' %}-po_month{% else %}po_month{% endif %}">
-              PO Month{% if 'po_month' in pos_sort %} {% if pos_sort == 'po_month' %}&uarr;{% else %}&darr;{% endif %}{% endif %}
-            </a>
-          </th>
+          <th class="sticky-left-order order-col text-center" style="min-width:64px;">Order</th>
+          <th class="sticky-left-2" style="min-width:90px;">PO Month</th>
           <th style="min-width:80px;">
-            <div>
-              <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'distributor' %}-distributor{% else %}distributor{% endif %}">
-                Dist{% if 'distributor' in pos_sort %} {% if pos_sort == 'distributor' %}&uarr;{% else %}&darr;{% endif %}{% endif %}
-              </a>
-            </div>
-            <div class="text-muted" style="font-size:.8rem;">
-              <a href="?tab={{ active_tab }}&sort={% if pos_sort == 'so_number' %}-so_number{% else %}so_number{% endif %}" style="color:inherit;text-decoration:none;">
-                SO#{% if 'so_number' in pos_sort %} {% if pos_sort == 'so_number' %}&uarr;{% else %}&darr;{% endif %}{% endif %}
-              </a>
-            </div>
+            <div>Dist</div>
+            <div class="text-muted" style="font-size:.8rem;">SO#</div>
           </th>
           {% for brand in brand_groups %}
             {% for item in brand.items %}
@@ -858,6 +858,7 @@
         {# Projection row 1: Current Inventory (edited via modal) #}
         <tr class="projection-row current-inventory-row">
           <td class="sticky-left po-checkbox-col"></td>
+          <td class="sticky-left-order order-col"></td>
           <td colspan="2" class="text-end">
             <button type="button" class="btn btn-sm btn-outline-secondary me-2 py-0 px-1" id="edit-inventory-btn" title="Edit current inventory">
               <i class="bi bi-pencil"></i>
@@ -873,6 +874,7 @@
         {# Projection row 2: Projected Ending Inventory (live JS calc) #}
         <tr class="projection-row projected-ending-row">
           <td class="sticky-left po-checkbox-col"></td>
+          <td class="sticky-left-order order-col"></td>
           <td colspan="2" class="text-end">
             Projected Ending Inventory
           </td>
@@ -885,9 +887,16 @@
               data-po-pk="{{ row.po.pk }}"
               data-dist-pk="{{ row.po.distributor_id }}"
               data-year="{{ row.po.year }}"
-              data-month="{{ row.po.month }}">
+              data-month="{{ row.po.month }}"
+              data-position="{{ row.display_position }}">
             <td class="sticky-left po-checkbox-col" onclick="event.stopPropagation();">
               <input type="checkbox" class="po-select-checkbox" data-po-pk="{{ row.po.pk }}" {% if row.is_selected %}checked{% endif %}>
+            </td>
+            <td class="sticky-left-order order-col text-center" onclick="event.stopPropagation();">
+              <span class="order-number">{{ row.display_position }}</span>
+              <button type="button" class="btn btn-sm btn-link p-0 ms-1 move-po-btn" data-po-pk="{{ row.po.pk }}" title="Move this PO">
+                <i class="bi bi-arrows-move"></i>
+              </button>
             </td>
             <td class="sticky-left-2 small">
               <div>{{ row.po_month_label }}</div>
@@ -907,7 +916,7 @@
           </tr>
         {% empty %}
           <tr>
-            <td colspan="{{ all_items|length|add:3 }}" class="text-center text-muted py-4">No POs found.</td>
+            <td colspan="{{ all_items|length|add:4 }}" class="text-center text-muted py-4">No POs found.</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -919,11 +928,11 @@
   <nav class="mt-3">
     <ul class="pagination pagination-sm justify-content-center">
       {% if pos_page_obj.has_previous %}
-        <li class="page-item"><a class="page-link" href="?tab={{ active_tab }}&page={{ pos_page_obj.previous_page_number }}&sort={{ pos_sort }}">Previous</a></li>
+        <li class="page-item"><a class="page-link" href="?tab={{ active_tab }}&page={{ pos_page_obj.previous_page_number }}">Previous</a></li>
       {% endif %}
       <li class="page-item disabled"><span class="page-link">Page {{ pos_page_obj.number }} of {{ pos_page_obj.paginator.num_pages }}</span></li>
       {% if pos_page_obj.has_next %}
-        <li class="page-item"><a class="page-link" href="?tab={{ active_tab }}&page={{ pos_page_obj.next_page_number }}&sort={{ pos_sort }}">Next</a></li>
+        <li class="page-item"><a class="page-link" href="?tab={{ active_tab }}&page={{ pos_page_obj.next_page_number }}">Next</a></li>
       {% endif %}
     </ul>
   </nav>
@@ -1024,6 +1033,38 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
           <button type="button" class="btn btn-primary btn-sm" id="save-inventory-btn">Save Inventory</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Move PO modal — reposition a PO within its month or move it to another month #}
+  <div class="modal fade" id="movePoModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Move PO</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="move-po-pk">
+          <div class="mb-3">
+            <label class="form-label small">Target month</label>
+            <select class="form-select form-select-sm" id="move-target-month"></select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">Move to position</label>
+            <input type="number" min="1" class="form-control form-control-sm" id="move-target-position">
+            <small class="text-muted">The PO will be inserted at this position; others slide down.</small>
+          </div>
+          <div class="mb-2">
+            <div class="small text-muted mb-1">Current order for this month:</div>
+            <ol class="small" id="move-month-preview" style="max-height: 200px; overflow-y: auto;"></ol>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary btn-sm" id="move-po-save-btn">Move</button>
         </div>
       </div>
     </div>
@@ -1704,6 +1745,103 @@
         })
         .catch(function (err) { alert('Failed to save inventory: ' + err.message); })
         .finally(function () { saveInvBtn.disabled = false; });
+      });
+    }
+
+    // ------------------------------------------------------------------
+    // Move PO logic (reposition within month or move to another month)
+    // ------------------------------------------------------------------
+
+    var moveModalData = JSON.parse('{{ move_modal_data_json|escapejs }}');  // {"YYYY-MM": [{pk, position, label}, ...]}
+    var moveModalEl = document.getElementById('movePoModal');
+    var moveModal = moveModalEl ? new bootstrap.Modal(moveModalEl) : null;
+
+    function buildMoveMonthOptions(selectedKey) {
+      var sel = document.getElementById('move-target-month');
+      if (!sel) return;
+      sel.innerHTML = '';
+      var keys = Object.keys(moveModalData).sort();
+      // Ensure the PO's current month is always selectable even if (edge case) absent.
+      if (selectedKey && keys.indexOf(selectedKey) === -1) keys.push(selectedKey);
+      keys.sort();
+      keys.forEach(function (key) {
+        var opt = document.createElement('option');
+        opt.value = key;
+        var parts = key.split('-');
+        var d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, 1);
+        opt.textContent = "'" + parts[0].slice(2) + "-" + d.toLocaleString('en-US', { month: 'short' });
+        if (key === selectedKey) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+
+    function renderMoveMonthPreview(monthKey, movingPoPk) {
+      var ol = document.getElementById('move-month-preview');
+      if (!ol) return;
+      ol.innerHTML = '';
+      var list = moveModalData[monthKey] || [];
+      list.forEach(function (item) {
+        var li = document.createElement('li');
+        li.textContent = item.label + (item.pk === movingPoPk ? '  (this PO)' : '');
+        if (item.pk === movingPoPk) li.style.fontWeight = '600';
+        ol.appendChild(li);
+      });
+    }
+
+    document.querySelectorAll('.move-po-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();  // do NOT open the row's edit modal
+        var row = btn.closest('.po-row');
+        var poPk = parseInt(btn.dataset.poPk, 10);
+        var year = row.dataset.year;
+        var month = String(row.dataset.month).padStart(2, '0');
+        var monthKey = year + '-' + month;
+        var currentPos = parseInt(row.dataset.position, 10);
+
+        document.getElementById('move-po-pk').value = poPk;
+        buildMoveMonthOptions(monthKey);
+        document.getElementById('move-target-position').value = currentPos;
+        renderMoveMonthPreview(monthKey, poPk);
+
+        if (moveModal) moveModal.show();
+      });
+    });
+
+    var moveMonthSel = document.getElementById('move-target-month');
+    if (moveMonthSel) {
+      moveMonthSel.addEventListener('change', function () {
+        var poPk = parseInt(document.getElementById('move-po-pk').value, 10);
+        renderMoveMonthPreview(moveMonthSel.value, poPk);
+      });
+    }
+
+    var moveSaveBtn = document.getElementById('move-po-save-btn');
+    if (moveSaveBtn) {
+      moveSaveBtn.addEventListener('click', function () {
+        var poPk = parseInt(document.getElementById('move-po-pk').value, 10);
+        var monthKey = document.getElementById('move-target-month').value;
+        var parts = monthKey.split('-');
+        var targetYear = parseInt(parts[0], 10);
+        var targetMonth = parseInt(parts[1], 10);
+        var targetPosition = parseInt(document.getElementById('move-target-position').value, 10) || 1;
+
+        moveSaveBtn.disabled = true;
+        fetch('{% url "move_distributor_po" %}', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf() },
+          credentials: 'same-origin',
+          body: JSON.stringify({ po_pk: poPk, target_year: targetYear, target_month: targetMonth, target_position: targetPosition }),
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.ok) {
+            window.location.reload();  // re-render the list in the new order
+          } else {
+            alert('Move failed: ' + (data.error || 'unknown error'));
+            moveSaveBtn.disabled = false;
+          }
+        })
+        .catch(function (err) { alert('Move failed: ' + err.message); moveSaveBtn.disabled = false; });
       });
     }
 

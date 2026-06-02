@@ -28,6 +28,7 @@ urlpatterns = [
     path('distributors/forecast-inventory/save/', views.save_forecast_inventory, name='save_forecast_inventory'),
     path('distributors/po/toggle-selection/', views.toggle_po_selection, name='toggle_po_selection'),
     path('distributors/po/bulk-toggle-selection/', views.bulk_toggle_po_selection, name='bulk_toggle_po_selection'),
+    path('distributors/po/move/', views.move_distributor_po, name='move_distributor_po'),
     # PO modal endpoints (Phase 4-step-2b) — static sub-paths before <int:pk>
     path('distributors/<int:dist_pk>/po/<int:year>/<int:month>/',
          views.distributor_po_modal_data, name='distributor_po_modal_data'),

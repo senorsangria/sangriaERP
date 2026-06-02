@@ -800,19 +800,20 @@ class DistributorPOsTabTest(TestCase):
         count = resp.context['pos_page_obj'].paginator.count
         self.assertEqual(count, 1)
 
-    # 18. Sort by so_number works
-    def test_distributor_pos_tab_sort_by_so_number(self):
+    # 18. Column-sort params are ignored — ordering is fixed (year, month, sort_position).
+    def test_sort_param_ignored_ordering_fixed(self):
+        # Two POs same month; sort_position drives within-month order regardless of ?sort.
         po1 = _make_po(self.dist, 2026, 5, status='submitted')
-        po1.so_number = 2010
-        po1.save(update_fields=['so_number'])
-        po2 = _make_po(self.dist, 2026, 6, status='submitted')
-        po2.so_number = 2005
-        po2.save(update_fields=['so_number'])
+        po1.sort_position = 2
+        po1.save(update_fields=['sort_position'])
+        po2 = _make_po(self.dist, 2026, 5, status='projected')
+        po2.sort_position = 1
+        po2.save(update_fields=['sort_position'])
+        # A legacy ?sort=so_number param must NOT change the order.
         resp = self._get_tab(sort='so_number')
         self.assertEqual(resp.status_code, 200)
-        rows = resp.context['pos_rows']
-        so_values = [r['po'].so_number for r in rows]
-        self.assertEqual(so_values, sorted(so_values))
+        order = [r['po'].pk for r in resp.context['pos_rows']]
+        self.assertEqual(order, [po2.pk, po1.pk])  # by sort_position 1, 2
 
     # 19. Paginator at 50 per page
     def test_distributor_pos_tab_paginates_at_50(self):
@@ -842,38 +843,40 @@ class DistributorPOsTabTest(TestCase):
         self.assertContains(resp, 'Apply Filters')
         self.assertContains(resp, 'Clear All')
 
-    # 22. Default sort: PO Month, then workflow status, then distributor name
-    def test_default_sort_is_month_then_status_then_distributor(self):
-        alpha = _make_distributor(self.company, 'Alpha Dist')
-        zeta = _make_distributor(self.company, 'Zeta Dist')
-        _make_po(zeta, 2026, 5, status='projected')
-        _make_po(alpha, 2026, 5, status='projected')
-        _make_po(alpha, 2026, 5, status='actual', ext_po='PO-A5')
-        _make_po(alpha, 2026, 6, status='projected')
-        resp = self._get_tab()  # no ?sort param → default ordering
+    # 22. Ordering is year, month, then manual sort_position (status no longer affects order)
+    def test_order_follows_sort_position_within_month(self):
+        # Same month, mixed statuses; manual sort_position decides the order.
+        po_a = _make_po(self.dist, 2026, 5, status='cancelled')
+        po_a.sort_position = 1
+        po_a.save(update_fields=['sort_position'])
+        po_b = _make_po(self.dist, 2026, 5, status='projected')
+        po_b.sort_position = 2
+        po_b.save(update_fields=['sort_position'])
+        po_c = _make_po(self.dist, 2026, 5, status='submitted')
+        po_c.sort_position = 3
+        po_c.save(update_fields=['sort_position'])
+        # A later month always sorts after May regardless of its sort_position.
+        po_next = _make_po(self.dist, 2026, 6, status='projected')
+        po_next.sort_position = 1
+        po_next.save(update_fields=['sort_position'])
+        resp = self._get_tab()
         self.assertEqual(resp.status_code, 200)
-        order = [
-            (r['po'].month, r['po'].status, r['po'].distributor.name)
-            for r in resp.context['pos_rows']
-        ]
-        self.assertEqual(order, [
-            (5, 'projected', 'Alpha Dist'),   # month, then status rank, then dist name
-            (5, 'projected', 'Zeta Dist'),
-            (5, 'actual', 'Alpha Dist'),
-            (6, 'projected', 'Alpha Dist'),
-        ])
+        order = [r['po'].pk for r in resp.context['pos_rows']]
+        self.assertEqual(order, [po_a.pk, po_b.pk, po_c.pk, po_next.pk])
 
-    # 23. Explicit Status sort follows workflow order, not alphabetical
-    def test_status_sort_uses_workflow_order(self):
-        _make_po(self.dist, 2026, 5, status='cancelled')
-        _make_po(self.dist, 2026, 5, status='projected')
-        _make_po(self.dist, 2026, 5, status='submitted')
-        _make_po(self.dist, 2026, 5, status='actual', ext_po='PO-X')
-        resp = self._get_tab(sort='status')
+    # 23. The Order column shows the per-month display position from sort_position
+    def test_display_position_matches_sort_position(self):
+        po1 = _make_po(self.dist, 2026, 5, status='projected')
+        po1.sort_position = 1
+        po1.save(update_fields=['sort_position'])
+        po2 = _make_po(self.dist, 2026, 5, status='projected')
+        po2.sort_position = 2
+        po2.save(update_fields=['sort_position'])
+        resp = self._get_tab()
         self.assertEqual(resp.status_code, 200)
-        statuses = [r['po'].status for r in resp.context['pos_rows']]
-        # Workflow order, NOT alphabetical (which would be actual/cancelled/projected/submitted)
-        self.assertEqual(statuses, ['projected', 'actual', 'submitted', 'cancelled'])
+        pos_by_pk = {r['po'].pk: r['display_position'] for r in resp.context['pos_rows']}
+        self.assertEqual(pos_by_pk[po1.pk], 1)
+        self.assertEqual(pos_by_pk[po2.pk], 2)
 
     # 24. Filters button renders only on the Distributor POs tab
     def test_filter_button_only_on_distributor_pos_tab(self):
@@ -1324,3 +1327,196 @@ class DistributorPOCleanupTest(TestCase):
         saved = data['saved_orders']
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]['id'], po.pk)
+
+
+# ---------------------------------------------------------------------------
+# 12. Manual within-month ordering — move endpoint, seeding, Order column
+# ---------------------------------------------------------------------------
+
+class DistributorPOMoveTest(TestCase):
+
+    def setUp(self):
+        self.company = _make_company('Move Co')
+        self.admin = _make_inventory_user(self.company, 'move_admin')
+        self.dist = _make_distributor(self.company)
+        self.brand = _make_brand(self.company)
+        self.item = _make_item(self.brand, item_code='MOVIT')
+        self.client = Client()
+        self.client.login(username='move_admin', password='testpass123')
+        self.move_url = reverse('move_distributor_po')
+
+    def _make_month(self, year, month, n):
+        """Create n POs in (year, month) with sort_position 1..n; return them in order."""
+        pos = []
+        for i in range(1, n + 1):
+            po = _make_po(self.dist, year, month, status='projected')
+            po.sort_position = i
+            po.save(update_fields=['sort_position'])
+            pos.append(po)
+        return pos
+
+    def _positions(self, year, month):
+        return {
+            po.pk: po.sort_position
+            for po in DistributorPO.objects.filter(
+                distributor__company=self.company, year=year, month=month
+            )
+        }
+
+    # 1. Seeding logic numbers a month by status-workflow rank then distributor name.
+    def test_seed_sort_position_orders_by_status_then_distributor(self):
+        # Call the exact callable the data migration uses, against live POs.
+        import importlib
+        from django.apps import apps as global_apps
+        seed_mod = importlib.import_module(
+            'apps.distribution.migrations.0018_seed_sort_position'
+        )
+        zeta = _make_distributor(self.company, 'Zeta Move Dist')
+        alpha = _make_distributor(self.company, 'Alpha Move Dist')
+        # status ranks: projected(0) < actual(1) < submitted(2)
+        p_sub = _make_po(self.dist, 2030, 1, status='submitted')
+        p_sub.so_number = 9001
+        p_sub.save(update_fields=['so_number'])
+        p_act_z = _make_po(zeta, 2030, 1, status='actual', ext_po='PO-Z')
+        p_act_a = _make_po(alpha, 2030, 1, status='actual', ext_po='PO-A')
+        p_proj = _make_po(self.dist, 2030, 1, status='projected')
+
+        # Reset positions, then run the migration's seeding function directly.
+        DistributorPO.objects.filter(
+            distributor__company=self.company, year=2030, month=1
+        ).update(sort_position=0)
+        seed_mod.seed_sort_position(global_apps, None)
+
+        group = list(
+            DistributorPO.objects.filter(distributor__company=self.company, year=2030, month=1)
+            .order_by('sort_position')
+        )
+        order = [p.pk for p in group]
+        positions = [p.sort_position for p in group]
+        # projected first, then actual(Alpha < Zeta by name), then submitted
+        self.assertEqual(order, [p_proj.pk, p_act_a.pk, p_act_z.pk, p_sub.pk])
+        self.assertEqual(positions, [1, 2, 3, 4])
+
+    # 2. Move within month renumbers (slide-down).
+    def test_move_po_within_month_renumbers(self):
+        p1, p2, p3, p4 = self._make_month(2026, 5, 4)
+        # Move the position-4 PO to position 2.
+        resp = _ajax_post(self.client, self.move_url, {
+            'po_pk': p4.pk, 'target_year': 2026, 'target_month': 5, 'target_position': 2,
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        pos = self._positions(2026, 5)
+        self.assertEqual(pos[p1.pk], 1)
+        self.assertEqual(pos[p4.pk], 2)   # inserted at 2
+        self.assertEqual(pos[p2.pk], 3)   # old 2 -> 3
+        self.assertEqual(pos[p3.pk], 4)   # old 3 -> 4
+
+    # 3. Cross-month move renumbers both months.
+    def test_move_po_to_different_month(self):
+        a1, a2, a3 = self._make_month(2026, 4, 3)   # month A
+        b1, b2 = self._make_month(2026, 7, 2)       # month B
+        # Move a2 (pos 2 of 3 in A) to month B at position 1.
+        resp = _ajax_post(self.client, self.move_url, {
+            'po_pk': a2.pk, 'target_year': 2026, 'target_month': 7, 'target_position': 1,
+        })
+        self.assertEqual(resp.status_code, 200)
+        a2.refresh_from_db()
+        self.assertEqual((a2.year, a2.month), (2026, 7))
+        # Month B: a2 at 1, b1 at 2, b2 at 3
+        posB = self._positions(2026, 7)
+        self.assertEqual(posB[a2.pk], 1)
+        self.assertEqual(posB[b1.pk], 2)
+        self.assertEqual(posB[b2.pk], 3)
+        # Month A renumbered to close the gap: a1=1, a3=2
+        posA = self._positions(2026, 4)
+        self.assertEqual(posA[a1.pk], 1)
+        self.assertEqual(posA[a3.pk], 2)
+        self.assertNotIn(a2.pk, posA)
+
+    # 4. Out-of-range target position clamps to the end.
+    def test_move_po_clamps_out_of_range_position(self):
+        p1, p2, p3 = self._make_month(2026, 8, 3)
+        resp = _ajax_post(self.client, self.move_url, {
+            'po_pk': p1.pk, 'target_year': 2026, 'target_month': 8, 'target_position': 999,
+        })
+        self.assertEqual(resp.status_code, 200)
+        pos = self._positions(2026, 8)
+        # p1 lands at the end (position 3), others slide up.
+        self.assertEqual(pos[p2.pk], 1)
+        self.assertEqual(pos[p3.pk], 2)
+        self.assertEqual(pos[p1.pk], 3)
+
+    # 5. Moving another company's PO → 404.
+    def test_move_po_other_company_404(self):
+        other_co = _make_company('Other Move Co')
+        other_dist = _make_distributor(other_co, 'Other Move Dist')
+        po = _make_po(other_dist, 2026, 5, status='projected')
+        resp = _ajax_post(self.client, self.move_url, {
+            'po_pk': po.pk, 'target_year': 2026, 'target_month': 5, 'target_position': 1,
+        })
+        self.assertEqual(resp.status_code, 404)
+
+    # 6. Move requires can_manage_distributor_inventory.
+    def test_move_po_requires_permission(self):
+        limited = _make_limited_user(self.company, 'move_limited')
+        c = Client()
+        c.login(username='move_limited', password='testpass123')
+        po = _make_po(self.dist, 2026, 5, status='projected')
+        resp = _ajax_post(c, self.move_url, {
+            'po_pk': po.pk, 'target_year': 2026, 'target_month': 5, 'target_position': 1,
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    # 7. Default order uses sort_position (year, month, sort_position).
+    def test_default_order_uses_sort_position(self):
+        # Create out of position order; assert the tab lists them by sort_position.
+        p2 = _make_po(self.dist, 2026, 9, status='projected')
+        p2.sort_position = 2
+        p2.save(update_fields=['sort_position'])
+        p1 = _make_po(self.dist, 2026, 9, status='projected')
+        p1.sort_position = 1
+        p1.save(update_fields=['sort_position'])
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        order = [r['po'].pk for r in resp.context['pos_rows']]
+        self.assertEqual(order, [p1.pk, p2.pk])
+
+    # 8. Column-header sorts removed (no ?sort= links in the rendered tab).
+    def test_column_sorts_removed(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        # The old sortable links used '?tab=distributor_pos&sort=' hrefs — gone now.
+        self.assertNotIn('&sort=po_month', content)
+        self.assertNotIn('&sort=distributor', content)
+        self.assertNotIn('&sort=so_number', content)
+
+    # 9. Order column renders with per-month position numbers + move buttons.
+    def test_order_column_shows_position(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        self.assertIn('order-col', content)
+        self.assertIn('order-number', content)
+        self.assertIn('move-po-btn', content)
+        self.assertIn('>Order<', content)
+
+    # 10. move_modal_data_json present in context, structured month -> ordered list.
+    def test_move_modal_data_in_context(self):
+        p1 = _make_po(self.dist, 2026, 5, status='projected')
+        p1.sort_position = 1
+        p1.save(update_fields=['sort_position'])
+        p2 = _make_po(self.dist, 2026, 5, status='projected')
+        p2.sort_position = 2
+        p2.save(update_fields=['sort_position'])
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        data = json.loads(resp.context['move_modal_data_json'])
+        self.assertIn('2026-05', data)
+        month = data['2026-05']
+        self.assertEqual([m['pk'] for m in month], [p1.pk, p2.pk])
+        self.assertEqual([m['position'] for m in month], [1, 2])
+        self.assertTrue(all('label' in m for m in month))

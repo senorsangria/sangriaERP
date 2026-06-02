@@ -348,6 +348,10 @@ class DistributorPO(TimeStampedModel):
         default=False,
         help_text='Whether this PO is selected in the inventory projection tool on the Distributor POs tab.',
     )
+    sort_position = models.IntegerField(
+        default=0,
+        help_text='Manual ordering position within the PO month (lower appears first). Renumbered on move.',
+    )
     created_by = models.ForeignKey(
         'core.User',
         on_delete=models.SET_NULL,
@@ -359,7 +363,7 @@ class DistributorPO(TimeStampedModel):
     class Meta:
         verbose_name = 'Distributor PO'
         verbose_name_plural = 'Distributor POs'
-        ordering = ['-year', '-month', 'distributor__name']
+        ordering = ['year', 'month', 'sort_position', 'distributor__name']
 
     def __str__(self):
         return f'{self.distributor} / {self.year}-{self.month:02d} ({self.get_status_display()})'
