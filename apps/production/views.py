@@ -79,9 +79,9 @@ def production_home(request):
 
     company = request.user.company
 
-    active_tab = request.GET.get('tab', 'forecast')
+    active_tab = request.GET.get('tab', 'inventory')
     if active_tab not in ('forecast', 'inventory', 'production_pos', 'production_cases'):
-        active_tab = 'forecast'
+        active_tab = 'inventory'
 
     # Build production_po_additions dict for the forecast algorithm
     production_po_additions = {}
@@ -107,7 +107,7 @@ def production_home(request):
     for _cp_key in sorted(_grouped_rows.keys(), key=lambda k: (k[0] is None, k[1])):
         production_forecast_grouped.append({
             'co_packer_name': _cp_key[1],
-            'rows': sorted(_grouped_rows[_cp_key], key=lambda r: r['item'].name),
+            'rows': sorted(_grouped_rows[_cp_key], key=lambda r: (r['item'].sort_order, r['item'].name)),
         })
 
     # Production PO count by month for the Production POs row in the grid

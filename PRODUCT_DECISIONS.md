@@ -4595,3 +4595,10 @@ Ad-hoc planning tool to gauge whether current on-hand stock covers a selected se
 - **Current Inventory modal** groups items under brand headers via `{% regroup all_items_for_inventory by brand.name %}` — the brand name shows once as an uppercase header, with item rows beneath showing only the item name (no repeated `Brand — Item` label).
 - **"(N POs selected)"** moved to the brand-name header row (Row 1), spanning the PO Month + Dist columns. The `#selected-po-count` span ID moves with it (still updated live by `updateSelectedCountLabel`); exactly one element carries that ID.
 - **Projection row labels** (Current Inventory, Projected Ending Inventory) are right-aligned (`text-end`) within their `colspan="2"` label cells. The per-item value cells (`.inventory-cell`, `.projected-cell`) keep `text-center` — only the labels changed.
+
+### Production Page Tweaks
+
+- **Tab order:** Inventory, Forecast, Production POs, Production Cases (left to right). The nav `<li>` items in `production_home.html` are ordered to match; the tab content panes are keyed by id, so only nav order affects display.
+- **Default tab:** Inventory (the new leftmost). Previously the default was Forecast. `production_home` reads `request.GET.get('tab', 'inventory')` and falls back to `'inventory'` for invalid values.
+- **Production Forecast item sort:** within each co-packer group, items are sorted by `Item.sort_order`, then `name` as a tiebreaker (was previously `name` only). The co-packer group order itself is unchanged (alphabetical, with "No co-packer" last).
+- **Removed the "Production planning for [company]" subtitle** under the Production page header (matches the Distributors page cleanup; saves vertical space). The "Production" `<h1>` remains.

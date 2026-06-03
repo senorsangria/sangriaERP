@@ -664,10 +664,10 @@ class ProductionHomeTabTest(TestCase):
         self.client = Client()
         self.client.login(username='admin', password='testpass123')
 
-    def test_default_tab_is_forecast(self):
+    def test_default_tab_is_inventory(self):
         resp = self.client.get(reverse('production_home'))
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.context['active_tab'], 'forecast')
+        self.assertEqual(resp.context['active_tab'], 'inventory')
 
     def test_tab_inventory_renders_inventory_pane(self):
         resp = self.client.get(reverse('production_home'), {'tab': 'inventory'})
@@ -675,9 +675,14 @@ class ProductionHomeTabTest(TestCase):
         self.assertEqual(resp.context['active_tab'], 'inventory')
         self.assertContains(resp, 'Inventory Snapshots')
 
-    def test_invalid_tab_falls_back_to_forecast(self):
-        resp = self.client.get(reverse('production_home'), {'tab': 'bad_value'})
+    def test_tab_forecast_renders_forecast_pane(self):
+        resp = self.client.get(reverse('production_home'), {'tab': 'forecast'})
+        self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.context['active_tab'], 'forecast')
+
+    def test_invalid_tab_falls_back_to_inventory(self):
+        resp = self.client.get(reverse('production_home'), {'tab': 'bad_value'})
+        self.assertEqual(resp.context['active_tab'], 'inventory')
 
     def test_forecast_empty_state_when_no_snapshots(self):
         resp = self.client.get(reverse('production_home'))
@@ -901,3 +906,79 @@ class ForecastTabPhaseD_Test(TestCase):
         # item_code is still returned but item list structure should not require it for display
         # The key is that item_code is still in the payload but the template JS no longer renders it
         self.assertIn('item_code', data['items'][0])  # still in API response
+
+
+# ---------------------------------------------------------------------------
+# Production page tweaks — tab order, forecast item sort, subtitle removal
+# ---------------------------------------------------------------------------
+
+class ProductionPageTweaksTest(TestCase):
+    """Tab nav order, default tab, forecast item sort, subtitle removal."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.brand = make_brand(self.company)
+        self.co_packer = make_co_packer(self.company)
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_production_tabs_order(self):
+        resp = self.client.get(reverse('production_home'))
+        self.assertEqual(resp.status_code, 200)
+        html = resp.content.decode()
+        # Locate each tab button by its id, in the nav
+        pos_inventory = html.index('id="tab-inventory"')
+        pos_forecast = html.index('id="tab-forecast"')
+        pos_production_pos = html.index('id="tab-production-pos"')
+        pos_production_cases = html.index('id="tab-production-cases"')
+        # Order: Inventory, Forecast, Production POs, Production Cases
+        self.assertLess(pos_inventory, pos_forecast)
+        self.assertLess(pos_forecast, pos_production_pos)
+        self.assertLess(pos_production_pos, pos_production_cases)
+
+    def test_production_default_tab_is_inventory(self):
+        resp = self.client.get(reverse('production_home'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['active_tab'], 'inventory')
+
+    def test_production_forecast_items_sorted_by_sort_order(self):
+        # Items under the same co-packer with non-sequential sort_order values
+        item_c = Item.objects.create(
+            brand=self.brand, name='Gamma Wine', item_code='GAM001',
+            co_packer=self.co_packer, cases_per_batch=100, sort_order=30,
+        )
+        item_a = Item.objects.create(
+            brand=self.brand, name='Alpha Wine', item_code='ALP001',
+            co_packer=self.co_packer, cases_per_batch=100, sort_order=10,
+        )
+        item_b = Item.objects.create(
+            brand=self.brand, name='Beta Wine', item_code='BET001',
+            co_packer=self.co_packer, cases_per_batch=100, sort_order=20,
+        )
+        # A snapshot is required for the forecast grid to render (not empty state)
+        make_snapshot(self.company, item_a, year=2026, month=5, qty='100')
+
+        resp = self.client.get(reverse('production_home') + '?tab=forecast')
+        self.assertEqual(resp.status_code, 200)
+
+        # Verify via grouped context: items ordered by sort_order within the group
+        grouped = resp.context['production_forecast_grouped']
+        cp_group = next(
+            g for g in grouped if g['co_packer_name'] == self.co_packer.name
+        )
+        ordered_names = [r['item'].name for r in cp_group['rows']]
+        self.assertEqual(
+            ordered_names,
+            ['Alpha Wine', 'Beta Wine', 'Gamma Wine'],
+        )
+
+        # And in the rendered HTML
+        html = resp.content.decode()
+        self.assertLess(html.index('Alpha Wine'), html.index('Beta Wine'))
+        self.assertLess(html.index('Beta Wine'), html.index('Gamma Wine'))
+
+    def test_production_subtitle_removed(self):
+        resp = self.client.get(reverse('production_home'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'Production planning for')
