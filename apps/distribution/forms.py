@@ -39,9 +39,14 @@ class DistributorForm(forms.ModelForm):
 
     class Meta:
         model = Distributor
-        fields = ['name', 'address', 'city', 'state', 'notes', 'is_active']
+        fields = ['name', 'code', 'address', 'city', 'state', 'notes', 'is_active']
         widgets = {
             'name': forms.TextInput(attrs={'class': 'form-control'}),
+            'code': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'Auto-generated from name if left blank',
+                'maxlength': '10',
+            }),
             'address': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
             'city': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Optional'}),
             'notes': forms.Textarea(attrs={'class': 'form-control', 'rows': 3, 'placeholder': 'Optional'}),
@@ -49,12 +54,17 @@ class DistributorForm(forms.ModelForm):
         }
         labels = {
             'is_active': 'Active',
+            'code': 'Short Code',
+        }
+        help_texts = {
+            'code': 'Up to 10 characters. Auto-generated from name if left blank.',
         }
 
     def __init__(self, *args, company=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.company = company
         self.fields['name'].required = True
+        self.fields['code'].required = False
         self.fields['address'].required = False
         self.fields['city'].required = False
         self.fields['state'].required = False

@@ -5,11 +5,15 @@ from .models import Company, User
 
 @admin.register(Company)
 class CompanyAdmin(admin.ModelAdmin):
-    list_display = ('name', 'slug', 'is_active', 'created_at')
+    list_display = ('name', 'slug', 'is_active', 'so_sequence_start', 'created_at')
     list_filter = ('is_active',)
     search_fields = ('name', 'slug')
     prepopulated_fields = {'slug': ('name',)}
     readonly_fields = ('created_at', 'updated_at')
+    fieldsets = (
+        (None, {'fields': ('name', 'slug', 'is_active', 'so_sequence_start')}),
+        ('Timestamps', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
+    )
 
 
 @admin.register(User)

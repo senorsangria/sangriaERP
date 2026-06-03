@@ -23,11 +23,14 @@
 
 {% block content %}
 
-<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-4">
-  <div>
-    <h1 class="h3 mb-0 fw-bold">Distributors</h1>
-    <p class="text-muted small mb-0">Distribution partners for {{ user.company.name }}</p>
-  </div>
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h3 mb-0 fw-bold">Distributors</h1>
+  {% if active_tab == 'distributor_pos' %}
+  <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#posFilterModal">
+    <i class="bi bi-funnel"></i> Filters
+    <span class="badge bg-warning text-dark ms-1 {% if not pos_filters_active %}d-none{% endif %}">{{ pos_active_filter_count }}</span>
+  </button>
+  {% endif %}
 </div>
 
 <!-- Tab nav -->
@@ -65,6 +68,10 @@
             aria-selected="{% if active_tab == 'forecast' %}true{% else %}false{% endif %}">
       Forecast
     </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <a class="nav-link {% if active_tab == 'distributor_pos' %}active{% endif %}"
+       href="?tab=distributor_pos">Distributor POs</a>
   </li>
   {% endif %}
 </ul>
@@ -728,7 +735,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" id="poModalLabel">
-            Orders &mdash; <span id="po-modal-period"></span>
+            Orders &mdash; <span id="po-modal-distributor-name"></span> <span id="po-modal-period"></span>
           </h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
@@ -757,6 +764,309 @@
     </div>
   </div>
   {% endif %}
+
+  <!-- TAB 4: Distributor POs -->
+  {% if active_tab == 'distributor_pos' %}
+  {% load humanize %}
+  <style>
+  .po-table th.vertical-header {
+    width: 60px;
+    min-width: 60px;
+    max-width: 60px;
+    height: 100px;
+    vertical-align: bottom;
+    padding: 0.5rem 0;
+    text-align: center;
+  }
+  .po-table th.vertical-header .vertical-text {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    margin: 0 auto;
+    display: inline-block;
+  }
+  /* Two frozen left columns: checkbox (0–40px), PO Month (40px+). */
+  .po-table .sticky-left { position: sticky; left: 0; background: var(--bs-body-bg, white); z-index: 2; }
+  .po-table .sticky-left-2 { position: sticky; left: 40px; background: var(--bs-body-bg, white); z-index: 2; }
+  .brand-header { background: var(--bs-info-bg-subtle, #e7f3ff); border-bottom: 2px solid var(--bs-border-color); font-weight: 500; font-size: .82rem; }
+  .po-row:hover { background-color: var(--bs-secondary-bg, #f8f9fa); cursor: pointer; }
+  .po-table th a { color: inherit; text-decoration: none; }
+  .po-table td.item-cell {
+    width: 60px;
+    min-width: 60px;
+    max-width: 60px;
+    text-align: center;
+  }
+  .move-po-btn { color: var(--bs-secondary, #6c757d); }
+  .move-po-btn:hover { color: var(--bs-primary, #0d6efd); }
+  /* Inventory projection rows (scroll normally; not pinned to top) */
+  .po-table .projection-row td { background: var(--bs-tertiary-bg, #f1f3f5); border-bottom: 2px solid var(--bs-border-color); font-weight: 500; }
+  .po-table .projection-row td.sticky-left { background: var(--bs-tertiary-bg, #f1f3f5); }
+  .po-checkbox-col { width: 40px; min-width: 40px; max-width: 40px; text-align: center; }
+  /* Month-based row banding — band-1 rows get a clearly deeper gray than band-0 (default/white)
+     so adjacent months are visually distinct. #dde1e6 is noticeably darker than #f1f3f5. */
+  .po-table tr.po-row.band-1 td { background-color: #dde1e6; }
+  /* Sticky columns carry their own bg to occlude scrolled content; banding must override */
+  .po-table tr.po-row.band-1 td.sticky-left,
+  .po-table tr.po-row.band-1 td.sticky-left-2 { background-color: #dde1e6; }
+  </style>
+
+  <div class="table-responsive border rounded">
+    <table class="table table-sm po-table mb-0">
+      <thead class="table-light">
+        <tr>
+          {# Row 1: checkbox col blank; selected-count spans PO Month + Dist; brand group spans #}
+          <th class="sticky-left po-checkbox-col"></th>
+          <th colspan="2" class="text-muted small fw-normal align-bottom">
+            (<span id="selected-po-count">{{ selected_po_count }}</span> POs selected)
+          </th>
+          {% for brand in brand_groups %}
+            <th colspan="{{ brand.items|length }}" class="brand-header text-center">{{ brand.brand_name }}</th>
+          {% endfor %}
+        </tr>
+        <tr>
+          {# Row 2: column headers. No sort links — within-month order is manual sort_position. #}
+          <th class="sticky-left po-checkbox-col">
+            <input type="checkbox" id="po-select-all" title="Select/deselect all visible">
+          </th>
+          <th class="sticky-left-2" style="min-width:90px;">PO Month</th>
+          <th style="min-width:80px;">
+            <div>Dist</div>
+            <div class="text-muted" style="font-size:.8rem;">SO#</div>
+          </th>
+          {% for brand in brand_groups %}
+            {% for item in brand.items %}
+              <th class="vertical-header">
+                <div class="vertical-text">{{ item.item_code|default:item.name }}</div>
+              </th>
+            {% endfor %}
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {# Projection row 1: Current Inventory (edited via modal) #}
+        <tr class="projection-row current-inventory-row">
+          <td class="sticky-left po-checkbox-col"></td>
+          <td colspan="2" class="text-end">
+            <button type="button" class="btn btn-sm btn-outline-secondary me-2 py-0 px-1" id="edit-inventory-btn" title="Edit current inventory">
+              <i class="bi bi-pencil"></i>
+            </button>
+            Current Inventory
+          </td>
+          {% for item in all_items %}
+            <td class="text-center small item-cell inventory-cell" data-item-id="{{ item.pk }}">
+              {{ item.forecast_current_inventory|floatformat:0|intcomma }}
+            </td>
+          {% endfor %}
+        </tr>
+        {# Projection row 2: Projected Ending Inventory (live JS calc) #}
+        <tr class="projection-row projected-ending-row">
+          <td class="sticky-left po-checkbox-col"></td>
+          <td colspan="2" class="text-end">
+            Projected Ending Inventory
+          </td>
+          {% for item in all_items %}
+            <td class="text-center small item-cell projected-cell" data-item-id="{{ item.pk }}">—</td>
+          {% endfor %}
+        </tr>
+        {% for row in pos_rows %}
+          <tr class="po-row band-{{ row.band_parity }}"
+              data-po-pk="{{ row.po.pk }}"
+              data-dist-pk="{{ row.po.distributor_id }}"
+              data-year="{{ row.po.year }}"
+              data-month="{{ row.po.month }}"
+              data-position="{{ row.po.sort_position }}">
+            <td class="sticky-left po-checkbox-col" onclick="event.stopPropagation();">
+              <input type="checkbox" class="po-select-checkbox" data-po-pk="{{ row.po.pk }}" {% if row.is_selected %}checked{% endif %}>
+            </td>
+            <td class="sticky-left-2 small">
+              <div>
+                {{ row.po_month_label }}
+                <button type="button" class="btn btn-sm btn-link p-0 ms-1 move-po-btn" data-po-pk="{{ row.po.pk }}" title="Move this PO" onclick="event.stopPropagation();">
+                  <i class="bi bi-arrows-move"></i>
+                </button>
+              </div>
+              <div class="text-muted" style="font-size:.75rem;">{{ row.po.get_status_display }}</div>
+            </td>
+            <td class="small">
+              <div>
+                <span title="{{ row.po.distributor.name }}" data-bs-toggle="tooltip" data-bs-placement="top">
+                  {{ row.po.distributor.display_code }}
+                </span>
+              </div>
+              <div class="text-muted" style="font-size:.75rem;">{{ row.po.so_number|default:"—" }}</div>
+            </td>
+            {% for cases in row.item_cases %}
+              <td class="small item-cell">{% if cases %}{{ cases|floatformat:0|intcomma }}{% else %}—{% endif %}</td>
+            {% endfor %}
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="{{ all_items|length|add:3 }}" class="text-center text-muted py-4">No POs found.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  {% if pos_page_obj.has_other_pages %}
+  <nav class="mt-3">
+    <ul class="pagination pagination-sm justify-content-center">
+      {% if pos_page_obj.has_previous %}
+        <li class="page-item"><a class="page-link" href="?tab={{ active_tab }}&page={{ pos_page_obj.previous_page_number }}">Previous</a></li>
+      {% endif %}
+      <li class="page-item disabled"><span class="page-link">Page {{ pos_page_obj.number }} of {{ pos_page_obj.paginator.num_pages }}</span></li>
+      {% if pos_page_obj.has_next %}
+        <li class="page-item"><a class="page-link" href="?tab={{ active_tab }}&page={{ pos_page_obj.next_page_number }}">Next</a></li>
+      {% endif %}
+    </ul>
+  </nav>
+  {% endif %}
+
+  <!-- Filter Modal -->
+  <div class="modal fade filter-modal" id="posFilterModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Filter POs</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="posFilterForm" method="get" action="">
+            <input type="hidden" name="tab" value="{{ active_tab }}">
+
+            <div class="mb-3">
+              <label class="filter-section-label">Status</label>
+              <div class="filter-checkbox-scroll">
+                {% for val, label in status_choices %}
+                  <div class="filter-checkbox-inline">
+                    <input class="form-check-input" type="checkbox" name="status" value="{{ val }}" id="pos_status_{{ val }}"
+                      {% if val in pos_active_filters.status %}checked{% endif %}>
+                    <label class="form-check-label" for="pos_status_{{ val }}">{{ label }}</label>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="filter-section-label">Distributor</label>
+              <div class="filter-checkbox-scroll">
+                {% for dist in all_distributors_for_filter %}
+                  <div class="filter-checkbox-inline">
+                    <input class="form-check-input" type="checkbox" name="distributor" value="{{ dist.pk }}" id="pos_dist_{{ dist.pk }}"
+                      {% if dist.pk|stringformat:"s" in pos_active_filters.distributor %}checked{% endif %}>
+                    <label class="form-check-label" for="pos_dist_{{ dist.pk }}">{{ dist.name }}</label>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="filter-section-label">Item</label>
+              <div class="filter-checkbox-scroll">
+                {% for item in all_items %}
+                  <div class="filter-checkbox-inline">
+                    <input class="form-check-input" type="checkbox" name="item" value="{{ item.pk }}" id="pos_item_{{ item.pk }}"
+                      {% if item.pk|stringformat:"s" in pos_active_filters.item %}checked{% endif %}>
+                    <label class="form-check-label" for="pos_item_{{ item.pk }}">{{ item.name }}</label>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="filter-section-label">SO#</label>
+              <input type="text" name="so_number" class="form-control form-control-sm" placeholder="Search SO number…" value="{{ pos_active_filters.so_number }}">
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <a href="?tab={{ active_tab }}&clear_filters=1" class="btn btn-outline-secondary btn-sm me-auto">Clear All</a>
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" form="posFilterForm" class="btn btn-primary btn-sm">Apply Filters</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Current Inventory edit modal -->
+  <div class="modal fade" id="inventoryModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Current Inventory</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small">Enter current on-hand cases per item. Used for projection only — not tied to inventory imports.</p>
+          <form id="inventoryForm">
+            {% regroup all_items_for_inventory by brand.name as inventory_brand_list %}
+            {% for brand_group in inventory_brand_list %}
+              <div class="fw-bold text-uppercase small text-muted mt-3 mb-1">{{ brand_group.grouper }}</div>
+              {% for item in brand_group.list %}
+                <div class="mb-2 row align-items-center">
+                  <label class="col-7 col-form-label small">{{ item.name }}</label>
+                  <div class="col-5">
+                    <input type="number" step="0.01" min="0" class="form-control form-control-sm inventory-input"
+                           data-item-id="{{ item.pk }}" value="{{ item.forecast_current_inventory|floatformat:'-2' }}">
+                  </div>
+                </div>
+              {% endfor %}
+            {% endfor %}
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary btn-sm" id="save-inventory-btn">Save Inventory</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Move PO modal — reposition a PO within its month or move it to another month #}
+  <div class="modal fade" id="movePoModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Move PO</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="move-po-pk">
+          <div class="row g-2 mb-3">
+            <div class="col-5">
+              <label class="form-label small">Year</label>
+              <select class="form-select form-select-sm" id="move-target-year"></select>
+            </div>
+            <div class="col-7">
+              <label class="form-label small">Month</label>
+              <select class="form-select form-select-sm" id="move-target-month"></select>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">Move to position</label>
+            <input type="number" min="1" class="form-control form-control-sm" id="move-target-position">
+            <small class="text-muted">The PO will be inserted at this position; others slide down.</small>
+          </div>
+          <div class="mb-2">
+            <div class="small text-muted mb-1">Current order for this month:</div>
+            <ol class="small" id="move-month-preview" style="max-height: 200px; overflow-y: auto;"></ol>
+            <div class="small text-muted fst-italic" id="move-month-empty" style="display:none;">No POs in this month yet — this PO will be position 1.</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary btn-sm" id="move-po-save-btn">Move</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% endif %}{# active_tab == distributor_pos #}
 
   {% endif %}{# can_manage_inventory #}
 
@@ -900,6 +1210,12 @@
 
   var MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+  // All 7 status choices for the modal dropdown
+  var _statusChoices = [
+    {% for value, label in po_status_choices %}['{{ value }}', '{{ label }}']{% if not forloop.last %},{% endif %}
+    {% endfor %}
+  ];
+
   function openModal(dataUrl, year, month) {
     _state.year  = year;
     _state.month = month;
@@ -907,6 +1223,8 @@
     _state.nextTabId = 1;
 
     document.getElementById('po-modal-period').textContent = MONTH_NAMES[month - 1] + ' ' + year;
+    var distNameEl = document.getElementById('po-modal-distributor-name');
+    if (distNameEl) distNameEl.textContent = '';
     document.getElementById('po-modal-loading').style.display = '';
     document.getElementById('po-modal-content').style.display = 'none';
     document.getElementById('po-modal-error').style.display = 'none';
@@ -925,6 +1243,11 @@
       .then(function (data) {
         _state.items     = data.items;
         _state.orderUnit = data.distributor.order_quantity_unit;
+
+        // Show distributor name in title
+        if (distNameEl && data.distributor && data.distributor.name) {
+          distNameEl.textContent = data.distributor.name + ' —';
+        }
 
         document.getElementById('po-modal-loading').style.display = 'none';
         document.getElementById('po-modal-content').style.display = '';
@@ -1006,9 +1329,10 @@
       html += '<span class="badge bg-' + (savedPo.generated_by_algorithm ? 'secondary' : 'primary') + '">';
       html += savedPo.generated_by_algorithm ? 'Algorithm' : 'Manual';
       html += '</span>';
-      html += '<span class="badge bg-' + (savedPo.status === 'actual' ? 'success' : 'warning text-dark') + '">';
-      html += savedPo.status === 'actual' ? 'Actual' : 'Projected';
-      html += '</span></div>';
+      var statusLabel = '';
+      _statusChoices.forEach(function (sc) { if (sc[0] === savedPo.status) statusLabel = sc[1]; });
+      var statusBg = savedPo.status === 'actual' ? 'success' : (savedPo.status === 'cancelled' ? 'danger' : (savedPo.status === 'invoiced' ? 'dark' : 'warning text-dark'));
+      html += '<span class="badge bg-' + statusBg + '">' + (statusLabel || savedPo.status) + '</span></div>';
       html += '<button type="button" class="btn btn-outline-danger btn-sm po-delete-btn">Delete Order</button>';
     } else {
       var hint = suggestedOrder ? '<span class="badge bg-info text-dark">Algorithm suggestion</span>' : '<span class="text-muted small">New order</span>';
@@ -1025,8 +1349,9 @@
     html += '<div class="col-sm-3">';
     html += '<label class="form-label small text-muted mb-1">Status</label>';
     html += '<select class="form-select form-select-sm po-status-select">';
-    html += '<option value="projected"' + (curStatus === 'projected' ? ' selected' : '') + '>Projected</option>';
-    html += '<option value="actual"' + (curStatus === 'actual' ? ' selected' : '') + '>Actual</option>';
+    _statusChoices.forEach(function (sc) {
+      html += '<option value="' + sc[0] + '"' + (curStatus === sc[0] ? ' selected' : '') + '>' + sc[1] + '</option>';
+    });
     html += '</select></div>';
     html += '<div class="col-sm-4">';
     html += '<label class="form-label small text-muted mb-1">PO Number <span class="text-muted">(required if Actual)</span></label>';
@@ -1226,7 +1551,349 @@
     var m = document.cookie.match(/csrftoken=([^;]+)/);
     return m ? m[1] : '';
   }
+
+  // Expose for use by Distributor POs / Invoiced POs tab rows
+  window.openDistributorPoModal = function (dataUrl, year, month, saveUrl, deleteUrlBase, suggestPattern) {
+    if (saveUrl) _saveUrl = saveUrl;
+    if (deleteUrlBase) _deleteUrlBase = deleteUrlBase;
+    if (suggestPattern) _modalEl.dataset.suggestUrlPattern = suggestPattern;
+    openModal(dataUrl, year, month);
+  };
 })();
 </script>
+
+  {# Distributor POs tab script — must run after the Bootstrap bundle (loaded in base.html) #}
+  <script>
+  (function () {
+    'use strict';
+
+    // Initialize Bootstrap tooltips for distributor codes
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+      new bootstrap.Tooltip(el);
+    });
+
+    // Whole-row click opens PO modal — but NOT when the click is on the
+    // checkbox cell (selection toggle must not open the modal).
+    document.querySelectorAll('.po-row').forEach(function (row) {
+      row.addEventListener('click', function (e) {
+        if (e.target.closest('.po-checkbox-col') || e.target.closest('.po-select-checkbox')
+            || e.target.closest('.move-po-btn')) {
+          return;
+        }
+        openPoModalFromRow(row);
+      });
+    });
+
+    function openPoModalFromRow(row) {
+      var distPk = row.dataset.distPk;
+      var poPk   = row.dataset.poPk;
+      var year   = parseInt(row.dataset.year, 10);
+      var month  = parseInt(row.dataset.month, 10);
+      // ?po_pk scopes the modal to ONLY the clicked PO (single-PO mode), so a
+      // distributor with multiple POs in one month doesn't open them all.
+      var dataUrl = '/distributors/' + distPk + '/po/' + year + '/' + month + '/?po_pk=' + poPk;
+      var saveUrl = '/distributors/' + distPk + '/po/save/';
+      var deleteBase = '/distributors/' + distPk + '/po/';
+      var suggestPattern = '/distributors/' + distPk + '/po/YEAR/MONTH/suggest/';
+      if (typeof window.openDistributorPoModal === 'function') {
+        window.openDistributorPoModal(dataUrl, year, month, saveUrl, deleteBase, suggestPattern);
+      } else {
+        alert('PO modal not available. Ensure a distributor exists for the Forecast tab.');
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Inventory projection logic
+    // ------------------------------------------------------------------
+
+    var posData = JSON.parse('{{ pos_data_json|escapejs }}');               // {po_pk: {item_id: cases}}
+    var selectedTotals = JSON.parse('{{ selected_totals_json|escapejs }}'); // {item_id: total cases} across ALL selected POs
+    var currentInventory = JSON.parse('{{ current_inventory_json|escapejs }}'); // {item_id: cases}
+    var selectedPoCount = {{ selected_po_count }};
+
+    function csrf() {
+      var el = document.querySelector('[name=csrfmiddlewaretoken]');
+      if (el) return el.value;
+      var m = document.cookie.match(/csrftoken=([^;]+)/);
+      return m ? m[1] : '';
+    }
+
+    function recalcProjection() {
+      document.querySelectorAll('.projected-cell').forEach(function (cell) {
+        var itemId = cell.dataset.itemId;
+        var current = currentInventory[itemId] || 0;
+        var selected = selectedTotals[itemId] || 0;
+        var projected = current - selected;
+        cell.textContent = projected.toLocaleString();
+        if (projected < 0) {
+          cell.classList.add('text-danger', 'fw-bold');
+        } else {
+          cell.classList.remove('text-danger', 'fw-bold');
+        }
+      });
+    }
+
+    function updateSelectedCountLabel() {
+      var el = document.getElementById('selected-po-count');
+      if (el) el.textContent = selectedPoCount;
+    }
+
+    function applyPoDelta(poPk, selected) {
+      var poItems = posData[poPk] || {};
+      for (var itemId in poItems) {
+        var delta = poItems[itemId] * (selected ? 1 : -1);
+        selectedTotals[itemId] = (selectedTotals[itemId] || 0) + delta;
+      }
+      selectedPoCount += selected ? 1 : -1;
+    }
+
+    // Per-checkbox toggle (persists immediately)
+    document.querySelectorAll('.po-select-checkbox').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var poPk = cb.dataset.poPk;
+        var selected = cb.checked;
+        applyPoDelta(poPk, selected);
+        recalcProjection();
+        updateSelectedCountLabel();
+        syncSelectAllState();
+
+        fetch('{% url "toggle_po_selection" %}', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf() },
+          credentials: 'same-origin',
+          body: JSON.stringify({ po_pk: parseInt(poPk, 10), selected: selected }),
+        }).catch(function () { /* network error: local state already updated */ });
+      });
+    });
+
+    // Select all / deselect all VISIBLE rows
+    var selectAll = document.getElementById('po-select-all');
+
+    function syncSelectAllState() {
+      if (!selectAll) return;
+      var boxes = document.querySelectorAll('.po-select-checkbox');
+      var checked = 0;
+      boxes.forEach(function (cb) { if (cb.checked) checked++; });
+      selectAll.checked = boxes.length > 0 && checked === boxes.length;
+      selectAll.indeterminate = checked > 0 && checked < boxes.length;
+    }
+
+    if (selectAll) {
+      selectAll.addEventListener('change', function () {
+        var checked = selectAll.checked;
+        var changedPks = [];
+        document.querySelectorAll('.po-select-checkbox').forEach(function (cb) {
+          if (cb.checked !== checked) {
+            cb.checked = checked;
+            changedPks.push(parseInt(cb.dataset.poPk, 10));
+            applyPoDelta(cb.dataset.poPk, checked);
+          }
+        });
+        recalcProjection();
+        updateSelectedCountLabel();
+
+        if (changedPks.length) {
+          fetch('{% url "bulk_toggle_po_selection" %}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf() },
+            credentials: 'same-origin',
+            body: JSON.stringify({ po_pks: changedPks, selected: checked }),
+          }).catch(function () {});
+        }
+      });
+    }
+
+    // Inventory modal open + save
+    var editInvBtn = document.getElementById('edit-inventory-btn');
+    if (editInvBtn) {
+      editInvBtn.addEventListener('click', function () {
+        new bootstrap.Modal(document.getElementById('inventoryModal')).show();
+      });
+    }
+
+    var saveInvBtn = document.getElementById('save-inventory-btn');
+    if (saveInvBtn) {
+      saveInvBtn.addEventListener('click', function () {
+        var inventory = {};
+        document.querySelectorAll('.inventory-input').forEach(function (input) {
+          inventory[input.dataset.itemId] = input.value === '' ? 0 : parseFloat(input.value);
+        });
+
+        saveInvBtn.disabled = true;
+        fetch('{% url "save_forecast_inventory" %}', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf() },
+          credentials: 'same-origin',
+          body: JSON.stringify({ inventory: inventory }),
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.ok) {
+            for (var itemId in inventory) {
+              currentInventory[itemId] = inventory[itemId];
+              var cell = document.querySelector('.inventory-cell[data-item-id="' + itemId + '"]');
+              if (cell) cell.textContent = Math.round(inventory[itemId]).toLocaleString();
+            }
+            recalcProjection();
+            bootstrap.Modal.getInstance(document.getElementById('inventoryModal')).hide();
+          } else {
+            alert('Failed to save inventory: ' + (data.error || 'unknown error'));
+          }
+        })
+        .catch(function (err) { alert('Failed to save inventory: ' + err.message); })
+        .finally(function () { saveInvBtn.disabled = false; });
+      });
+    }
+
+    // ------------------------------------------------------------------
+    // Move PO logic (reposition within month or move to ANY month/year)
+    // ------------------------------------------------------------------
+
+    var moveModalData = JSON.parse('{{ move_modal_data_json|escapejs }}');  // {"YYYY-MM": [{pk, position, label}, ...]}
+    var moveModalEl = document.getElementById('movePoModal');
+    var moveModal = moveModalEl ? new bootstrap.Modal(moveModalEl) : null;
+    var MONTH_NAMES = ['January','February','March','April','May','June',
+                       'July','August','September','October','November','December'];
+    var moveOriginPoMonthKey = null;  // the PO's own month, to default position sensibly
+
+    function buildMoveYearOptions(poYear) {
+      var sel = document.getElementById('move-target-year');
+      if (!sel) return;
+      sel.innerHTML = '';
+      [poYear - 1, poYear, poYear + 1].forEach(function (y) {
+        var opt = document.createElement('option');
+        opt.value = y;
+        opt.textContent = y;
+        if (y === poYear) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+
+    function buildMoveMonthOptions(poMonth) {
+      var sel = document.getElementById('move-target-month');
+      if (!sel) return;
+      sel.innerHTML = '';
+      for (var m = 1; m <= 12; m++) {
+        var opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = MONTH_NAMES[m - 1];
+        if (m === poMonth) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+
+    function moveCurrentMonthKey() {
+      var y = document.getElementById('move-target-year').value;
+      var m = String(document.getElementById('move-target-month').value).padStart(2, '0');
+      return y + '-' + m;
+    }
+
+    function renderMoveMonthPreview(movingPoPk) {
+      var ol = document.getElementById('move-month-preview');
+      var emptyMsg = document.getElementById('move-month-empty');
+      if (!ol) return;
+      ol.innerHTML = '';
+      var list = moveModalData[moveCurrentMonthKey()] || [];
+      if (list.length === 0) {
+        if (emptyMsg) emptyMsg.style.display = '';
+        ol.style.display = 'none';
+      } else {
+        if (emptyMsg) emptyMsg.style.display = 'none';
+        ol.style.display = '';
+        list.forEach(function (item) {
+          var li = document.createElement('li');
+          li.textContent = item.label + (item.pk === movingPoPk ? '  (this PO)' : '');
+          if (item.pk === movingPoPk) li.style.fontWeight = '600';
+          ol.appendChild(li);
+        });
+      }
+    }
+
+    // Default "move to position": current position if same month; end+1 for a
+    // different month with POs; 1 for an empty month.
+    function updateMoveDefaultPosition(currentPos) {
+      var input = document.getElementById('move-target-position');
+      if (!input) return;
+      var key = moveCurrentMonthKey();
+      var list = moveModalData[key] || [];
+      if (list.length === 0) {
+        input.value = 1;
+      } else if (key === moveOriginPoMonthKey) {
+        input.value = currentPos || 1;
+      } else {
+        input.value = list.length + 1;  // append to the end of a different month
+      }
+    }
+
+    function refreshMovePreviewAndDefault() {
+      var poPk = parseInt(document.getElementById('move-po-pk').value, 10);
+      var currentPos = parseInt(document.getElementById('movePoModal').dataset.currentPos, 10);
+      renderMoveMonthPreview(poPk);
+      updateMoveDefaultPosition(currentPos);
+    }
+
+    document.querySelectorAll('.move-po-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();  // do NOT open the row's edit modal
+        var row = btn.closest('.po-row');
+        var poPk = parseInt(btn.dataset.poPk, 10);
+        var poYear = parseInt(row.dataset.year, 10);
+        var poMonth = parseInt(row.dataset.month, 10);
+        var currentPos = parseInt(row.dataset.position, 10);
+
+        document.getElementById('move-po-pk').value = poPk;
+        moveModalEl.dataset.currentPos = currentPos;
+        moveOriginPoMonthKey = poYear + '-' + String(poMonth).padStart(2, '0');
+
+        buildMoveYearOptions(poYear);
+        buildMoveMonthOptions(poMonth);
+        renderMoveMonthPreview(poPk);
+        // Same month on open → default to the PO's current position.
+        document.getElementById('move-target-position').value = currentPos || 1;
+
+        if (moveModal) moveModal.show();
+      });
+    });
+
+    var moveYearSel = document.getElementById('move-target-year');
+    var moveMonthSel = document.getElementById('move-target-month');
+    if (moveYearSel) moveYearSel.addEventListener('change', refreshMovePreviewAndDefault);
+    if (moveMonthSel) moveMonthSel.addEventListener('change', refreshMovePreviewAndDefault);
+
+    var moveSaveBtn = document.getElementById('move-po-save-btn');
+    if (moveSaveBtn) {
+      moveSaveBtn.addEventListener('click', function () {
+        var poPk = parseInt(document.getElementById('move-po-pk').value, 10);
+        var targetYear = parseInt(document.getElementById('move-target-year').value, 10);
+        var targetMonth = parseInt(document.getElementById('move-target-month').value, 10);
+        var targetPosition = parseInt(document.getElementById('move-target-position').value, 10) || 1;
+
+        moveSaveBtn.disabled = true;
+        fetch('{% url "move_distributor_po" %}', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf() },
+          credentials: 'same-origin',
+          body: JSON.stringify({ po_pk: poPk, target_year: targetYear, target_month: targetMonth, target_position: targetPosition }),
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.ok) {
+            window.location.reload();  // re-render the list in the new order
+          } else {
+            alert('Move failed: ' + (data.error || 'unknown error'));
+            moveSaveBtn.disabled = false;
+          }
+        })
+        .catch(function (err) { alert('Move failed: ' + err.message); moveSaveBtn.disabled = false; });
+      });
+    }
+
+    // Initial render
+    recalcProjection();
+    updateSelectedCountLabel();
+    syncSelectAllState();
+  })();
+  </script>
+
 {% endif %}
 {% endblock %}

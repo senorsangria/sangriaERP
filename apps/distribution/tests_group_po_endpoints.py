@@ -24,6 +24,7 @@ from apps.distribution.tests_forecast import (
 from apps.distribution.tests_group_forecast import _make_group
 from apps.distribution.tests_po_endpoints import (
     _make_limited_user, _make_po, _make_po_line, _ajax_post,
+    _FrozenApril2026Date,
 )
 
 
@@ -349,6 +350,7 @@ class GroupSuggestEndpointTest(TestCase):
                            kwargs={'group_pk': self.group.pk, 'year': 2026, 'month': 4})
 
     # 17. Group suggest returns correct lines when shortage exists
+    @patch('apps.distribution.forecast.date', _FrozenApril2026Date)
     def test_group_suggest_returns_correct_lines(self):
         resp = self.client.get(self.url)
         self.assertEqual(resp.status_code, 200)
@@ -366,6 +368,7 @@ class GroupSuggestEndpointTest(TestCase):
         self.assertEqual(data['lines'], [])
 
     # 19. Suggestion uses primary distributor's order config
+    @patch('apps.distribution.forecast.date', _FrozenApril2026Date)
     def test_group_suggest_uses_primary_order_config(self):
         # Primary has order_qty=10 cases; primary has shortage of ~80
         # ceil(80/10)*10 = 80 cases

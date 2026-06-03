@@ -750,6 +750,197 @@ into `compute_distributor_forecast` in 4-step-2b).
 
 ---
 
+### Distributor POs Tabs + SO# Tracking + Expanded Status Workflow (Complete)
+
+#### Status Workflow Expansion
+
+`DistributorPO.Status` expanded from 2 to 7 values:
+
+| Value | Display | Notes |
+|-------|---------|-------|
+| `projected` | Projected | Existing |
+| `actual` | Actual | Existing |
+| `submitted` | Submitted | New |
+| `in_transit` | In Transit | New |
+| `delivered` | Delivered | New |
+| `invoiced` | Invoiced | New |
+| `cancelled` | Cancelled | New |
+
+Typical workflow: Projected → Actual → Submitted → In Transit → Delivered → Invoiced (Cancelled at any point).
+Migration is additive only — existing PROJECTED and ACTUAL data preserved.
+
+#### SO# (Sales Order Number) Tracking
+
+- New `so_number` field on `DistributorPO` (`IntegerField`, `db_indexed`, nullable)
+- System-generated, read-only in UI — no manual override
+- Auto-assigned when status transitions to Submitted (via `assign_so_number()` helper in `apps/distribution/models.py`)
+- Derived from `MAX(so_number) + 1` across the company's POs; first SO uses `Company.so_sequence_start`
+- Persists across status changes (including reversals and cancellations)
+- Required when status is Submitted (validated in `DistributorPO.clean()`)
+
+#### Company.so_sequence_start
+
+- New `IntegerField` on `Company`, default `2006`
+- Configured via Django admin only — admin exposes it in Company fieldsets
+- Used once for the first SO# assignment per company; then MAX+1 takes over
+
+#### Two New Tabs on Distributor Page
+
+**Distributor POs tab** (`?tab=distributor_pos`): All POs with status != Invoiced.
+**Invoiced POs tab** (`?tab=invoiced_pos`): Only POs with status = Invoiced.
+
+Both tabs:
+- Columns: PO Month, Status, Distributor, [item columns grouped by brand], SO#, Edit
+- Item columns: one per Item (ordered by brand name then item name), case quantities per PO
+- Item code headers rotated -90° (vertical), brand name spans across item columns in header
+- Pagination at 50 per page, preserves filters
+- Sortable by: PO Month, Status, Distributor, SO# (clicking column headers toggles asc/desc)
+- Default sort: PO Month descending (most recent first)
+- Click row or Edit button → opens existing PO modal (single-PO mode via the modal IIFE)
+- Filter modal with: status (multi-select, hidden on Invoiced tab), distributor (multi-select),
+  date range (PO Month from/to), item (multi-select), SO# (text input search)
+- Filter follows canonical pattern (session-stored, badge count, `?clear_filters=1` sentinel)
+
+#### New PO Modal Endpoint (`distributor_po_modal_data_v2`)
+
+- URL: `GET /distributors/po/modal-data/`
+- Accepts `?po_pk=N` (single PO) OR `?distributor=N&year=YYYY&month=M` (multi-PO)
+- Returns `{pos: [...], items: [...], distributor: {...}}`
+- Used now by the new tabs in single-PO mode (the existing tab JS resolves to the v1 URL and opens the shared modal)
+- Future: will unify PO editing across the forecast tab and new tabs
+
+#### Modal JS Architecture
+
+The existing PO modal IIFE exposes `window.openDistributorPoModal(dataUrl, year, month, saveUrl, deleteUrlBase, suggestPattern)`.
+The new tab rows carry `data-dist-pk`, `data-year`, `data-month` attributes so the JS can construct the v1-style URL directly without a v2 fetch.
+The modal title shows the distributor name (populated from `data.distributor.name` in the fetch response).
+The status dropdown in the modal form now shows all 7 statuses (driven by `po_status_choices` context variable rendered into JS).
+
+#### Distributor.code Field
+
+- New `CharField(max_length=10)`, `db_indexed`, `blank=True` on `Distributor` model
+- Auto-defaults from name on save using `Distributor._generate_code_from_name(name)`:
+  takes the first letter of each significant word (skipping a/an/the/of/and/&), uppercased, max 10 chars
+- Examples: "Shore Point Dist Co, NJ" → "SPDCNJ", "Colonial Beverage Wholesaler, MA" → "CBWM"
+- Editable in the distributor form (appears after Name field with auto-default help text)
+- Displayed in PO list tables in place of full name; full name shown on hover via Bootstrap tooltip
+- Backfilled for existing distributors via data migration `0014_backfill_distributor_codes.py`
+- Migrations: `0013_distributor_code.py` (field), `0014_backfill_distributor_codes.py` (backfill)
+
+#### PO List Tab Refinements (round 2)
+
+- **Default sort:** PO Month ascending (oldest first), was descending
+- **Combined column:** PO Month and Status shown stacked in single column (date above, status below in small muted text), saving horizontal space
+- **Distributor column:** Shows `distributor.code` with full name as Bootstrap tooltip on hover; falls back to full name if code is blank
+- **Item column headers:** Use `writing-mode: vertical-rl` + `transform: rotate(180deg)` for proper bottom-to-top vertical rendering (replaces transform-only approach that had alignment issues)
+- **Item sort:** Ordered by `brand__name`, then `sort_order`, then `name`
+- **Edit button column removed:** Whole row is clickable; no redundant Edit button
+- **Page header section removed:** Tab nav already identifies active tab; count/heading row removed
+- **Filter distributor dropdown:** Shows only distributors that have at least one PO in the active tab's queryset (not all active distributors)
+- **Date range filters removed:** "PO Month From" and "PO Month To" fields removed from filter modal (status + distributor + item + SO# remain)
+- **All 7 statuses in modal dropdown:** Was hardcoded to 2 (Projected/Actual); now dynamically rendered from `po_status_choices` context
+- **Modal shows distributor name:** Modal title updated to include distributor name from API response
+
+---
+
+### Distributor POs Tab Cleanup
+
+- **Removed dead v2 endpoint:** `distributor_po_modal_data_v2` and its only-consumer helper
+  `_serialize_po` removed (zero live callers — the PO row click uses the v1 endpoint
+  `distributor_po_modal_data` with `?po_pk`; v2 had no template/JS callers). URL pattern
+  and test class also removed.
+- **Current Inventory pencil icon moved left:** The pencil button now appears to the left of the
+  "Current Inventory" label in the projection row. The cell remains right-aligned (`text-end`);
+  `ms-2` changed to `me-2` so spacing sits correctly with the button preceding the text.
+- **Month-based row banding:** PO rows alternate background by `(year, month)` — all rows in
+  the same month share a shade, consecutive months alternate. Parity computed server-side
+  across the full ordered queryset before pagination, so a month spanning a page boundary
+  keeps a consistent color. Sticky columns (`sticky-left`, `sticky-left-2`) carry the band
+  background to occlude scrolled content correctly.
+
+---
+
+### Manual Within-Month Ordering for Distributor POs
+
+- **`DistributorPO.sort_position`** (`IntegerField`, default 0): manual ordering position
+  within a PO month (lower appears first). The list orders by `year, month, sort_position,
+  distributor__name` (model `Meta.ordering` updated to match; `distributor__name` is only a
+  tiebreaker for rows that share a position).
+- **Move icon** (`bi-arrows-move`) sits to the right of the PO Month label on each row and
+  opens a move modal. The button has both an inline `onclick="event.stopPropagation()"` and a
+  guard in the row click handler (`e.target.closest('.move-po-btn')`), so clicking it does
+  **not** trigger the row's edit-orders modal; clicking elsewhere on the row still opens it.
+  (There is no on-listing "Order"/position column — see refinements below.)
+- **Move modal:** a **year selector** (PO's year ±1, default the PO's year) + a **month
+  selector** (all 12 months, default the PO's month) + "Move to position N" input, plus the
+  target month's current ordered list for reference. Offering all 12 months (independent of
+  which months have POs) lets a PO move into an empty month. Reference data
+  (`move_modal_data_json`: month `"YYYY-MM"` → ordered PO list) is loaded from context up
+  front, so changing year/month needs no extra round trip. An empty target month shows
+  "No POs in this month yet — this PO will be position 1" and defaults the position to 1.
+- **Move semantics** (`move_distributor_po`, `POST /distributors/po/move/`): the PO is inserted
+  at position N and everything at N and below slides down by one. The backend renumbers the
+  affected month(s) to clean sequential integers. Out-of-range N clamps to `[1, count+1]`
+  (an empty target month → position 1). Cross-month moves renumber **both** the old month
+  (close the gap) and the target month (insert). Company-scoped (404 for other companies);
+  requires `can_manage_distributor_inventory`.
+- **Default positions seeded** by a data migration (`0018_seed_sort_position`): within each
+  `(company, year, month)` group, ordered by status-workflow rank then distributor name, then
+  numbered `1..N`.
+- **All column-header sorts removed** (PO Month, Dist, SO#). Manual `sort_position` is the only
+  within-month order; the queryset ordering is fixed and any legacy `?sort=` param is ignored.
+- **Future:** a "generate a year of POs" feature will create POs in bulk; at that point a
+  "newly auto-created / needs placement" indicator may be reintroduced (dropped now because all
+  POs are currently user-created with a deliberate position).
+
+#### Move/display refinements (round 2)
+
+- **Removed the on-listing "Order" column** (it showed the per-month position number). It was
+  redundant — the move modal already shows numbered positions when choosing placement. The
+  `display_position` context key was dropped from `pos_rows`; the row's `data-position`
+  attribute now reads `sort_position` directly. `sort_position` still drives ordering.
+- **Move icon relocated** from the dedicated Order cell to the right of the PO Month label.
+- **Month-band contrast increased:** band-1 rows now use `#dde1e6` (a noticeably deeper
+  light-gray than the previous `#f1f3f5`) against band-0's default/white, so adjacent month
+  groups are clearly distinguishable. Sticky-cell band overrides use the same value.
+- **Reverted to two sticky columns** now that the Order column is gone: checkbox at `left:0`
+  (`.sticky-left`, 40px) and PO Month at `left:40px` (`.sticky-left-2`). The `.sticky-left-order`
+  class and `.order-col`/`.order-number` CSS were removed.
+- **Move modal month-gap fix:** previously the month dropdown was built only from months that
+  already had POs (from `move_modal_data`), so a PO couldn't be moved into a gap month (e.g.
+  June when only May and July had POs). Now the modal offers all 12 months + a year selector,
+  independent of existing data.
+
+---
+
+### Testing Convention — Date-Independence in Forecast/Suggestion Tests
+
+The forecast (`apps/distribution/forecast.py`) pivots each horizon cell past-vs-future on
+`date.today()` (`(year, month) < (today.year, today.month)`): past months use that month's
+**actual** sales; the current month and future months project from **prior-year** same-month
+sales. Because that pivot reads the real wall clock, any test fixture that hardcodes absolute
+dates (e.g. a snapshot anchored at April 2026 with a May 2026 lookahead) silently changes
+behavior once the real calendar moves past the assumed "now."
+
+This bit three suggest-endpoint tests on **2026-06-01**: their lookahead month (May 2026)
+flipped from a future projection cell (using May 2025 prior-year sales → shortage → suggestion
+lines) into a past cell (using May 2026 actuals, of which the fixtures created none → zero
+depletion → zero shortage → zero lines), failing the "expect ≥1 line" assertions. The
+algorithm and forecast were correct; only the fixtures baked in an implicit "now."
+
+**Rule for forecast/suggestion tests:**
+- Unit tests that call `compute_distributor_forecast` / `compute_group_forecast` directly must
+  pass an explicit `today=date(...)` (these functions already accept it). Most already do.
+- Tests that exercise the **endpoints** (which do not accept a `today` override) must freeze the
+  clock by patching `apps.distribution.forecast.date` (the symbol is `from datetime import date`).
+  The shared `_FrozenApril2026Date` subclass in `tests_po_endpoints.py` does this; apply it with
+  `@patch('apps.distribution.forecast.date', _FrozenApril2026Date)`. Do **not** add a `today`
+  parameter to production endpoints just to satisfy tests.
+- Prefer freezing to a date where the lookahead month remains in the future relative to the
+  frozen now, so the intended prior-year projection path produces the expected shortage.
+
+---
+
 ### Algorithm UX Change — Suggestions On-Demand (replaces auto-suggest)
 
 - Modal open now shows only saved POs; no algorithm-generated tabs are pre-populated
@@ -4345,4 +4536,62 @@ Established a canonical filter pattern for filtered list views. The account list
 - Rationale: prevents successive "+ Add Order" clicks from proposing POs that cover only future months when all current-month (M+1) inventory needs are already satisfied by previously saved POs. A PO with no M+1 need is considered opportunistic and should not be auto-suggested.
 - Implementation: inner `run_pass(pass_num)` function uses `nonlocal remaining_capacity` to mutate capacity across passes. Returns count of items allocated in that pass.
 - Gate check: `pass_1_count = run_pass(0); if pass_1_count == 0: return {'lines': []}`.
+
+### Distributor Code Algorithm (revised)
+
+- Distributor codes are stored without state prefix in `Distributor.code` (e.g., `"SPD"`).
+- Display format: `STATE-CODE` (e.g., `"NJ-SPD"`), computed by `Distributor.display_code` property.
+- State prefix comes from `Distributor.state` field; falls back to code-only if state is blank.
+- Algorithm applied to `Distributor.name`:
+  1. Drop everything from `"- "` or `" - "` onward (strips city after hyphen, e.g. `"Corp.- Randolph, MA"` → `"Corp."`)
+  2. Drop everything after the LAST comma (strips state/city, e.g. `", NJ"` → removed)
+  3. Tokenize remaining words; skip legal suffixes (Inc, Corp, Co, LLC, Ltd, LP, LLP) and stop words (a, an, the, of, and, &)
+  4. Take first letter of each remaining word, uppercase, max 10 chars
+- All existing distributor codes regenerated via migration `0015_regenerate_distributor_codes.py` (overwrites previous codes; manual overrides must be re-set via admin/edit).
+- Examples: `"Shore Point Dist Co, NJ"` → `SPD`; `"Burke Distributing Corp.- Randolph, MA"` → `BD`; `"Atlas Distributing Inc., MA"` → `AD`.
+
+### Distributor POs Tab — Tab Consolidation
+
+- **Invoiced POs tab removed.** All PO statuses (Projected, Actual, Submitted, In Transit, Delivered, Invoiced, Cancelled) now appear in the Distributor POs tab.
+- Users filter by status via the filter modal to narrow the view.
+- Removed `_DEFAULT_INVOICED_POS_FILTERS` constant and `exclude_invoiced` parameter from `_get_filtered_distributor_pos_queryset`.
+- `invoiced_pos` tab name in URL falls through to the `distributors` default tab.
+
+### Distributor POs Tab — Layout Improvements
+
+- Page subtitle ("Distribution partners for …") removed; saves vertical space.
+- Filters button moved to page header row, right-aligned with "Distributors" h1.
+- Table header restructured: Row 1 shows brand-group column spans; Row 2 shows PO Month, Dist (with SO# stacked below as a secondary sort link), and vertical item codes. This aligns column labels with the data rows directly below.
+- SO# no longer occupies its own column; it is stacked under the Dist code in the same cell (saves one column of horizontal space).
+- Item code columns narrowed to 60px (`width/min-width/max-width: 60px`), appropriate for 5-digit case quantities.
 - If pass 1 allocates anything (even partially), passes 2–5 run normally to fill remaining capacity.
+
+### Distributor POs Tab — UI Fixes
+
+- **PO Month format:** displays as `'YY-Mon` (e.g., `'26-Nov`) instead of `YYYY-MM`. Label built in the view (`po_month_label` per row) from `calendar.month_abbr` and the 2-digit year.
+- **Item code headers centered:** vertical (`writing-mode: vertical-rl`) item code headers now center over their 60px columns via `text-align: center` on `th.vertical-header` plus `margin: 0 auto; display: inline-block` on the `.vertical-text` span. Item data cells use `.item-cell` with `text-align: center` so numbers line up under their headers.
+- **Filter modal Apply/Clear buttons restored:** the `<form>` previously wrapped both `modal-body` and `modal-footer`, which broke the `modal-dialog-scrollable` flex layout and pushed the footer off-screen. Fixed by restructuring to the canonical pattern (matching `account_list.html`): the form lives inside `modal-body` and closes there; `modal-footer` is a sibling, with the submit button linked via `form="posFilterForm"`.
+
+### Distributor POs Tab — Inventory Projection Tool
+
+Ad-hoc planning tool to gauge whether current on-hand stock covers a selected set of POs.
+
+- **`Item.forecast_current_inventory`** (`DecimalField(10,2)`, default 0) — company-scoped ad-hoc current on-hand inventory (cases), separate from `InventorySnapshot` imports. One value per item. Note: this is company-global (per item), NOT per-distributor — it represents the supplier's own stock for planning.
+- **`DistributorPO.selected_for_projection`** (`BooleanField`, default False) — company-scoped PO selection state, persisted and shared across users/sessions.
+- **Two rows above the PO list** (scroll normally, not pinned): *Current Inventory* (edited via a modal, saved via AJAX) and *Projected Ending Inventory* (live JS calc).
+- **Calc:** Projected Ending = Current Inventory − Σ(selected POs' cases per item). Blank/unset inventory treated as 0. Negative projected ending shown in **red** (`text-danger fw-bold`) to flag a production/stock shortfall.
+- **Selection:** a checkbox per PO row (new leftmost sticky column) plus a header *select-all-visible* checkbox. Toggling persists immediately via AJAX. Selected POs count toward the calc **across all pages/filters** (persisted field) — the server computes `selected_totals` over every selected PO company-wide, and the `(N POs selected)` indicator reflects the company-wide total, not just the current page.
+- **Live calc** reads embedded JSON (`pos_data_json` for current-page per-PO per-item cases, `selected_totals_json` baseline across all selected POs, `current_inventory_json`), NOT formatted cell text. On-page toggles adjust the baseline by that PO's cases (from `pos_data`); off-page selections are already folded into the server baseline.
+- **Checkbox vs row-click:** the checkbox cell uses `onclick="event.stopPropagation()"`, and the row-click handler guards with `e.target.closest('.po-checkbox-col')` — so toggling a checkbox does not open the PO edit modal.
+- **Sticky columns:** two-level — checkbox column at `left:0` (`.sticky-left`, 40px), PO Month at `left:40px` (`.sticky-left-2`); both frozen on horizontal scroll. Dist column is not sticky.
+- **Endpoints:** `save_forecast_inventory` (bulk inventory save), `toggle_po_selection` (single PO), `bulk_toggle_po_selection` (select-all). All require `can_manage_distributor_inventory`, AJAX header, and scope writes to the user's company.
+- **JS placement:** the Distributor POs tab script must live in `{% block extra_js %}` (not `{% block content %}`), so it runs *after* the Bootstrap bundle. `base.html` loads `bootstrap.bundle.min.js` near the end of `<body>`, before `extra_js` but after `content`. A script in the content block executes during parse, before Bootstrap loads, so its first `new bootstrap.Tooltip()`/`new bootstrap.Modal()` reference throws on the undefined `bootstrap` global and aborts the whole IIFE — silently killing every handler it would have bound (row-click, select-all, inventory pencil). The script is left unconditional (no `active_tab` guard) and no-ops safely on other tabs via null-checked `getElementById` lookups, matching the other `extra_js` scripts. Regression test: `test_pos_tab_script_loads_after_bootstrap`.
+
+### Distributor POs Tab — Refinements (Round 2)
+
+- **PO row click opens a single PO.** Clicking a `.po-row` opens the modal scoped to *only* that PO, even when a distributor has multiple POs in the same month. Implemented by extending the v1 endpoint (`distributor_po_modal_data`) with an optional `?po_pk=N` filter that narrows `saved_orders` to that one PO while preserving the response shape the modal IIFE already consumes. The row click passes `?po_pk=<pk>` (the `.po-row` already carries `data-po-pk`). The save endpoint only touches POs present in the submitted `orders` array, so single-PO save does not delete the month's other POs. (The `distributor_po_modal_data_v2` endpoint also has a single-PO mode, but its response shape — `pos`/`pk`/`cases`, no `cases_per_pallet`/`order_quantity_unit`/`generated_by_algorithm` — is incompatible with the existing modal renderer and has no wired consumer, so extending v1 was the lower-risk path.)
+- **Default sort:** PO Month → Status (workflow order: projected, actual, submitted, in_transit, delivered, invoiced, cancelled) → Distributor name. Status sorts by a `Case/When` workflow-rank annotation (`_status_rank`), not alphabetically — this applies to both the default sort and the explicit Status sort. Explicit PO Month / Dist / SO# header sorts override with their single-column ordering.
+- **Filters button** renders only on the Distributor POs tab (`{% if active_tab == 'distributor_pos' %}` guard in the page header).
+- **Current Inventory modal** groups items under brand headers via `{% regroup all_items_for_inventory by brand.name %}` — the brand name shows once as an uppercase header, with item rows beneath showing only the item name (no repeated `Brand — Item` label).
+- **"(N POs selected)"** moved to the brand-name header row (Row 1), spanning the PO Month + Dist columns. The `#selected-po-count` span ID moves with it (still updated live by `updateSelectedCountLabel`); exactly one element carries that ID.
+- **Projection row labels** (Current Inventory, Projected Ending Inventory) are right-aligned (`text-end`) within their `colspan="2"` label cells. The per-item value cells (`.inventory-cell`, `.projected-cell`) keep `text-center` — only the labels changed.
