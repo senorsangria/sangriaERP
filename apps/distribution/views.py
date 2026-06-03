@@ -695,10 +695,6 @@ def distributor_list(request):
                     'po_month_label': po_month_label,
                     'is_selected': po.selected_for_projection,
                     'band_parity': month_parity_map.get((po.year, po.month), 0),
-                    # sort_position is maintained as clean 1..N per month (seeding +
-                    # move endpoint), so it IS the per-month display position and is
-                    # page-stable by construction (no walking counter needed).
-                    'display_position': po.sort_position,
                 })
                 pos_data[po.pk] = {str(k): v for k, v in line_map.items()}
 

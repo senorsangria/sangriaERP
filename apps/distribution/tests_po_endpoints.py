@@ -864,8 +864,8 @@ class DistributorPOsTabTest(TestCase):
         order = [r['po'].pk for r in resp.context['pos_rows']]
         self.assertEqual(order, [po_a.pk, po_b.pk, po_c.pk, po_next.pk])
 
-    # 23. The Order column shows the per-month display position from sort_position
-    def test_display_position_matches_sort_position(self):
+    # 23. sort_position drives ordering; the row carries data-position from sort_position.
+    def test_sort_position_drives_row_order_and_data_attr(self):
         po1 = _make_po(self.dist, 2026, 5, status='projected')
         po1.sort_position = 1
         po1.save(update_fields=['sort_position'])
@@ -874,9 +874,13 @@ class DistributorPOsTabTest(TestCase):
         po2.save(update_fields=['sort_position'])
         resp = self._get_tab()
         self.assertEqual(resp.status_code, 200)
-        pos_by_pk = {r['po'].pk: r['display_position'] for r in resp.context['pos_rows']}
-        self.assertEqual(pos_by_pk[po1.pk], 1)
-        self.assertEqual(pos_by_pk[po2.pk], 2)
+        order = [r['po'].pk for r in resp.context['pos_rows']]
+        self.assertEqual(order, [po1.pk, po2.pk])
+        # data-position attribute is sourced from sort_position (no Order column).
+        content = resp.content.decode()
+        self.assertIn(f'data-po-pk="{po1.pk}"', content)
+        self.assertIn('data-position="1"', content)
+        self.assertIn('data-position="2"', content)
 
     # 24. Filters button renders only on the Distributor POs tab
     def test_filter_button_only_on_distributor_pos_tab(self):
@@ -1493,16 +1497,67 @@ class DistributorPOMoveTest(TestCase):
         self.assertNotIn('&sort=distributor', content)
         self.assertNotIn('&sort=so_number', content)
 
-    # 9. Order column renders with per-month position numbers + move buttons.
-    def test_order_column_shows_position(self):
+    # 9. Order column removed; move icon lives in the PO row (PO Month cell).
+    def test_order_column_removed(self):
         _make_po(self.dist, 2026, 5, status='projected')
         resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
         self.assertEqual(resp.status_code, 200)
         content = resp.content.decode()
-        self.assertIn('order-col', content)
-        self.assertIn('order-number', content)
+        # Old Order-column markers are gone. (Avoid the bare 'order-col' substring —
+        # it false-matches inside CSS 'border-color'.)
+        self.assertNotIn('sticky-left-order', content)
+        self.assertNotIn('order-number', content)
+        self.assertNotIn('>Order<', content)
+
+    def test_move_icon_present_in_po_month_cell(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        # The move button still renders (now beside the PO Month label) inside the
+        # sticky-left-2 (PO Month) cell — assert both markers are present.
         self.assertIn('move-po-btn', content)
-        self.assertIn('>Order<', content)
+        self.assertIn('sticky-left-2', content)
+
+    def test_no_stray_template_comment(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        # A malformed/multi-line {# #} comment would render as literal text.
+        self.assertNotIn('Row 2: column headers', content)
+        self.assertNotIn('{#', content)
+
+    def test_move_modal_has_year_and_month_selectors(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        # Move modal offers a year + month selector (all 12 months built in JS).
+        self.assertIn('id="move-target-year"', content)
+        self.assertIn('id="move-target-month"', content)
+        self.assertIn('id="move-month-empty"', content)
+
+    def test_move_po_into_empty_month(self):
+        # POs exist in May and July; June is empty.
+        may = self._make_month(2026, 5, 2)
+        july = self._make_month(2026, 7, 2)
+        mover = may[1]  # position 2 of May
+        resp = _ajax_post(self.client, self.move_url, {
+            'po_pk': mover.pk, 'target_year': 2026, 'target_month': 6, 'target_position': 1,
+        })
+        self.assertEqual(resp.status_code, 200)
+        mover.refresh_from_db()
+        self.assertEqual((mover.year, mover.month), (2026, 6))
+        self.assertEqual(mover.sort_position, 1)  # sole PO in June
+        # Old month (May) renumbered to close the gap: remaining PO at position 1.
+        posMay = self._positions(2026, 5)
+        self.assertEqual(posMay[may[0].pk], 1)
+        self.assertNotIn(mover.pk, posMay)
+        # July untouched.
+        posJuly = self._positions(2026, 7)
+        self.assertEqual(posJuly[july[0].pk], 1)
+        self.assertEqual(posJuly[july[1].pk], 2)
 
     # 10. move_modal_data_json present in context, structured month -> ordered list.
     def test_move_modal_data_in_context(self):

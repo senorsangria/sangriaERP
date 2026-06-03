@@ -788,10 +788,9 @@
     margin: 0 auto;
     display: inline-block;
   }
-  /* Three frozen left columns: checkbox (0–40px), Order (40–104px), PO Month (104px+). */
+  /* Two frozen left columns: checkbox (0–40px), PO Month (40px+). */
   .po-table .sticky-left { position: sticky; left: 0; background: var(--bs-body-bg, white); z-index: 2; }
-  .po-table .sticky-left-order { position: sticky; left: 40px; background: var(--bs-body-bg, white); z-index: 2; }
-  .po-table .sticky-left-2 { position: sticky; left: 104px; background: var(--bs-body-bg, white); z-index: 2; }
+  .po-table .sticky-left-2 { position: sticky; left: 40px; background: var(--bs-body-bg, white); z-index: 2; }
   .brand-header { background: var(--bs-info-bg-subtle, #e7f3ff); border-bottom: 2px solid var(--bs-border-color); font-weight: 500; font-size: .82rem; }
   .po-row:hover { background-color: var(--bs-secondary-bg, #f8f9fa); cursor: pointer; }
   .po-table th a { color: inherit; text-decoration: none; }
@@ -801,31 +800,26 @@
     max-width: 60px;
     text-align: center;
   }
-  /* Order column (per-month position number + move icon) */
-  .po-table .order-col { width: 64px; min-width: 64px; max-width: 64px; white-space: nowrap; text-align: center; }
-  .po-table .order-number { font-weight: 600; }
   .move-po-btn { color: var(--bs-secondary, #6c757d); }
   .move-po-btn:hover { color: var(--bs-primary, #0d6efd); }
   /* Inventory projection rows (scroll normally; not pinned to top) */
   .po-table .projection-row td { background: var(--bs-tertiary-bg, #f1f3f5); border-bottom: 2px solid var(--bs-border-color); font-weight: 500; }
-  .po-table .projection-row td.sticky-left,
-  .po-table .projection-row td.sticky-left-order { background: var(--bs-tertiary-bg, #f1f3f5); }
+  .po-table .projection-row td.sticky-left { background: var(--bs-tertiary-bg, #f1f3f5); }
   .po-checkbox-col { width: 40px; min-width: 40px; max-width: 40px; text-align: center; }
-  /* Month-based row banding — band-1 rows get a subtle alternate background */
-  .po-table tr.po-row.band-1 td { background-color: var(--bs-tertiary-bg, #f1f3f5); }
+  /* Month-based row banding — band-1 rows get a clearly deeper gray than band-0 (default/white)
+     so adjacent months are visually distinct. #dde1e6 is noticeably darker than #f1f3f5. */
+  .po-table tr.po-row.band-1 td { background-color: #dde1e6; }
   /* Sticky columns carry their own bg to occlude scrolled content; banding must override */
   .po-table tr.po-row.band-1 td.sticky-left,
-  .po-table tr.po-row.band-1 td.sticky-left-order,
-  .po-table tr.po-row.band-1 td.sticky-left-2 { background-color: var(--bs-tertiary-bg, #f1f3f5); }
+  .po-table tr.po-row.band-1 td.sticky-left-2 { background-color: #dde1e6; }
   </style>
 
   <div class="table-responsive border rounded">
     <table class="table table-sm po-table mb-0">
       <thead class="table-light">
         <tr>
-          {# Row 1: checkbox + Order cols blank; selected-count spans PO Month + Dist; brand group spans #}
+          {# Row 1: checkbox col blank; selected-count spans PO Month + Dist; brand group spans #}
           <th class="sticky-left po-checkbox-col"></th>
-          <th class="sticky-left-order order-col"></th>
           <th colspan="2" class="text-muted small fw-normal align-bottom">
             (<span id="selected-po-count">{{ selected_po_count }}</span> POs selected)
           </th>
@@ -834,12 +828,10 @@
           {% endfor %}
         </tr>
         <tr>
-          {# Row 2: column headers aligned with item codes. No sort links —
-             within-month order is the manual sort_position (use the move icon). #}
+          {# Row 2: column headers. No sort links — within-month order is manual sort_position. #}
           <th class="sticky-left po-checkbox-col">
             <input type="checkbox" id="po-select-all" title="Select/deselect all visible">
           </th>
-          <th class="sticky-left-order order-col text-center" style="min-width:64px;">Order</th>
           <th class="sticky-left-2" style="min-width:90px;">PO Month</th>
           <th style="min-width:80px;">
             <div>Dist</div>
@@ -858,7 +850,6 @@
         {# Projection row 1: Current Inventory (edited via modal) #}
         <tr class="projection-row current-inventory-row">
           <td class="sticky-left po-checkbox-col"></td>
-          <td class="sticky-left-order order-col"></td>
           <td colspan="2" class="text-end">
             <button type="button" class="btn btn-sm btn-outline-secondary me-2 py-0 px-1" id="edit-inventory-btn" title="Edit current inventory">
               <i class="bi bi-pencil"></i>
@@ -874,7 +865,6 @@
         {# Projection row 2: Projected Ending Inventory (live JS calc) #}
         <tr class="projection-row projected-ending-row">
           <td class="sticky-left po-checkbox-col"></td>
-          <td class="sticky-left-order order-col"></td>
           <td colspan="2" class="text-end">
             Projected Ending Inventory
           </td>
@@ -888,18 +878,17 @@
               data-dist-pk="{{ row.po.distributor_id }}"
               data-year="{{ row.po.year }}"
               data-month="{{ row.po.month }}"
-              data-position="{{ row.display_position }}">
+              data-position="{{ row.po.sort_position }}">
             <td class="sticky-left po-checkbox-col" onclick="event.stopPropagation();">
               <input type="checkbox" class="po-select-checkbox" data-po-pk="{{ row.po.pk }}" {% if row.is_selected %}checked{% endif %}>
             </td>
-            <td class="sticky-left-order order-col text-center" onclick="event.stopPropagation();">
-              <span class="order-number">{{ row.display_position }}</span>
-              <button type="button" class="btn btn-sm btn-link p-0 ms-1 move-po-btn" data-po-pk="{{ row.po.pk }}" title="Move this PO">
-                <i class="bi bi-arrows-move"></i>
-              </button>
-            </td>
             <td class="sticky-left-2 small">
-              <div>{{ row.po_month_label }}</div>
+              <div>
+                {{ row.po_month_label }}
+                <button type="button" class="btn btn-sm btn-link p-0 ms-1 move-po-btn" data-po-pk="{{ row.po.pk }}" title="Move this PO" onclick="event.stopPropagation();">
+                  <i class="bi bi-arrows-move"></i>
+                </button>
+              </div>
               <div class="text-muted" style="font-size:.75rem;">{{ row.po.get_status_display }}</div>
             </td>
             <td class="small">
@@ -916,7 +905,7 @@
           </tr>
         {% empty %}
           <tr>
-            <td colspan="{{ all_items|length|add:4 }}" class="text-center text-muted py-4">No POs found.</td>
+            <td colspan="{{ all_items|length|add:3 }}" class="text-center text-muted py-4">No POs found.</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -1048,9 +1037,15 @@
         </div>
         <div class="modal-body">
           <input type="hidden" id="move-po-pk">
-          <div class="mb-3">
-            <label class="form-label small">Target month</label>
-            <select class="form-select form-select-sm" id="move-target-month"></select>
+          <div class="row g-2 mb-3">
+            <div class="col-5">
+              <label class="form-label small">Year</label>
+              <select class="form-select form-select-sm" id="move-target-year"></select>
+            </div>
+            <div class="col-7">
+              <label class="form-label small">Month</label>
+              <select class="form-select form-select-sm" id="move-target-month"></select>
+            </div>
           </div>
           <div class="mb-3">
             <label class="form-label small">Move to position</label>
@@ -1060,6 +1055,7 @@
           <div class="mb-2">
             <div class="small text-muted mb-1">Current order for this month:</div>
             <ol class="small" id="move-month-preview" style="max-height: 200px; overflow-y: auto;"></ol>
+            <div class="small text-muted fst-italic" id="move-month-empty" style="display:none;">No POs in this month yet — this PO will be position 1.</div>
           </div>
         </div>
         <div class="modal-footer">
@@ -1580,7 +1576,8 @@
     // checkbox cell (selection toggle must not open the modal).
     document.querySelectorAll('.po-row').forEach(function (row) {
       row.addEventListener('click', function (e) {
-        if (e.target.closest('.po-checkbox-col') || e.target.closest('.po-select-checkbox')) {
+        if (e.target.closest('.po-checkbox-col') || e.target.closest('.po-select-checkbox')
+            || e.target.closest('.move-po-btn')) {
           return;
         }
         openPoModalFromRow(row);
@@ -1749,43 +1746,90 @@
     }
 
     // ------------------------------------------------------------------
-    // Move PO logic (reposition within month or move to another month)
+    // Move PO logic (reposition within month or move to ANY month/year)
     // ------------------------------------------------------------------
 
     var moveModalData = JSON.parse('{{ move_modal_data_json|escapejs }}');  // {"YYYY-MM": [{pk, position, label}, ...]}
     var moveModalEl = document.getElementById('movePoModal');
     var moveModal = moveModalEl ? new bootstrap.Modal(moveModalEl) : null;
+    var MONTH_NAMES = ['January','February','March','April','May','June',
+                       'July','August','September','October','November','December'];
+    var moveOriginPoMonthKey = null;  // the PO's own month, to default position sensibly
 
-    function buildMoveMonthOptions(selectedKey) {
-      var sel = document.getElementById('move-target-month');
+    function buildMoveYearOptions(poYear) {
+      var sel = document.getElementById('move-target-year');
       if (!sel) return;
       sel.innerHTML = '';
-      var keys = Object.keys(moveModalData).sort();
-      // Ensure the PO's current month is always selectable even if (edge case) absent.
-      if (selectedKey && keys.indexOf(selectedKey) === -1) keys.push(selectedKey);
-      keys.sort();
-      keys.forEach(function (key) {
+      [poYear - 1, poYear, poYear + 1].forEach(function (y) {
         var opt = document.createElement('option');
-        opt.value = key;
-        var parts = key.split('-');
-        var d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, 1);
-        opt.textContent = "'" + parts[0].slice(2) + "-" + d.toLocaleString('en-US', { month: 'short' });
-        if (key === selectedKey) opt.selected = true;
+        opt.value = y;
+        opt.textContent = y;
+        if (y === poYear) opt.selected = true;
         sel.appendChild(opt);
       });
     }
 
-    function renderMoveMonthPreview(monthKey, movingPoPk) {
+    function buildMoveMonthOptions(poMonth) {
+      var sel = document.getElementById('move-target-month');
+      if (!sel) return;
+      sel.innerHTML = '';
+      for (var m = 1; m <= 12; m++) {
+        var opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = MONTH_NAMES[m - 1];
+        if (m === poMonth) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+
+    function moveCurrentMonthKey() {
+      var y = document.getElementById('move-target-year').value;
+      var m = String(document.getElementById('move-target-month').value).padStart(2, '0');
+      return y + '-' + m;
+    }
+
+    function renderMoveMonthPreview(movingPoPk) {
       var ol = document.getElementById('move-month-preview');
+      var emptyMsg = document.getElementById('move-month-empty');
       if (!ol) return;
       ol.innerHTML = '';
-      var list = moveModalData[monthKey] || [];
-      list.forEach(function (item) {
-        var li = document.createElement('li');
-        li.textContent = item.label + (item.pk === movingPoPk ? '  (this PO)' : '');
-        if (item.pk === movingPoPk) li.style.fontWeight = '600';
-        ol.appendChild(li);
-      });
+      var list = moveModalData[moveCurrentMonthKey()] || [];
+      if (list.length === 0) {
+        if (emptyMsg) emptyMsg.style.display = '';
+        ol.style.display = 'none';
+      } else {
+        if (emptyMsg) emptyMsg.style.display = 'none';
+        ol.style.display = '';
+        list.forEach(function (item) {
+          var li = document.createElement('li');
+          li.textContent = item.label + (item.pk === movingPoPk ? '  (this PO)' : '');
+          if (item.pk === movingPoPk) li.style.fontWeight = '600';
+          ol.appendChild(li);
+        });
+      }
+    }
+
+    // Default "move to position": current position if same month; end+1 for a
+    // different month with POs; 1 for an empty month.
+    function updateMoveDefaultPosition(currentPos) {
+      var input = document.getElementById('move-target-position');
+      if (!input) return;
+      var key = moveCurrentMonthKey();
+      var list = moveModalData[key] || [];
+      if (list.length === 0) {
+        input.value = 1;
+      } else if (key === moveOriginPoMonthKey) {
+        input.value = currentPos || 1;
+      } else {
+        input.value = list.length + 1;  // append to the end of a different month
+      }
+    }
+
+    function refreshMovePreviewAndDefault() {
+      var poPk = parseInt(document.getElementById('move-po-pk').value, 10);
+      var currentPos = parseInt(document.getElementById('movePoModal').dataset.currentPos, 10);
+      renderMoveMonthPreview(poPk);
+      updateMoveDefaultPosition(currentPos);
     }
 
     document.querySelectorAll('.move-po-btn').forEach(function (btn) {
@@ -1793,36 +1837,35 @@
         e.stopPropagation();  // do NOT open the row's edit modal
         var row = btn.closest('.po-row');
         var poPk = parseInt(btn.dataset.poPk, 10);
-        var year = row.dataset.year;
-        var month = String(row.dataset.month).padStart(2, '0');
-        var monthKey = year + '-' + month;
+        var poYear = parseInt(row.dataset.year, 10);
+        var poMonth = parseInt(row.dataset.month, 10);
         var currentPos = parseInt(row.dataset.position, 10);
 
         document.getElementById('move-po-pk').value = poPk;
-        buildMoveMonthOptions(monthKey);
-        document.getElementById('move-target-position').value = currentPos;
-        renderMoveMonthPreview(monthKey, poPk);
+        moveModalEl.dataset.currentPos = currentPos;
+        moveOriginPoMonthKey = poYear + '-' + String(poMonth).padStart(2, '0');
+
+        buildMoveYearOptions(poYear);
+        buildMoveMonthOptions(poMonth);
+        renderMoveMonthPreview(poPk);
+        // Same month on open → default to the PO's current position.
+        document.getElementById('move-target-position').value = currentPos || 1;
 
         if (moveModal) moveModal.show();
       });
     });
 
+    var moveYearSel = document.getElementById('move-target-year');
     var moveMonthSel = document.getElementById('move-target-month');
-    if (moveMonthSel) {
-      moveMonthSel.addEventListener('change', function () {
-        var poPk = parseInt(document.getElementById('move-po-pk').value, 10);
-        renderMoveMonthPreview(moveMonthSel.value, poPk);
-      });
-    }
+    if (moveYearSel) moveYearSel.addEventListener('change', refreshMovePreviewAndDefault);
+    if (moveMonthSel) moveMonthSel.addEventListener('change', refreshMovePreviewAndDefault);
 
     var moveSaveBtn = document.getElementById('move-po-save-btn');
     if (moveSaveBtn) {
       moveSaveBtn.addEventListener('click', function () {
         var poPk = parseInt(document.getElementById('move-po-pk').value, 10);
-        var monthKey = document.getElementById('move-target-month').value;
-        var parts = monthKey.split('-');
-        var targetYear = parseInt(parts[0], 10);
-        var targetMonth = parseInt(parts[1], 10);
+        var targetYear = parseInt(document.getElementById('move-target-year').value, 10);
+        var targetMonth = parseInt(document.getElementById('move-target-month').value, 10);
         var targetPosition = parseInt(document.getElementById('move-target-position').value, 10) || 1;
 
         moveSaveBtn.disabled = true;

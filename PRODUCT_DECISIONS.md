@@ -866,35 +866,50 @@ The status dropdown in the modal form now shows all 7 statuses (driven by `po_st
   within a PO month (lower appears first). The list orders by `year, month, sort_position,
   distributor__name` (model `Meta.ordering` updated to match; `distributor__name` is only a
   tiebreaker for rows that share a position).
-- **Leading "Order" column** (after the checkbox, before PO Month): shows each PO's per-month
-  position (1..N, resets to 1 each month). The display number uses `sort_position` directly —
-  it is maintained as clean sequential `1..N` per month by the seeding migration and the move
-  endpoint, so it is page-stable by construction (no per-page walking counter, which would
-  mis-number a month spanning a page boundary).
-- **Move icon** (`bi-arrows-move`) on each row opens a move modal. The icon cell uses
-  `stopPropagation` so clicking it does **not** trigger the row's edit-orders modal; clicking
-  elsewhere on the row still opens the edit modal.
-- **Move modal:** target-month dropdown (defaults to the PO's current month) + "Move to
-  position N" input, plus the target month's current ordered list for reference. Reference
-  data (`move_modal_data_json`: month `"YYYY-MM"` → ordered PO list) is loaded from context
-  up front, so changing the target month needs no extra round trip.
+- **Move icon** (`bi-arrows-move`) sits to the right of the PO Month label on each row and
+  opens a move modal. The button has both an inline `onclick="event.stopPropagation()"` and a
+  guard in the row click handler (`e.target.closest('.move-po-btn')`), so clicking it does
+  **not** trigger the row's edit-orders modal; clicking elsewhere on the row still opens it.
+  (There is no on-listing "Order"/position column — see refinements below.)
+- **Move modal:** a **year selector** (PO's year ±1, default the PO's year) + a **month
+  selector** (all 12 months, default the PO's month) + "Move to position N" input, plus the
+  target month's current ordered list for reference. Offering all 12 months (independent of
+  which months have POs) lets a PO move into an empty month. Reference data
+  (`move_modal_data_json`: month `"YYYY-MM"` → ordered PO list) is loaded from context up
+  front, so changing year/month needs no extra round trip. An empty target month shows
+  "No POs in this month yet — this PO will be position 1" and defaults the position to 1.
 - **Move semantics** (`move_distributor_po`, `POST /distributors/po/move/`): the PO is inserted
   at position N and everything at N and below slides down by one. The backend renumbers the
-  affected month(s) to clean sequential integers. Out-of-range N clamps to `[1, count+1]`.
-  Cross-month moves renumber **both** the old month (close the gap) and the target month
-  (insert). Company-scoped (404 for other companies); requires `can_manage_distributor_inventory`.
+  affected month(s) to clean sequential integers. Out-of-range N clamps to `[1, count+1]`
+  (an empty target month → position 1). Cross-month moves renumber **both** the old month
+  (close the gap) and the target month (insert). Company-scoped (404 for other companies);
+  requires `can_manage_distributor_inventory`.
 - **Default positions seeded** by a data migration (`0018_seed_sort_position`): within each
   `(company, year, month)` group, ordered by status-workflow rank then distributor name, then
   numbered `1..N`.
 - **All column-header sorts removed** (PO Month, Dist, SO#). Manual `sort_position` is the only
   within-month order; the queryset ordering is fixed and any legacy `?sort=` param is ignored.
-- **Sticky columns:** three frozen left columns — checkbox (0–40px), Order (40–104px), PO Month
-  (104px+); the Order column is sticky (`sticky-left-order`) so it doesn't visually conflict
-  between the two existing sticky columns on horizontal scroll. Banding overrides carry to all
-  three sticky cells.
 - **Future:** a "generate a year of POs" feature will create POs in bulk; at that point a
   "newly auto-created / needs placement" indicator may be reintroduced (dropped now because all
   POs are currently user-created with a deliberate position).
+
+#### Move/display refinements (round 2)
+
+- **Removed the on-listing "Order" column** (it showed the per-month position number). It was
+  redundant — the move modal already shows numbered positions when choosing placement. The
+  `display_position` context key was dropped from `pos_rows`; the row's `data-position`
+  attribute now reads `sort_position` directly. `sort_position` still drives ordering.
+- **Move icon relocated** from the dedicated Order cell to the right of the PO Month label.
+- **Month-band contrast increased:** band-1 rows now use `#dde1e6` (a noticeably deeper
+  light-gray than the previous `#f1f3f5`) against band-0's default/white, so adjacent month
+  groups are clearly distinguishable. Sticky-cell band overrides use the same value.
+- **Reverted to two sticky columns** now that the Order column is gone: checkbox at `left:0`
+  (`.sticky-left`, 40px) and PO Month at `left:40px` (`.sticky-left-2`). The `.sticky-left-order`
+  class and `.order-col`/`.order-number` CSS were removed.
+- **Move modal month-gap fix:** previously the month dropdown was built only from months that
+  already had POs (from `move_modal_data`), so a PO couldn't be moved into a gap month (e.g.
+  June when only May and July had POs). Now the modal offers all 12 months + a year selector,
+  independent of existing data.
 
 ---
 
