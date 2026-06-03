@@ -399,38 +399,28 @@ def distributor_list(request):
     can_manage_inventory = request.user.has_permission('can_manage_distributor_inventory')
     company = request.user.company
 
-    q = request.GET.get('q', '').strip()
     base_qs = Distributor.objects.filter(company=company)
 
-    if q:
-        distributors_flat = list(base_qs.filter(name__icontains=q).order_by('name'))
-        grouped_data = None
-        ungrouped_data = None
-        is_grouped_view = False
-    else:
-        distributors_flat = None
-        from itertools import groupby
-        grouped_qs = (
-            base_qs.filter(group__isnull=False)
-            .select_related('group', 'group__primary_distributor')
-            .order_by('group__name', 'name')
-        )
-        ungrouped_qs = base_qs.filter(group__isnull=True).order_by('name')
-        grouped_data = []
-        for group_obj, members_iter in groupby(grouped_qs, key=lambda d: d.group):
-            grouped_data.append({
-                'group': group_obj,
-                'members': list(members_iter),
-            })
-        ungrouped_data = list(ungrouped_qs)
-        is_grouped_view = True
+    # Distributors tab always renders the grouped view (no search box — the
+    # distributor list is short enough not to need search).
+    from itertools import groupby
+    grouped_qs = (
+        base_qs.filter(group__isnull=False)
+        .select_related('group', 'group__primary_distributor')
+        .order_by('group__name', 'name')
+    )
+    ungrouped_qs = base_qs.filter(group__isnull=True).order_by('name')
+    grouped_data = []
+    for group_obj, members_iter in groupby(grouped_qs, key=lambda d: d.group):
+        grouped_data.append({
+            'group': group_obj,
+            'members': list(members_iter),
+        })
+    ungrouped_data = list(ungrouped_qs)
+    is_grouped_view = True
 
-    if is_grouped_view:
-        total_count = sum(len(g['members']) for g in grouped_data) + len(ungrouped_data)
-    else:
-        total_count = len(distributors_flat)
+    total_count = sum(len(g['members']) for g in grouped_data) + len(ungrouped_data)
 
-    search = q
     active_tab = request.GET.get('tab', 'distributors')
     if active_tab not in ('distributors', 'inventory', 'forecast', 'distributor_pos'):
         active_tab = 'distributors'
@@ -573,13 +563,16 @@ def distributor_list(request):
             for s in snapshots_list
         ]
 
-        # Forecast tab — compute eagerly so Bootstrap tab-switching shows data
+        # Forecast tab — active distributors only in the selection dropdown.
         available_distributors = list(
-            Distributor.objects.filter(company=company)
+            Distributor.objects.filter(company=company, is_active=True)
             .select_related('group', 'group__primary_distributor')
             .order_by('name')
         )
         available_groups = list(DistributorGroup.objects.filter(company=company).order_by('name'))
+        # No auto-selection: the forecast is only computed when a distributor is
+        # explicitly chosen via ?forecast_distributor=. The dropdown defaults to
+        # a "Select a distributor" prompt with a friendly empty state below.
         forecast_dist_pk = request.GET.get('forecast_distributor', '')
         if forecast_dist_pk:
             try:
@@ -589,8 +582,6 @@ def distributor_list(request):
                 )
             except (ValueError, TypeError):
                 forecast_distributor = None
-        if forecast_distributor is None and available_distributors:
-            forecast_distributor = available_distributors[0]
         if forecast_distributor:
             # Build po_additions from saved POs so the forecast reflects pending orders
             saved_pos = list(
@@ -760,12 +751,10 @@ def distributor_list(request):
             pos_filters_active = pos_active_filter_count > 0
 
     return render(request, 'distribution/distributor_list.html', {
-        'distributors_flat': distributors_flat,
         'grouped_data': grouped_data,
         'ungrouped_data': ungrouped_data,
         'is_grouped_view': is_grouped_view,
         'total_count': total_count,
-        'search': search,
         'active_tab': active_tab,
         'can_manage_inventory': can_manage_inventory,
         # Inventory tab
@@ -824,7 +813,7 @@ def distributor_create(request):
         if form.is_valid():
             distributor = form.save()
             messages.success(request, f'Distributor "{distributor.name}" has been created.')
-            return redirect('distributor_detail', pk=distributor.pk)
+            return redirect('distributor_list')
     else:
         form = DistributorForm(company=request.user.company)
 
@@ -1612,6 +1601,15 @@ def distributor_po_delete(request, dist_pk, po_pk):
 
     distributor = get_object_or_404(Distributor, pk=dist_pk, company=request.user.company)
     po = get_object_or_404(DistributorPO, pk=po_pk, distributor=distributor)
+
+    # Only projected POs may be deleted. Eligibility is based on the PO's SAVED
+    # status (what is in the DB), not any unsaved dropdown selection in the modal.
+    if po.status != DistributorPO.Status.PROJECTED:
+        return JsonResponse(
+            {'error': 'Only projected POs can be deleted.'},
+            status=400,
+        )
+
     po.delete()
 
     return JsonResponse({'ok': True})
@@ -1661,7 +1659,7 @@ def distributor_group_forecast(request, group_pk):
             slot['total_count'] = slot['saved_count']
 
     available_distributors = list(
-        Distributor.objects.filter(company=company)
+        Distributor.objects.filter(company=company, is_active=True)
         .select_related('group', 'group__primary_distributor')
         .order_by('name')
     )

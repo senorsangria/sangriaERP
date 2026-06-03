@@ -519,14 +519,27 @@ class ForecastViewTest(TestCase):
         self.assertEqual(resp.context['forecast_distributor'].pk, dist2.pk)
 
     # -----------------------------------------------------------------------
-    # 28. Forecast data loads eagerly even when active_tab != forecast
+    # 28. Forecast is NOT auto-computed — no distributor is auto-selected.
+    #     The forecast only loads when a distributor is explicitly chosen via
+    #     ?forecast_distributor=. (Previously the first distributor was auto-
+    #     picked; that behavior was removed in favor of a "Select a distributor"
+    #     prompt + empty state.)
     # -----------------------------------------------------------------------
-    def test_forecast_tab_data_loads_eagerly_with_permission(self):
+    def test_forecast_not_auto_computed_without_selection(self):
         _make_snapshot(self.distributor, self.item, 2026, 1)
-        resp = self.client.get(self.url + '?tab=distributors')
+        resp = self.client.get(self.url + '?tab=forecast')
         self.assertEqual(resp.status_code, 200)
-        self.assertIsNotNone(resp.context['forecast_result'])
+        self.assertIsNone(resp.context['forecast_distributor'])
+        self.assertIsNone(resp.context['forecast_result'])
+
+    def test_forecast_loads_when_distributor_selected(self):
+        _make_snapshot(self.distributor, self.item, 2026, 1)
+        resp = self.client.get(
+            self.url + f'?tab=forecast&forecast_distributor={self.distributor.pk}'
+        )
+        self.assertEqual(resp.status_code, 200)
         self.assertIsNotNone(resp.context['forecast_distributor'])
+        self.assertIsNotNone(resp.context['forecast_result'])
 
     # -----------------------------------------------------------------------
     # 29. Forecast tab hidden without can_manage_distributor_inventory

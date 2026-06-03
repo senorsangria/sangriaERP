@@ -16,8 +16,8 @@ from apps.core.models import Company, User
 from apps.core.rbac import Permission, Role
 from apps.distribution.forecast import compute_distributor_forecast
 from apps.distribution.models import (
-    Distributor, DistributorItemProfile, DistributorPO, DistributorPOLine,
-    InventorySnapshot,
+    Distributor, DistributorGroup, DistributorItemProfile, DistributorPO,
+    DistributorPOLine, InventorySnapshot,
 )
 from apps.distribution.tests_forecast import (
     _make_company, _make_supplier_admin, _make_distributor,
@@ -464,6 +464,34 @@ class DistributorPODeleteTest(TestCase):
         resp = _ajax_post(self.client, url, {'po_id': po.pk})
         self.assertEqual(resp.status_code, 404)
         self.assertTrue(DistributorPO.objects.filter(pk=po.pk).exists())
+
+    # 28. Delete allowed when status is projected (backend)
+    def test_po_delete_allowed_when_projected(self):
+        po = _make_po(self.dist, 2026, 6, status='projected')
+        url = reverse('distributor_po_delete',
+                      kwargs={'dist_pk': self.dist.pk, 'po_pk': po.pk})
+        resp = _ajax_post(self.client, url, {'po_id': po.pk})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        self.assertFalse(DistributorPO.objects.filter(pk=po.pk).exists())
+
+    # 29. Delete rejected when status is NOT projected (backend enforcement).
+    #     Eligibility is based on the saved DB status, not a modal dropdown.
+    def test_po_delete_rejected_when_not_projected(self):
+        for bad_status in ('actual', 'submitted', 'in_transit', 'delivered',
+                           'invoiced', 'cancelled'):
+            po = _make_po(self.dist, 2026, 6, status=bad_status,
+                          ext_po='PO-1' if bad_status != 'cancelled' else '')
+            url = reverse('distributor_po_delete',
+                          kwargs={'dist_pk': self.dist.pk, 'po_pk': po.pk})
+            resp = _ajax_post(self.client, url, {'po_id': po.pk})
+            self.assertEqual(resp.status_code, 400, msg=f'status={bad_status}')
+            self.assertIn('projected', resp.json()['error'].lower())
+            self.assertTrue(
+                DistributorPO.objects.filter(pk=po.pk).exists(),
+                msg=f'PO with status={bad_status} should NOT be deleted',
+            )
+            po.delete()
 
 
 # ---------------------------------------------------------------------------
@@ -1575,3 +1603,150 @@ class DistributorPOMoveTest(TestCase):
         self.assertEqual([m['pk'] for m in month], [p1.pk, p2.pk])
         self.assertEqual([m['position'] for m in month], [1, 2])
         self.assertTrue(all('label' in m for m in month))
+
+
+# ---------------------------------------------------------------------------
+# Distributor area tweaks — tab scoping, header button, search/column removal,
+# create redirect, forecast dropdown default + empty state, active-only dropdowns
+# ---------------------------------------------------------------------------
+
+class DistributorAreaTweaksTest(TestCase):
+
+    def setUp(self):
+        self.company = _make_company('Tweaks Co')
+        self.admin = _make_inventory_user(self.company, 'tweaks_admin')
+        self.dist = _make_distributor(self.company, 'Active Dist')
+        self.brand = _make_brand(self.company)
+        self.item = _make_item(self.brand, name='UniqueItemName', item_code='UNIQCODE')
+        self.client = Client()
+        self.client.login(username='tweaks_admin', password='testpass123')
+        self.url = reverse('distributor_list')
+
+    # --- PART 0: Filters button + PO listing strictly on the POs tab ---
+
+    def test_filter_button_only_on_distributor_pos_tab(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        # Present on the POs tab
+        resp = self.client.get(self.url + '?tab=distributor_pos')
+        self.assertContains(resp, 'data-bs-target="#posFilterModal"')
+        # Absent on every other tab
+        for tab in ('distributors', 'inventory', 'forecast'):
+            resp = self.client.get(self.url + f'?tab={tab}')
+            self.assertNotContains(
+                resp, 'data-bs-target="#posFilterModal"',
+                msg_prefix=f'Filters button leaked onto {tab} tab',
+            )
+
+    def test_po_listing_only_on_distributor_pos_tab(self):
+        _make_po(self.dist, 2026, 5, status='projected')
+        # The PO listing table (po-table) only on the POs tab
+        resp = self.client.get(self.url + '?tab=distributor_pos')
+        self.assertContains(resp, 'po-table')
+        for tab in ('distributors', 'inventory', 'forecast'):
+            resp = self.client.get(self.url + f'?tab={tab}')
+            self.assertNotContains(
+                resp, 'po-table',
+                msg_prefix=f'PO listing leaked onto {tab} tab',
+            )
+
+    # --- PART 1: Add Distributor button in header, scoped to Distributors tab ---
+
+    def test_add_distributor_button_in_header(self):
+        # Present on the Distributors tab (in the page header)
+        resp = self.client.get(self.url + '?tab=distributors')
+        self.assertContains(resp, 'Add Distributor')
+        # Not present on other tabs (proves header scoping to the Distributors tab)
+        for tab in ('inventory', 'forecast', 'distributor_pos'):
+            resp = self.client.get(self.url + f'?tab={tab}')
+            self.assertNotContains(
+                resp, 'Add Distributor',
+                msg_prefix=f'Add Distributor button leaked onto {tab} tab',
+            )
+
+    # --- PART 2: Search box removed ---
+
+    def test_distributors_search_removed(self):
+        resp = self.client.get(self.url + '?tab=distributors')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'name="q"')
+        self.assertNotContains(resp, 'Distributor name…')
+
+    # --- PART 3: PO delete UI disabled note (backend covered in DistributorPODeleteTest) ---
+
+    def test_po_delete_note_present_for_non_projected_js(self):
+        # The modal JS renders the "Only projected POs can be deleted." note for
+        # non-projected POs. Assert the string is present in the page script.
+        _make_po(self.dist, 2026, 5, status='projected')
+        resp = self.client.get(self.url + '?tab=distributor_pos')
+        self.assertContains(resp, 'Only projected POs can be deleted.')
+
+    # --- PART 5: Inventory tab — Item name column removed (item code remains) ---
+
+    def test_inventory_tab_no_item_name_column(self):
+        _make_snapshot(self.dist, self.item, 2026, 5)
+        resp = self.client.get(self.url + '?tab=inventory')
+        self.assertEqual(resp.status_code, 200)
+        # Item code column remains; the name column (and its sort link) is gone.
+        self.assertContains(resp, 'UNIQCODE')
+        self.assertNotContains(resp, 'sort=item&')
+        self.assertNotContains(resp, 'UniqueItemName')
+
+    # --- PART 6: Distributor create redirects to the listing ---
+
+    def test_distributor_create_redirects_to_list(self):
+        resp = self.client.post(
+            reverse('distributor_create'),
+            {'name': 'Brand New Dist'},
+        )
+        self.assertRedirects(resp, reverse('distributor_list'))
+        self.assertTrue(
+            Distributor.objects.filter(company=self.company, name='Brand New Dist').exists()
+        )
+
+    # --- PART 4: Forecast dropdown defaults to "Select a distributor" + empty state ---
+
+    def test_forecast_dropdown_defaults_to_no_selection(self):
+        _make_snapshot(self.dist, self.item, 2026, 1)
+        resp = self.client.get(self.url + '?tab=forecast')
+        self.assertEqual(resp.status_code, 200)
+        # No distributor auto-selected; forecast not computed.
+        self.assertIsNone(resp.context['forecast_distributor'])
+        self.assertIsNone(resp.context['forecast_result'])
+        # The default prompt option is present.
+        self.assertContains(resp, 'Select a distributor')
+
+    def test_forecast_empty_state_when_no_distributor(self):
+        resp = self.client.get(self.url + '?tab=forecast')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Select a distributor to view the forecast.')
+
+    # --- PART 7: Active-only distributor dropdowns ---
+
+    def test_forecast_dropdown_active_only(self):
+        inactive = _make_distributor(self.company, 'Inactive Dist')
+        inactive.is_active = False
+        inactive.save(update_fields=['is_active'])
+        resp = self.client.get(self.url + '?tab=forecast')
+        self.assertEqual(resp.status_code, 200)
+        avail = list(resp.context['available_distributors'])
+        self.assertIn(self.dist, avail)
+        self.assertNotIn(inactive, avail)
+
+    def test_group_forecast_dropdown_active_only(self):
+        # Audit: the group forecast page uses the same "Forecast for" dropdown.
+        member = _make_distributor(self.company, 'Member Dist')
+        group = DistributorGroup.objects.create(
+            company=self.company, name='Test Group', primary_distributor=member,
+        )
+        member.group = group
+        member.save(update_fields=['group'])
+        inactive = _make_distributor(self.company, 'Inactive Dist')
+        inactive.is_active = False
+        inactive.save(update_fields=['is_active'])
+        resp = self.client.get(
+            reverse('distributor_group_forecast', kwargs={'group_pk': group.pk})
+        )
+        self.assertEqual(resp.status_code, 200)
+        avail = list(resp.context['available_distributors'])
+        self.assertNotIn(inactive, avail)
+        self.assertIn(member, avail)
