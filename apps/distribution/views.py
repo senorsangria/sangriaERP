@@ -1518,6 +1518,23 @@ def distributor_po_save(request, dist_pk):
         if valid_po_count != len(existing_po_ids):
             return JsonResponse({'error': 'Invalid PO IDs'}, status=400)
 
+    # Guard the save-path deletion: emptying an existing PO's lines deletes it
+    # below. Only projected POs may be deleted (matches distributor_po_delete).
+    # Eligibility is based on the PO's PERSISTED status, not the unsaved dropdown
+    # value. Reject the whole save (atomic) if any to-be-deleted PO isn't projected.
+    delete_po_ids = [
+        order_data.get('id')
+        for order_data in orders
+        if order_data.get('id') is not None
+        and not [l for l in order_data.get('lines', []) if float(l.get('quantity_cases', 0)) > 0]
+    ]
+    if delete_po_ids:
+        non_projected_exists = DistributorPO.objects.filter(
+            pk__in=delete_po_ids, distributor=distributor,
+        ).exclude(status=DistributorPO.Status.PROJECTED).exists()
+        if non_projected_exists:
+            return JsonResponse({'error': 'Only projected POs can be deleted.'}, status=400)
+
     # Atomic save
     try:
         with transaction.atomic():
@@ -1946,6 +1963,23 @@ def distributor_group_po_save(request, group_pk):
                 {'error': 'Invalid PO IDs — only primary distributor POs may be edited from the group view'},
                 status=400,
             )
+
+    # Guard the save-path deletion: emptying an existing PO's lines deletes it
+    # below. Only projected POs may be deleted (matches distributor_po_delete).
+    # Eligibility is based on the PO's PERSISTED status, not the unsaved dropdown
+    # value. Reject the whole save (atomic) if any to-be-deleted PO isn't projected.
+    delete_po_ids = [
+        order_data.get('id')
+        for order_data in orders
+        if order_data.get('id') is not None
+        and not [l for l in order_data.get('lines', []) if float(l.get('quantity_cases', 0)) > 0]
+    ]
+    if delete_po_ids:
+        non_projected_exists = DistributorPO.objects.filter(
+            pk__in=delete_po_ids, distributor=primary,
+        ).exclude(status=DistributorPO.Status.PROJECTED).exists()
+        if non_projected_exists:
+            return JsonResponse({'error': 'Only projected POs can be deleted.'}, status=400)
 
     # Atomic save
     try:

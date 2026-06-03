@@ -302,6 +302,62 @@ class DistributorPOSaveTest(TestCase):
         self.assertTrue(resp.json()['ok'])
         self.assertFalse(DistributorPO.objects.filter(pk=po.pk).exists())
 
+    # Save-path deletion is restricted to projected POs (matches the delete
+    # endpoint). Eligibility is based on the PERSISTED status, not the submitted
+    # dropdown value. Rejection is whole-save (atomic).
+    def test_save_path_delete_allowed_when_projected(self):
+        po = _make_po(self.dist, 2026, 6, status='projected')
+        _make_po_line(po, self.item, 24)
+        payload = self._payload(orders=[{
+            'id': po.pk, 'status': 'projected', 'external_po_number': '', 'notes': '',
+            'lines': [{'item_id': self.item.pk, 'quantity_cases': 0}],
+        }])
+        resp = self._post(payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        self.assertFalse(DistributorPO.objects.filter(pk=po.pk).exists())
+
+    def test_save_path_delete_rejected_when_not_projected(self):
+        for bad_status in ('actual', 'submitted', 'in_transit', 'delivered',
+                           'invoiced', 'cancelled'):
+            po = _make_po(self.dist, 2026, 6, status=bad_status,
+                          ext_po='PO-1' if bad_status != 'cancelled' else '')
+            _make_po_line(po, self.item, 24)
+            # Submit status='projected' (the unsaved dropdown) with emptied lines —
+            # the guard must still reject because the PERSISTED status isn't projected.
+            payload = self._payload(orders=[{
+                'id': po.pk, 'status': 'projected', 'external_po_number': '', 'notes': '',
+                'lines': [{'item_id': self.item.pk, 'quantity_cases': 0}],
+            }])
+            resp = self._post(payload)
+            self.assertEqual(resp.status_code, 400, msg=f'status={bad_status}')
+            self.assertIn('projected', resp.json()['error'].lower())
+            self.assertTrue(
+                DistributorPO.objects.filter(pk=po.pk).exists(),
+                msg=f'PO with status={bad_status} should NOT be deleted via save path',
+            )
+            po.delete()
+
+    def test_save_path_delete_rejection_is_whole_save_atomic(self):
+        # A non-projected PO being emptied in the same batch as a valid new PO
+        # rejects the ENTIRE save — the new PO is not created either.
+        bad_po = _make_po(self.dist, 2026, 6, status='actual', ext_po='PO-9')
+        _make_po_line(bad_po, self.item, 24)
+        payload = self._payload(orders=[
+            {'id': bad_po.pk, 'status': 'actual', 'external_po_number': 'PO-9',
+             'notes': '', 'lines': [{'item_id': self.item.pk, 'quantity_cases': 0}]},
+            {'id': None, 'status': 'projected', 'external_po_number': '', 'notes': '',
+             'lines': [{'item_id': self.item.pk, 'quantity_cases': 12}]},
+        ])
+        resp = self._post(payload)
+        self.assertEqual(resp.status_code, 400)
+        # bad PO untouched, and the new PO was NOT created (atomic rejection).
+        self.assertTrue(DistributorPO.objects.filter(pk=bad_po.pk).exists())
+        self.assertEqual(
+            DistributorPO.objects.filter(distributor=self.dist, year=2026, month=6).count(),
+            1,
+        )
+
     # 15. Skips new PO when all lines are zero (no error, no creation)
     def test_save_skips_new_po_with_all_zero_lines(self):
         payload = self._payload(orders=[{
