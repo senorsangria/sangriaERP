@@ -245,9 +245,15 @@ class DashboardSearchTest(TestCase):
         self.user.roles.add(Role.objects.get(codename='supplier_admin'))
         self.client.login(username='searchtestadmin', password='password')
 
+        from apps.distribution.models import Distributor
+        distributor, _ = Distributor.objects.get_or_create(
+            company=self.company, name='Default Test Dist',
+        )
+
         def acct(name, city, state):
             return Account.objects.create(
                 company=self.company,
+                distributor=distributor,
                 name=name,
                 city=city,
                 state=state,

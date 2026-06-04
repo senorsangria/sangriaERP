@@ -51,9 +51,7 @@ class Account(TimeStampedModel):
     )
     distributor = models.ForeignKey(
         'distribution.Distributor',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
+        on_delete=models.PROTECT,
         related_name='accounts',
         help_text='The distributor that services this account.',
     )

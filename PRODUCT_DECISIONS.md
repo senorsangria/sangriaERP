@@ -5,6 +5,11 @@ and design note is recorded here. This file should be updated as new
 decisions are made. It serves as the source of truth for anyone working
 on this project including AI coding assistants.
 
+> **Deferred structural / tech-debt items** live in
+> [`REFACTORING_BACKLOG.md`](REFACTORING_BACKLOG.md) — improvements we've
+> consciously identified but not yet scheduled. Check there for known schema
+> trade-offs before planning foundational changes.
+
 ---
 
 ## Company & Brand Context
@@ -86,6 +91,20 @@ on this project including AI coding assistants.
 - Accounts represent physical retail locations
 - A Distributor services an Account — the Account is not owned
   by the Distributor
+- **`Account.distributor` is required (non-null) with `on_delete=PROTECT`.**
+  Every account must name a distributor, and a distributor cannot be deleted
+  while it still has accounts. This brings `Account` into line with every other
+  FK to `Distributor` (`ImportBatch`, `Route`, `UserCoverageArea`,
+  `InventorySnapshot`, `PurchaseOrder`, `DistributorItemProfile`,
+  `DistributorGroup`), all of which already use PROTECT. Previously this FK was
+  the lone exception (`null=True`, `SET_NULL`).
+  - Account import rejects rows with a blank distributor cell with a friendly
+    validation error on upload (no account is created), so the constraint never
+    surfaces as an `IntegrityError`.
+  - **Production deploy gate:** before the migration making this column
+    non-null is deployed to production, production must be confirmed to have
+    **zero** null-distributor accounts. Dev was audited clean (0 nulls) so the
+    migration there is a simple `AlterField` with no data migration.
 - Accounts have a nullable FK to MasterAccount for future
   deduplication logic
 - Account attributes: distributor, county, city,
@@ -236,9 +255,43 @@ rows for multiple distributors in a single file.
   aborted before any data is written; the error message lists all unknown names
 
 **Sales import specifics**
-- Duplicate detection is per `(distributor, date)` pair, not just per
-  distributor — importing the same distributor+date combination twice is
-  blocked, but the same date for a different distributor is allowed
+- **Replace-on-import (month grain).** Importing a month that already has data no
+  longer hard-stops. Instead the flow is **detect → preview → confirm → delete-and-replace**:
+  - *Detect (upload):* overlap is computed per `(distributor, year, month)` via
+    `account__distributor` — which incoming distributor-months already have sales
+    data. The same month for a different distributor (no existing data) is not an
+    overlap. The overlap set is carried into the preview; nothing aborts.
+  - *Preview:* when overlap exists, a distinct "Existing data to be replaced"
+    section shows a table (distributor × month, with record count and
+    accounts-impacted count) plus grand totals, and the user must type `DELETE`
+    (exact, uppercase) to enable the confirm button. **Enforced server-side**, not
+    just in JS — a confirm POST with overlap and the wrong/absent `confirm_text` is
+    rejected and the preview re-rendered with an error. A no-overlap import needs no
+    typed confirmation and proceeds as before.
+  - *Execute (atomic):* inside the single existing `transaction.atomic()`, and
+    BEFORE importing — capture the affected `ImportBatch` ids, append **one** audit
+    note line per affected batch listing all of that batch's replaced months (e.g.
+    `"Jan 2026, Mar 2026 data deleted and replaced by import on 2026-06-04 by <user>."`,
+    appended never overwritten), then **hard-delete the entire overlapping month(s)**
+    (all days) per distributor — only `SalesRecord` rows; accounts and
+    non-overlapping sales are preserved — then run the normal import. If anything
+    fails, the whole thing (notes + delete + import) rolls back; nothing is partially
+    applied. Cancelling / not confirming imports nothing.
+  - *Month grain:* an overlapping month is deleted **in full** and replaced, not
+    just the colliding dates.
+  - *No batch-stat recompute:* the old batch keeps its original `records_imported`
+    and `date_range`; the audit note is the whole record of what changed. Per-month
+    batches remain deferred (see `REFACTORING_BACKLOG.md`).
+  - Relies on `Account.distributor` being non-null + PROTECT, so the
+    `account__distributor` overlap/delete path can't be null (no null guard needed).
+  - *Audit note is surfaced in the UI:* the appended `ImportBatch.notes` shows as a
+    "Notes / Audit history" card on the **batch detail** page (multi-line, one line
+    per replace event; hidden when empty), and the **Import History list** shows a
+    "Notes" indicator on batches that carry notes. Because the note lands on the
+    *older* replaced batch (which sorts below the newer replacement batch), the list
+    indicator is what makes it discoverable. The deeper awkwardness — two batches per
+    replaced month (stale old + fresh new) — remains the deferred
+    per-`(distributor, month)` batch item in `REFACTORING_BACKLOG.md`.
 - Unknown item codes (Item Name ID values not present in ItemMapping) trigger
   a redirect to `/imports/resolve-mappings/` with `next_url` pointing back to
   the sales upload page; after saving mappings the user re-uploads the CSV
@@ -4595,3 +4648,23 @@ Ad-hoc planning tool to gauge whether current on-hand stock covers a selected se
 - **Current Inventory modal** groups items under brand headers via `{% regroup all_items_for_inventory by brand.name %}` — the brand name shows once as an uppercase header, with item rows beneath showing only the item name (no repeated `Brand — Item` label).
 - **"(N POs selected)"** moved to the brand-name header row (Row 1), spanning the PO Month + Dist columns. The `#selected-po-count` span ID moves with it (still updated live by `updateSelectedCountLabel`); exactly one element carries that ID.
 - **Projection row labels** (Current Inventory, Projected Ending Inventory) are right-aligned (`text-end`) within their `colspan="2"` label cells. The per-item value cells (`.inventory-cell`, `.projected-cell`) keep `text-center` — only the labels changed.
+
+### Production Page Tweaks
+
+- **Tab order:** Inventory, Forecast, Production POs, Production Cases (left to right). The nav `<li>` items in `production_home.html` are ordered to match; the tab content panes are keyed by id, so only nav order affects display.
+- **Default tab:** Inventory (the new leftmost). Previously the default was Forecast. `production_home` reads `request.GET.get('tab', 'inventory')` and falls back to `'inventory'` for invalid values.
+- **Production Forecast item sort:** within each co-packer group, items are sorted by `Item.sort_order`, then `name` as a tiebreaker (was previously `name` only). The co-packer group order itself is unchanged (alphabetical, with "No co-packer" last).
+- **Removed the "Production planning for [company]" subtitle** under the Production page header (matches the Distributors page cleanup; saves vertical space). The "Production" `<h1>` remains.
+
+### Distributor Area Tweaks
+
+- **Tab-switching mechanism — all server-reload.** The distributor page (`distributor_list.html`) tabs (Distributors, Inventory, Forecast, Distributor POs) are now uniformly `<a href="?tab=…">` server-reload links. Previously it was a hybrid: Distributors/Inventory/Forecast were client-side Bootstrap toggles (`data-bs-toggle="tab"`, all panes in the DOM, CSS show/hide) while Distributor POs was already a server-reload `<a>`. That hybrid caused a **leak**: the POs content is computed on-demand server-side and rendered directly into `.tab-content` *without* a `.tab-pane` wrapper, and the Filters button lives in the shared page header gated by server-side `active_tab`. After loading `?tab=distributor_pos`, switching to another tab via Bootstrap (no reload) showed the new pane but could not hide the wrapper-less POs content, and left the server-rendered Filters button stranded — both appeared on the wrong tab. Making every tab a server reload means `active_tab` is re-evaluated on every load, exactly one tab's content + tab-specific header controls render, and there is no client-side switching to strand anything. (Same bug class as the earlier "Production Cases ghost pane.")
+- **Tab-specific header controls** (Add Distributor / Filters) live in the page header gated by `active_tab` (`{% if active_tab == 'distributors' %}` → Add Distributor; `{% elif active_tab == 'distributor_pos' %}` → Filters). Safe now that tabs are server-reload.
+- **Add Distributor button** moved to the page header (top-right, next to the `<h1>`), scoped to the Distributors tab. Removed from inside the Distributors pane.
+- **Removed the distributor search box** from the Distributors tab (the list is short; always renders the grouped view). The `?q=` view-side handling and the flat (search-results) list branch were removed.
+- **PO delete restricted to projected status.** In the PO edit modal, the Delete Order button only renders/works when the PO's status is `projected`; for any other status it shows **disabled** with the note "Only projected POs can be deleted." Enforced on the backend: `distributor_po_delete` returns HTTP 400 if `po.status != PROJECTED`. **Rule: eligibility is based on the PO's SAVED (DB) status, not the modal's unsaved dropdown selection** — the endpoints read the persisted PO.
+  - **Save-path deletion is guarded too.** Emptying a PO's line items in the edit modal and saving deletes it via `distributor_po_save` (and `distributor_group_po_save`). That back-door is now closed: both save paths reject deleting a non-projected PO. Implemented as a **pre-write check that rejects the whole save (atomic, HTTP 400, "Only projected POs can be deleted.")** if any to-be-deleted PO (existing id + emptied lines) has a persisted status other than `projected` — consistent with the atomic save pattern and the delete endpoint. Only projected POs can be deleted by **any** path.
+- **Forecast distributor dropdown defaults to "Select a distributor."** No auto-selection of the first distributor. The forecast is computed only when a distributor is explicitly chosen via `?forecast_distributor=`; otherwise a friendly empty state ("Select a distributor to view the forecast.") is shown. The shared PO modal (`#poModal`) is rendered when a forecast distributor is selected **or** on the Distributor POs tab (the POs tab overrides its save/delete/suggest URLs per-row), so it exists in the DOM on the POs tab even with no forecast distributor.
+- **Inventory tab: removed the Item *name* column** (the Item Code column already identifies the item). Header, sort link, and per-row cell removed.
+- **Distributor create redirects to the listing** (`distributor_list`) instead of the detail page. Edit was already redirecting to the listing — left unchanged.
+- **Active-only distributor dropdowns (audit).** Distributor *selection* dropdowns list active distributors only. Fixed: Forecast tab dropdown and the group-forecast page dropdown (`available_distributors` → `is_active=True`). Already active-only (verified, unchanged): `DistributorGroupForm` members + primary, `get_distributors_for_user` (reports), user-edit coverage areas, accounts filter. Left as-is (historical-data **filters** that legitimately include now-inactive distributors with past records): Inventory-tab distributor filter (distributors-with-snapshots), Distributor POs filter (distributors-with-POs), Events distributor filter (distributors-with-events). The Distributors management *list* itself still shows inactive distributors (with status badges) by design.

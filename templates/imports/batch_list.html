@@ -68,7 +68,15 @@
         {% for batch in batches %}
         <tr>
           <td>{{ batch.import_date }}</td>
-          <td>{{ batch.distributor.name }}</td>
+          <td>
+            {{ batch.distributor.name }}
+            {% if batch.notes %}
+            <span class="badge bg-warning text-dark ms-1"
+                  title="This batch has audit notes — data was modified by a later import.">
+              <i class="bi bi-journal-text me-1"></i>Notes
+            </span>
+            {% endif %}
+          </td>
           <td class="text-nowrap small">
             {% if batch.date_range_start and batch.date_range_end %}
             {{ batch.date_range_start }} → {{ batch.date_range_end }}
@@ -144,7 +152,7 @@
           {% for cell in row.months %}
           <td class="text-center">
             {% for batch in cell %}
-            <a href="{% url 'batch_detail' batch.pk %}">{{ batch.records_imported }}</a>{% if not forloop.last %}<br>{% endif %}
+            <a href="{% url 'batch_detail' batch.pk %}">{{ batch.records_imported }}</a>{% if batch.notes %} <i class="bi bi-journal-text text-warning" title="This batch has audit notes — data was modified by a later import."></i>{% endif %}{% if not forloop.last %}<br>{% endif %}
             {% empty %}{% endfor %}
           </td>
           {% endfor %}

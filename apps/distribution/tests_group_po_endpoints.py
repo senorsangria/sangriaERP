@@ -190,6 +190,34 @@ class GroupPOSaveTest(TestCase):
         po.refresh_from_db()
         self.assertEqual(float(po.lines.first().quantity_cases), 48.0)
 
+    # 8b. Save-path deletion (emptying lines) is allowed for projected primary POs
+    def test_group_save_path_delete_allowed_when_projected(self):
+        po = _make_po(self.primary, 2026, 6, status='projected')
+        _make_po_line(po, self.item, 24)
+        payload = self._payload(orders=[{
+            'id': po.pk, 'status': 'projected', 'external_po_number': '', 'notes': '',
+            'lines': [{'item_id': self.item.pk, 'quantity_cases': 0}],
+        }])
+        resp = self._post(payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        self.assertFalse(DistributorPO.objects.filter(pk=po.pk).exists())
+
+    # 8c. Save-path deletion is rejected for non-projected primary POs (persisted
+    #     status drives eligibility; the group path only accepts submitted
+    #     'projected'/'actual', so 'actual' is the representative non-projected case)
+    def test_group_save_path_delete_rejected_when_not_projected(self):
+        po = _make_po(self.primary, 2026, 6, status='actual', ext_po='PO-7')
+        _make_po_line(po, self.item, 24)
+        payload = self._payload(orders=[{
+            'id': po.pk, 'status': 'projected', 'external_po_number': '', 'notes': '',
+            'lines': [{'item_id': self.item.pk, 'quantity_cases': 0}],
+        }])
+        resp = self._post(payload)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('projected', resp.json()['error'].lower())
+        self.assertTrue(DistributorPO.objects.filter(pk=po.pk).exists())
+
     # 9. Submitting a non-primary PO's ID is rejected with 400
     def test_group_po_save_rejects_non_primary_po_id(self):
         other_po = _make_po(self.other, 2026, 6)

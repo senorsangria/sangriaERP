@@ -25,7 +25,16 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h1 class="h3 mb-0 fw-bold">Distributors</h1>
-  {% if active_tab == 'distributor_pos' %}
+  {% comment %}
+    Tab-specific header controls. Tabs are server-reload links (see nav below),
+    so active_tab is always re-evaluated on load and these never leak onto
+    another tab.
+  {% endcomment %}
+  {% if active_tab == 'distributors' %}
+  <a href="{% url 'distributor_create' %}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-lg me-1"></i>Add Distributor
+  </a>
+  {% elif active_tab == 'distributor_pos' %}
   <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#posFilterModal">
     <i class="bi bi-funnel"></i> Filters
     <span class="badge bg-warning text-dark ms-1 {% if not pos_filters_active %}d-none{% endif %}">{{ pos_active_filter_count }}</span>
@@ -33,45 +42,40 @@
   {% endif %}
 </div>
 
-<!-- Tab nav -->
+<!-- Tab nav — all tabs are server-reload links (?tab=…). The Distributor POs
+     content is computed on demand server-side and rendered without a Bootstrap
+     tab-pane wrapper, so client-side Bootstrap tab switching would leave it (and
+     the tab-specific header controls) stranded on other tabs. Server-reload for
+     every tab keeps exactly one tab's content + controls rendered per load. -->
 <ul class="nav nav-tabs mb-4" id="distributorListTabs" role="tablist">
   <li class="nav-item" role="presentation">
-    <button class="nav-link {% if active_tab == 'distributors' %}active{% endif %}"
-            id="tab-distributors"
-            data-bs-toggle="tab"
-            data-bs-target="#pane-distributors"
-            type="button" role="tab"
-            aria-controls="pane-distributors"
-            aria-selected="{% if active_tab == 'distributors' %}true{% else %}false{% endif %}">
+    <a class="nav-link {% if active_tab == 'distributors' %}active{% endif %}"
+       id="tab-distributors" href="?tab=distributors" role="tab"
+       aria-selected="{% if active_tab == 'distributors' %}true{% else %}false{% endif %}">
       Distributors
-    </button>
+    </a>
   </li>
   {% if can_manage_inventory %}
   <li class="nav-item" role="presentation">
-    <button class="nav-link {% if active_tab == 'inventory' %}active{% endif %}"
-            id="tab-inventory"
-            data-bs-toggle="tab"
-            data-bs-target="#pane-inventory"
-            type="button" role="tab"
-            aria-controls="pane-inventory"
-            aria-selected="{% if active_tab == 'inventory' %}true{% else %}false{% endif %}">
+    <a class="nav-link {% if active_tab == 'inventory' %}active{% endif %}"
+       id="tab-inventory" href="?tab=inventory" role="tab"
+       aria-selected="{% if active_tab == 'inventory' %}true{% else %}false{% endif %}">
       Inventory
-    </button>
+    </a>
   </li>
   <li class="nav-item" role="presentation">
-    <button class="nav-link {% if active_tab == 'forecast' %}active{% endif %}"
-            id="tab-forecast"
-            data-bs-toggle="tab"
-            data-bs-target="#pane-forecast"
-            type="button" role="tab"
-            aria-controls="pane-forecast"
-            aria-selected="{% if active_tab == 'forecast' %}true{% else %}false{% endif %}">
+    <a class="nav-link {% if active_tab == 'forecast' %}active{% endif %}"
+       id="tab-forecast" href="?tab=forecast" role="tab"
+       aria-selected="{% if active_tab == 'forecast' %}true{% else %}false{% endif %}">
       Forecast
-    </button>
+    </a>
   </li>
   <li class="nav-item" role="presentation">
     <a class="nav-link {% if active_tab == 'distributor_pos' %}active{% endif %}"
-       href="?tab=distributor_pos">Distributor POs</a>
+       id="tab-distributor-pos" href="?tab=distributor_pos" role="tab"
+       aria-selected="{% if active_tab == 'distributor_pos' %}true{% else %}false{% endif %}">
+      Distributor POs
+    </a>
   </li>
   {% endif %}
 </ul>
@@ -84,41 +88,7 @@
        role="tabpanel"
        aria-labelledby="tab-distributors">
 
-    <div class="d-flex justify-content-end mb-3">
-      <a href="{% url 'distributor_create' %}" class="btn btn-primary btn-sm">
-        <i class="bi bi-plus-lg me-1"></i>Add Distributor
-      </a>
-    </div>
-
-    <!-- Search bar -->
-    <div class="card border-0 shadow-sm mb-4">
-      <div class="card-body py-3">
-        <form method="get" class="row g-2 align-items-end">
-          <input type="hidden" name="tab" value="distributors">
-          <div class="col-12 col-sm">
-            <label class="form-label small text-muted mb-1">Search</label>
-            <div class="input-group input-group-sm">
-              <span class="input-group-text"><i class="bi bi-search"></i></span>
-              <input
-                type="text"
-                name="q"
-                class="form-control"
-                placeholder="Distributor name…"
-                value="{{ search }}"
-              >
-            </div>
-          </div>
-          <div class="col-12 col-sm-auto">
-            <button type="submit" class="btn btn-outline-primary btn-sm w-100 w-sm-auto">Search</button>
-            {% if search %}
-            <a href="{% url 'distributor_list' %}?tab=distributors" class="btn btn-outline-secondary btn-sm ms-1">Clear</a>
-            {% endif %}
-          </div>
-        </form>
-      </div>
-    </div>
-
-    {% if total_count or search %}
+    {% if total_count %}
     <div class="card border-0 shadow-sm">
       <div class="table-responsive">
         <table class="table table-hover mb-0 align-middle">
@@ -269,68 +239,6 @@
                 </tr>
                 {% endfor %}
               {% endif %}
-
-            {% else %}
-              <!-- Flat list (search results) -->
-              {% for dist in distributors_flat %}
-              <tr>
-                <td>
-                  <div class="fw-medium">
-                    <a href="{% url 'distributor_detail' dist.pk %}" class="text-decoration-none text-dark">
-                      {{ dist.name }}
-                    </a>
-                  </div>
-                  <div class="d-md-none text-muted small">
-                    {% if dist.city or dist.state %}
-                    {{ dist.city }}{% if dist.city and dist.state %}, {% endif %}{{ dist.state }}
-                    {% endif %}
-                  </div>
-                  <div class="d-sm-none mt-1">
-                    {% if dist.is_active %}
-                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size:.7rem;">Active</span>
-                    {% else %}
-                    <span class="badge bg-secondary bg-opacity-10 text-secondary border" style="font-size:.7rem;">Inactive</span>
-                    {% endif %}
-                  </div>
-                </td>
-                <td class="d-none d-md-table-cell text-muted small">{{ dist.city|default:"—" }}</td>
-                <td class="d-none d-md-table-cell text-muted small">{{ dist.state|default:"—" }}</td>
-                <td class="d-none d-sm-table-cell text-center">
-                  {% if dist.is_active %}
-                  <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
-                  {% else %}
-                  <span class="badge bg-secondary bg-opacity-10 text-secondary border">Inactive</span>
-                  {% endif %}
-                </td>
-                <td class="text-end">
-                  <div class="d-flex gap-1 justify-content-end flex-wrap">
-                    <a href="{% url 'distributor_detail' dist.pk %}" class="btn btn-outline-secondary btn-sm">
-                      <i class="bi bi-eye d-sm-none"></i>
-                      <span class="d-none d-sm-inline">View</span>
-                    </a>
-                    <a href="{% url 'distributor_edit' dist.pk %}?next={{ request.path|urlencode }}" class="btn btn-outline-secondary btn-sm">
-                      <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
-                    </a>
-                    <form method="post" action="{% url 'distributor_toggle' dist.pk %}" class="d-inline">
-                      {% csrf_token %}
-                      {% if dist.is_active %}
-                      <button type="submit" class="btn btn-outline-danger btn-sm"
-                        onclick="return confirm('Deactivate {{ dist.name|escapejs }}?')">
-                        <i class="bi bi-dash-circle d-sm-none"></i>
-                        <span class="d-none d-sm-inline">Deactivate</span>
-                      </button>
-                      {% else %}
-                      <button type="submit" class="btn btn-outline-success btn-sm"
-                        onclick="return confirm('Reactivate {{ dist.name|escapejs }}?')">
-                        <i class="bi bi-check-circle d-sm-none"></i>
-                        <span class="d-none d-sm-inline">Reactivate</span>
-                      </button>
-                      {% endif %}
-                    </form>
-                  </div>
-                </td>
-              </tr>
-              {% endfor %}
             {% endif %}
           </tbody>
         </table>
@@ -342,21 +250,11 @@
     <div class="card border-0 shadow-sm">
       <div class="card-body text-center py-5">
         <i class="bi bi-truck fs-1 text-muted d-block mb-3"></i>
-        <h5 class="fw-semibold">
-          {% if search %}No distributors match "{{ search }}"{% else %}No distributors yet{% endif %}
-        </h5>
-        <p class="text-muted mb-3">
-          {% if search %}
-            Try a different search term.
-          {% else %}
-            Add your first distribution partner to get started.
-          {% endif %}
-        </p>
-        {% if not search %}
+        <h5 class="fw-semibold">No distributors yet</h5>
+        <p class="text-muted mb-3">Add your first distribution partner to get started.</p>
         <a href="{% url 'distributor_create' %}" class="btn btn-primary">
           <i class="bi bi-plus-lg me-1"></i>Add Distributor
         </a>
-        {% endif %}
       </div>
     </div>
     {% endif %}
@@ -472,12 +370,6 @@
                   </a>
                 </th>
                 <th>
-                  <a href="?tab=inventory&sort=item&inv_distributor={{ inv_distributor_filter }}&inv_brand={{ inv_brand_filter }}&inv_period={{ inv_period_filter }}"
-                     class="text-decoration-none text-dark {% if inventory_sort == 'item' %}fw-bold{% endif %}">
-                    Item
-                  </a>
-                </th>
-                <th>
                   <a href="?tab=inventory&sort=item_code&inv_distributor={{ inv_distributor_filter }}&inv_brand={{ inv_brand_filter }}&inv_period={{ inv_period_filter }}"
                      class="text-decoration-none text-dark {% if inventory_sort == 'item_code' %}fw-bold{% endif %}">
                     Item Code
@@ -506,7 +398,6 @@
                 </td>
                 <td class="small">{{ row.distributor_name }}</td>
                 <td class="small text-muted">{{ row.brand_name }}</td>
-                <td class="small">{{ row.item_name }}</td>
                 <td><code class="small">{{ row.item_code }}</code></td>
                 <td class="text-end fw-medium">{{ row.quantity_display }}</td>
                 <td class="small">{{ row.period_display }}</td>
@@ -569,6 +460,7 @@
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h4 class="mb-0 fw-semibold">Forecast for</h4>
       <select id="forecast-distributor-select" class="form-select form-select-sm" style="max-width:340px;">
+        <option value="" {% if not forecast_distributor %}selected{% endif %}>Select a distributor…</option>
         <optgroup label="Distributors">
           {% for dist in available_distributors %}
           <option value="dist-{{ dist.pk }}"
@@ -597,7 +489,15 @@
     </div>
     {% endif %}
 
-    {% if forecast_result %}
+    {% if not forecast_distributor %}
+    <!-- No distributor selected — friendly empty state -->
+    <div class="card border-0 shadow-sm" id="forecast-empty-state">
+      <div class="card-body text-center py-5 text-muted">
+        <i class="bi bi-arrow-up-circle fs-1 d-block mb-3"></i>
+        <p class="mb-0">Select a distributor to view the forecast.</p>
+      </div>
+    </div>
+    {% elif forecast_result %}
       {% if forecast_result.message %}
       <!-- No snapshots for selected distributor -->
       <div class="card border-0 shadow-sm">
@@ -724,13 +624,19 @@
 
   </div>
 
-  <!-- PO Modal (Phase 4-step-2b) -->
-  {% if forecast_distributor %}
+  <!-- PO Modal (Phase 4-step-2b) —
+       Rendered for the Forecast tab (uses the selected distributor's URLs as
+       defaults) and for the Distributor POs tab (which overrides save/delete/
+       suggest URLs per-row via window.openDistributorPoModal), so the modal
+       element must exist there even when no forecast distributor is selected. -->
+  {% if forecast_distributor or active_tab == 'distributor_pos' %}
   <div class="modal fade" id="poModal" tabindex="-1"
        aria-labelledby="poModalLabel" aria-hidden="true"
+       {% if forecast_distributor %}
        data-save-url="{% url 'distributor_po_save' dist_pk=forecast_distributor.pk %}"
        data-delete-url-base="/distributors/{{ forecast_distributor.pk }}/po/"
-       data-suggest-url-pattern="/distributors/{{ forecast_distributor.pk }}/po/YEAR/MONTH/suggest/">
+       data-suggest-url-pattern="/distributors/{{ forecast_distributor.pk }}/po/YEAR/MONTH/suggest/"
+       {% endif %}>
     <div class="modal-dialog modal-xl modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
@@ -1333,7 +1239,16 @@
       _statusChoices.forEach(function (sc) { if (sc[0] === savedPo.status) statusLabel = sc[1]; });
       var statusBg = savedPo.status === 'actual' ? 'success' : (savedPo.status === 'cancelled' ? 'danger' : (savedPo.status === 'invoiced' ? 'dark' : 'warning text-dark'));
       html += '<span class="badge bg-' + statusBg + '">' + (statusLabel || savedPo.status) + '</span></div>';
-      html += '<button type="button" class="btn btn-outline-danger btn-sm po-delete-btn">Delete Order</button>';
+      // Only projected POs may be deleted. For any other (saved) status, show the
+      // button DISABLED with an explanatory note. Enforced again on the backend.
+      if (savedPo.status === 'projected') {
+        html += '<button type="button" class="btn btn-outline-danger btn-sm po-delete-btn">Delete Order</button>';
+      } else {
+        html += '<div class="text-end">';
+        html += '<button type="button" class="btn btn-outline-danger btn-sm" disabled>Delete Order</button>';
+        html += '<div class="text-muted small mt-1">Only projected POs can be deleted.</div>';
+        html += '</div>';
+      }
     } else {
       var hint = suggestedOrder ? '<span class="badge bg-info text-dark">Algorithm suggestion</span>' : '<span class="text-muted small">New order</span>';
       html += hint;

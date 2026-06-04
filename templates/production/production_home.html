@@ -33,21 +33,11 @@
 <div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
   <div>
     <h1 class="h2 fw-bold mb-1">Production</h1>
-    <p class="text-muted mb-0">Production planning for {{ company.name }}</p>
   </div>
 </div>
 
 <!-- Tab nav -->
 <ul class="nav nav-tabs mb-4" id="productionTabs" role="tablist">
-  <li class="nav-item" role="presentation">
-    <button class="nav-link {% if active_tab == 'forecast' %}active{% endif %}"
-            id="tab-forecast" data-bs-toggle="tab" data-bs-target="#pane-forecast"
-            type="button" role="tab"
-            aria-controls="pane-forecast"
-            aria-selected="{% if active_tab == 'forecast' %}true{% else %}false{% endif %}">
-      Forecast
-    </button>
-  </li>
   <li class="nav-item" role="presentation">
     <button class="nav-link {% if active_tab == 'inventory' %}active{% endif %}"
             id="tab-inventory" data-bs-toggle="tab" data-bs-target="#pane-inventory"
@@ -55,6 +45,15 @@
             aria-controls="pane-inventory"
             aria-selected="{% if active_tab == 'inventory' %}true{% else %}false{% endif %}">
       Inventory
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'forecast' %}active{% endif %}"
+            id="tab-forecast" data-bs-toggle="tab" data-bs-target="#pane-forecast"
+            type="button" role="tab"
+            aria-controls="pane-forecast"
+            aria-selected="{% if active_tab == 'forecast' %}true{% else %}false{% endif %}">
+      Forecast
     </button>
   </li>
   <li class="nav-item" role="presentation">

@@ -348,11 +348,13 @@ class DistributorListGroupedViewTest(TestCase):
         self.assertIsNotNone(resp.context['grouped_data'])
         self.assertIsNotNone(resp.context['ungrouped_data'])
 
-    def test_distributor_list_shows_flat_view_when_searching(self):
+    def test_distributor_list_always_grouped_search_removed(self):
+        # The distributors search box was removed; the list is always the
+        # grouped view. A stray ?q= param is ignored (no flat view).
         resp = self.client.get(reverse('distributor_list') + '?q=Alpha')
         self.assertEqual(resp.status_code, 200)
-        self.assertFalse(resp.context['is_grouped_view'])
-        self.assertIsNotNone(resp.context['distributors_flat'])
+        self.assertTrue(resp.context['is_grouped_view'])
+        self.assertNotIn('distributors_flat', resp.context)
 
     def test_distributor_list_shows_primary_badge(self):
         resp = self.client.get(reverse('distributor_list'))
