@@ -9,6 +9,53 @@
   </div>
 </div>
 
+{% if replace_preview.has_overlap %}
+<div class="card border-danger mb-4">
+  <div class="card-header bg-danger text-white fw-semibold">
+    <i class="bi bi-exclamation-triangle-fill me-2"></i>Existing data to be replaced
+  </div>
+  <div class="card-body">
+    <p class="mb-3">
+      This import overlaps existing sales data. Confirming will
+      <strong>permanently delete</strong> the existing data for the
+      distributor-months below — the <strong>entire month</strong> (all days) —
+      and replace it with the data being imported.
+    </p>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-3">
+        <thead class="table-light">
+          <tr>
+            <th>Distributor</th>
+            <th>Month</th>
+            <th class="text-end">Records</th>
+            <th class="text-end">Accounts impacted</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for g in replace_preview.groups %}
+            {% for mo in g.months %}
+            <tr>
+              <td>{% if forloop.first %}{{ g.distributor }}{% endif %}</td>
+              <td>{{ mo.label }}</td>
+              <td class="text-end">{{ mo.record_count }}</td>
+              <td class="text-end">{{ mo.account_count }}</td>
+            </tr>
+            {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="fw-semibold text-danger mb-0">
+      {{ replace_preview.total_records }} record{{ replace_preview.total_records|pluralize }}
+      across {{ replace_preview.total_accounts }} account{{ replace_preview.total_accounts|pluralize }}
+      will be permanently deleted and replaced
+      ({{ replace_preview.combo_count }} distributor-month
+      combination{{ replace_preview.combo_count|pluralize }}).
+    </p>
+  </div>
+</div>
+{% endif %}
+
 <div class="row g-4">
 
   <!-- Summary card -->
@@ -92,14 +139,26 @@
           Once confirmed, the import runs in a single transaction. If anything
           fails, the entire import is rolled back — nothing will be partially saved.
         </p>
-        <form method="post" class="d-flex gap-2">
+        <form method="post">
           {% csrf_token %}
-          <button type="submit" name="action" value="confirm" class="btn btn-success">
-            <i class="bi bi-check-circle me-1"></i>Confirm Import
-          </button>
-          <button type="submit" name="action" value="cancel" class="btn btn-outline-danger">
-            <i class="bi bi-x-circle me-1"></i>Cancel
-          </button>
+          {% if replace_preview.has_overlap %}
+          <div class="mb-3">
+            <label for="confirmText" class="form-label small text-danger fw-semibold mb-1">
+              Type <code>DELETE</code> (uppercase) to confirm replacing the existing data above:
+            </label>
+            <input type="text" name="confirm_text" id="confirmText"
+                   class="form-control" autocomplete="off" placeholder="DELETE">
+          </div>
+          {% endif %}
+          <div class="d-flex gap-2">
+            <button type="submit" name="action" value="confirm" id="confirmBtn"
+                    class="btn btn-success"{% if replace_preview.has_overlap %} disabled{% endif %}>
+              <i class="bi bi-check-circle me-1"></i>{% if replace_preview.has_overlap %}Replace &amp; Import{% else %}Confirm Import{% endif %}
+            </button>
+            <button type="submit" name="action" value="cancel" class="btn btn-outline-danger">
+              <i class="bi bi-x-circle me-1"></i>Cancel
+            </button>
+          </div>
         </form>
       </div>
     </div>
@@ -150,4 +209,19 @@
   </div>
 
 </div>
+{% endblock %}
+
+{% block extra_js %}
+{% if replace_preview.has_overlap %}
+<script>
+(function () {
+  var input = document.getElementById('confirmText');
+  var btn = document.getElementById('confirmBtn');
+  if (!input || !btn) return;
+  function sync() { btn.disabled = (input.value !== 'DELETE'); }  // exact, case-sensitive
+  input.addEventListener('input', sync);
+  sync();
+})();
+</script>
+{% endif %}
 {% endblock %}

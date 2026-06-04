@@ -2,7 +2,8 @@
 Tests for the sales import process.
 
 Covers AccountItem creation, de-duplication, multi-distributor logic,
-duplicate detection per (distributor, date), and resolve_mappings redirect.
+replace-on-import (month-grain overlap detection / delete-and-replace),
+and resolve_mappings redirect.
 """
 import csv
 import datetime
@@ -537,8 +538,9 @@ class MultipleFileUploadViewTest(ImportTestBase):
         pending = self.client.session.get('pending_mapping_resolution')
         self.assertEqual(pending['next_url'], reverse('import_upload'))
 
-    def test_duplicate_detection_per_distributor_date(self):
-        """Same distributor + same date conflicts; different distributor + same date is OK."""
+    def test_overlap_detected_not_aborted(self):
+        """Replace-on-import: an overlapping month no longer aborts — it is detected
+        and carried to the preview; a non-overlapping distributor shows no overlap."""
         dist2 = Distributor.objects.create(company=self.company, name='Dist Two')
         ItemMapping.objects.create(
             company=self.company, distributor=dist2,
@@ -562,18 +564,19 @@ class MultipleFileUploadViewTest(ImportTestBase):
             sale_date=datetime.date(2024, 1, 15), quantity=5,
         )
 
-        # Upload with Test Dist on the same date → conflict
+        # Upload with Test Dist in the same month → overlap DETECTED, proceeds to preview
         conflict_file = SimpleUploadedFile(
             'conflict.csv',
-            _csv_bytes([{'date_str': '01/15/2024', 'item_id': 'Red0750'}], distributor_name='Test Dist'),
+            _csv_bytes([{'date_str': '01/20/2024', 'item_id': 'Red0750'}], distributor_name='Test Dist'),
             content_type='text/csv',
         )
         response = self._post_files([conflict_file])
-        self.assertEqual(response.status_code, 200)
-        msgs = [str(m) for m in response.wsgi_request._messages]
-        self.assertTrue(any('already exist' in m.lower() for m in msgs))
+        self.assertEqual(response.status_code, 302)   # not aborted
+        pending = self.client.session['pending_import']
+        self.assertTrue(pending['replace_preview']['has_overlap'])
+        self.assertIn([self.distributor.pk, 2024, 1], pending['overlap'])
 
-        # Upload with Dist Two on the same date → no conflict
+        # Upload with Dist Two in the same month → no existing data, no overlap
         ok_file = SimpleUploadedFile(
             'ok.csv',
             _csv_bytes([{'date_str': '01/15/2024', 'item_id': 'Red0750'}], distributor_name='Dist Two'),
@@ -581,6 +584,7 @@ class MultipleFileUploadViewTest(ImportTestBase):
         )
         response2 = self._post_files([ok_file])
         self.assertEqual(response2.status_code, 302)   # proceeds to preview
+        self.assertFalse(self.client.session['pending_import']['replace_preview']['has_overlap'])
 
     def test_multiple_batches_created_on_confirm(self):
         """One ImportBatch per distributor is created in a single transaction."""
@@ -653,3 +657,247 @@ class ItemMappingProtectTest(ImportTestBase):
         except ProtectedError:
             pass
         self.assertTrue(ItemMapping.objects.filter(pk=self.mapping.pk).exists())
+
+
+# ---------------------------------------------------------------------------
+# Replace-on-import (month-grain detect → preview → delete-and-replace)
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch
+
+
+class ReplaceOnImportTest(ImportTestBase):
+    """End-to-end replace-on-import: detection, preview blast-radius, typed
+    confirmation, surgical delete + audit note, atomicity, whole-month grain."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = _make_supplier_admin(self.company)
+        self.client = Client()
+        self.client.login(username='admin', password='testpass')
+        self.upload_url = reverse('import_upload')
+        self.preview_url = reverse('import_preview')
+
+    # -- helpers ------------------------------------------------------------
+
+    def _add_distributor(self, name):
+        dist = Distributor.objects.create(company=self.company, name=name)
+        ItemMapping.objects.create(
+            company=self.company, distributor=dist,
+            raw_item_name='Red0750', mapped_item=self.item,
+            status=ItemMapping.Status.MAPPED,
+        )
+        return dist
+
+    def _upload(self, rows):
+        """rows: list of dicts (date_str, quantity, distributor_name, ...)."""
+        f = SimpleUploadedFile('import.csv', _csv_bytes(rows), content_type='text/csv')
+        return self.client.post(self.upload_url, data={'csv_file': [f]})
+
+    def _confirm(self, confirm_text=None):
+        data = {'action': 'confirm'}
+        if confirm_text is not None:
+            data['confirm_text'] = confirm_text
+        return self.client.post(self.preview_url, data)
+
+    def _may(self, day, qty, dist='Test Dist'):
+        return {'date_str': f'05/{day:02d}/2024', 'quantity': str(qty),
+                'item_id': 'Red0750', 'distributor_name': dist}
+
+    # -- 1. no overlap ------------------------------------------------------
+
+    def test_import_no_overlap_proceeds_normally(self):
+        resp = self._upload([self._may(15, 10)])
+        self.assertEqual(resp.status_code, 302)
+        pending = self.client.session['pending_import']
+        self.assertEqual(pending['overlap'], [])
+        self.assertFalse(pending['replace_preview']['has_overlap'])
+
+        # Confirm without any typed confirmation → imports normally.
+        resp2 = self._confirm()
+        self.assertEqual(resp2.status_code, 302)
+        self.assertEqual(SalesRecord.objects.filter(company=self.company).count(), 1)
+
+    # -- 2. detection + preview blast-radius --------------------------------
+
+    def test_import_overlap_detected_and_previewed(self):
+        # Seed: Test Dist has 2 May records for one account.
+        self._run_import([self._may(3, 5), self._may(17, 5)])
+        seeded = SalesRecord.objects.filter(company=self.company).count()
+        self.assertEqual(seeded, 2)
+
+        resp = self._upload([self._may(20, 9)])
+        self.assertEqual(resp.status_code, 302)
+        rp = self.client.session['pending_import']['replace_preview']
+        self.assertTrue(rp['has_overlap'])
+        self.assertEqual(rp['combo_count'], 1)
+        group = rp['groups'][0]
+        self.assertEqual(group['distributor'], 'Test Dist')
+        month = group['months'][0]
+        self.assertEqual(month['label'], 'May 2024')
+        self.assertEqual(month['record_count'], 2)
+        self.assertEqual(month['account_count'], 1)
+        self.assertEqual(rp['total_records'], 2)
+        self.assertEqual(rp['total_accounts'], 1)
+
+    # -- 3. delete + reimport -----------------------------------------------
+
+    def test_import_replace_deletes_and_reimports(self):
+        self._run_import([self._may(3, 5), self._may(17, 5)])  # old: qty 5, 2 records
+        self._upload([self._may(1, 9), self._may(10, 9), self._may(20, 9)])  # new: qty 9, 3
+        resp = self._confirm(confirm_text='DELETE')
+        self.assertEqual(resp.status_code, 302)
+
+        may = SalesRecord.objects.filter(
+            company=self.company, sale_date__year=2024, sale_date__month=5,
+        )
+        self.assertEqual(may.count(), 3)                       # only the new import
+        self.assertEqual(may.filter(quantity=5).count(), 0)    # old gone
+        self.assertEqual(may.filter(quantity=9).count(), 3)    # new present
+
+    # -- 4. partial overlap (surgical) --------------------------------------
+
+    def test_import_replace_partial_overlap(self):
+        dist_b = self._add_distributor('Dist B')
+        dist_c = self._add_distributor('Dist C')
+
+        # Seed A (Test Dist) Jan–May, and C March only — all qty 5.
+        self._run_import([
+            {'date_str': '01/10/2024', 'quantity': '5', 'item_id': 'Red0750'},
+            {'date_str': '02/10/2024', 'quantity': '5', 'item_id': 'Red0750'},
+            {'date_str': '03/10/2024', 'quantity': '5', 'item_id': 'Red0750'},
+            {'date_str': '04/10/2024', 'quantity': '5', 'item_id': 'Red0750'},
+            {'date_str': '05/10/2024', 'quantity': '5', 'item_id': 'Red0750'},
+        ], distributor=self.distributor)
+        self._run_import([
+            {'date_str': '03/10/2024', 'quantity': '5', 'item_id': 'Red0750'},
+        ], distributor=dist_c)
+
+        # Upload: A Jan–May, B Apr, C March — all qty 9.
+        rows = [
+            {'date_str': '01/20/2024', 'quantity': '9', 'item_id': 'Red0750', 'distributor_name': 'Test Dist'},
+            {'date_str': '02/20/2024', 'quantity': '9', 'item_id': 'Red0750', 'distributor_name': 'Test Dist'},
+            {'date_str': '03/20/2024', 'quantity': '9', 'item_id': 'Red0750', 'distributor_name': 'Test Dist'},
+            {'date_str': '04/20/2024', 'quantity': '9', 'item_id': 'Red0750', 'distributor_name': 'Test Dist'},
+            {'date_str': '05/20/2024', 'quantity': '9', 'item_id': 'Red0750', 'distributor_name': 'Test Dist'},
+            {'date_str': '04/20/2024', 'quantity': '9', 'item_id': 'Red0750', 'distributor_name': 'Dist B'},
+            {'date_str': '03/20/2024', 'quantity': '9', 'item_id': 'Red0750', 'distributor_name': 'Dist C'},
+        ]
+        resp = self._upload(rows)
+        self.assertEqual(resp.status_code, 302)
+        # Overlap: A Jan–May (5) + C Mar (1) = 6 combos; B Apr is NOT overlap.
+        self.assertEqual(self.client.session['pending_import']['replace_preview']['combo_count'], 6)
+        self.assertEqual(self._confirm(confirm_text='DELETE').status_code, 302)
+
+        def dist_qs(dist):
+            return SalesRecord.objects.filter(company=self.company, account__distributor=dist)
+
+        # A: old qty-5 fully replaced by qty-9 (5 records, all qty 9).
+        self.assertEqual(dist_qs(self.distributor).count(), 5)
+        self.assertEqual(dist_qs(self.distributor).filter(quantity=5).count(), 0)
+        # C: March replaced (old qty-5 gone, new qty-9 present).
+        self.assertEqual(dist_qs(dist_c).filter(quantity=5).count(), 0)
+        self.assertEqual(dist_qs(dist_c).filter(sale_date__month=3, quantity=9).count(), 1)
+        # B: Apr imported new, nothing deleted (had nothing before).
+        self.assertEqual(dist_qs(dist_b).filter(sale_date__month=4, quantity=9).count(), 1)
+        # No qty-5 record survives anywhere.
+        self.assertEqual(SalesRecord.objects.filter(company=self.company, quantity=5).count(), 0)
+
+    # -- 5. typed confirmation enforced server-side -------------------------
+
+    def test_import_replace_requires_typed_confirmation(self):
+        self._run_import([self._may(3, 5)])
+        before_sales = SalesRecord.objects.filter(company=self.company).count()
+        before_batches = ImportBatch.objects.filter(company=self.company).count()
+
+        self._upload([self._may(20, 9)])
+        # Confirm with the WRONG value → rejected, nothing changes.
+        resp = self._confirm(confirm_text='delete')   # lowercase, must be exact
+        self.assertEqual(resp.status_code, 200)
+        msgs = [str(m) for m in resp.wsgi_request._messages]
+        self.assertTrue(any('type delete' in m.lower() for m in msgs))
+        self.assertIn('pending_import', self.client.session)   # still pending
+        self.assertEqual(SalesRecord.objects.filter(company=self.company).count(), before_sales)
+        self.assertEqual(ImportBatch.objects.filter(company=self.company).count(), before_batches)
+        self.assertEqual(SalesRecord.objects.filter(quantity=9).count(), 0)  # nothing imported
+
+    # -- 6. audit note appended; stats unchanged ----------------------------
+
+    def test_import_replace_appends_audit_note(self):
+        # Seed A Jan–May as ONE batch.
+        batch = self._run_import([
+            {'date_str': '01/10/2024', 'item_id': 'Red0750'},
+            {'date_str': '02/10/2024', 'item_id': 'Red0750'},
+            {'date_str': '03/10/2024', 'item_id': 'Red0750'},
+            {'date_str': '04/10/2024', 'item_id': 'Red0750'},
+            {'date_str': '05/10/2024', 'item_id': 'Red0750'},
+        ])
+        original_records_imported = batch.records_imported
+
+        # Replace only May.
+        self._upload([self._may(20, 9)])
+        self.assertEqual(self._confirm(confirm_text='DELETE').status_code, 302)
+
+        batch.refresh_from_db()
+        self.assertIn('May 2024', batch.notes)
+        self.assertIn('deleted and replaced', batch.notes)
+        self.assertIn(self.user.get_username(), batch.notes)
+        # No stat recompute — original counter is preserved.
+        self.assertEqual(batch.records_imported, original_records_imported)
+
+    # -- 7. one note line lists all replaced months for that batch ----------
+
+    def test_import_replace_audit_note_lists_multiple_months_per_batch(self):
+        batch = self._run_import([
+            {'date_str': '01/10/2024', 'item_id': 'Red0750'},
+            {'date_str': '02/10/2024', 'item_id': 'Red0750'},
+            {'date_str': '03/10/2024', 'item_id': 'Red0750'},
+            {'date_str': '04/10/2024', 'item_id': 'Red0750'},
+            {'date_str': '05/10/2024', 'item_id': 'Red0750'},
+        ])
+        # Replace Jan AND Mar in one import.
+        self._upload([
+            {'date_str': '01/20/2024', 'quantity': '9', 'item_id': 'Red0750'},
+            {'date_str': '03/20/2024', 'quantity': '9', 'item_id': 'Red0750'},
+        ])
+        self.assertEqual(self._confirm(confirm_text='DELETE').status_code, 302)
+
+        batch.refresh_from_db()
+        # Exactly ONE appended note line, listing both months chronologically.
+        self.assertEqual(batch.notes.count('deleted and replaced'), 1)
+        self.assertIn('Jan 2024, Mar 2024', batch.notes)
+
+    # -- 8. atomic: failure rolls back deletion -----------------------------
+
+    def test_import_replace_is_atomic(self):
+        self._run_import([self._may(3, 5)])   # old May, qty 5
+        self._upload([self._may(20, 9)])
+
+        with patch('apps.imports.views._execute_import', side_effect=Exception('boom')):
+            resp = self._confirm(confirm_text='DELETE')
+        self.assertEqual(resp.status_code, 302)  # redirected to upload with error
+
+        # Deletion rolled back with the failed import — old data intact.
+        self.assertEqual(SalesRecord.objects.filter(quantity=5).count(), 1)
+        self.assertEqual(SalesRecord.objects.filter(quantity=9).count(), 0)
+
+    # -- 9. whole-month deletion (not just colliding dates) -----------------
+
+    def test_import_replace_deletes_whole_month_not_just_colliding_dates(self):
+        # Seed May 1, 15, 28 (qty 5).
+        self._run_import([self._may(1, 5), self._may(15, 5), self._may(28, 5)])
+        self.assertEqual(
+            SalesRecord.objects.filter(sale_date__year=2024, sale_date__month=5).count(), 3,
+        )
+
+        # Re-import only May 5 and May 10.
+        self._upload([self._may(5, 9), self._may(10, 9)])
+        self.assertEqual(self._confirm(confirm_text='DELETE').status_code, 302)
+
+        may = SalesRecord.objects.filter(sale_date__year=2024, sale_date__month=5)
+        self.assertEqual(may.count(), 2)  # whole old month gone, only imported days remain
+        days = set(may.values_list('sale_date__day', flat=True))
+        self.assertEqual(days, {5, 10})
+        # Original days are gone.
+        self.assertFalse(may.filter(sale_date__day=1).exists())
+        self.assertFalse(may.filter(sale_date__day=28).exists())

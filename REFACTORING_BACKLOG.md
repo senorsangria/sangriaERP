@@ -119,10 +119,12 @@ Only the broader idea (a) — denormalizing `distributor` directly onto
 ### 4. No soft-delete / mutation audit log for sales data — **Priority: MEDIUM-HIGH (rises with financial sync)**
 
 - **What it is:** Sales deletions are hard deletes. `batch_delete`
-  (`apps/imports/views.py`) calls `.delete()` on `SalesRecord` rows, and the
-  upcoming replace-on-import will do the same for overlapping months. There is
-  no recovery path and no structured audit trail of what was removed beyond the
-  free-text `ImportBatch.notes` annotation.
+  (`apps/imports/views.py`) calls `.delete()` on `SalesRecord` rows, and
+  **replace-on-import is now built and does the same** for overlapping months
+  (`_replace_overlapping_months`). There is no recovery path and no structured
+  audit trail of what was removed beyond the free-text `ImportBatch.notes`
+  annotation. **This is now a live, user-triggered hard-delete path** (not just
+  the batch-delete admin action), which raises the importance of this item.
 - **Why it matters:** Before COGS / QuickBooks make data corrections
   **financially material**, an accidental or mis-scoped delete is unrecoverable
   and untraceable. A correction that flows into financial reporting needs to be
@@ -147,10 +149,16 @@ Only the broader idea (a) — denormalizing `distributor` directly onto
   replace-on-import we have **chosen to leave the original batch numbers as the
   historical record** and explain the change via an appended `ImportBatch.notes`
   audit note, rather than recompute the batch statistics.
+- **Workaround in place (built):** replace-on-import is now live and uses exactly
+  this workaround — affected batches keep their original `records_imported` /
+  `date_range`, and each gets an appended `notes` line listing the months replaced
+  (with date + user). So the partial-batch staleness is real and accepted today;
+  the audit note is the compensating record. Import History may therefore show a
+  stale original batch alongside the new partial-month batch for a replaced month.
 - **Recommendation:** Move toward per-`(distributor, month)` batch granularity
   (or an "import event" + per-month rollup), so replace, history, and audit all
   share one grain and partial-batch staleness disappears.
-- **Status:** `Deferred — not scheduled.`
+- **Status:** `Deferred — not scheduled` (workaround in place via the audit note).
 
 ### 6. `AccountItem.date_first_associated` is never recalculated — **Priority: LOW**
 

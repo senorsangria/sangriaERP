@@ -255,9 +255,35 @@ rows for multiple distributors in a single file.
   aborted before any data is written; the error message lists all unknown names
 
 **Sales import specifics**
-- Duplicate detection is per `(distributor, date)` pair, not just per
-  distributor — importing the same distributor+date combination twice is
-  blocked, but the same date for a different distributor is allowed
+- **Replace-on-import (month grain).** Importing a month that already has data no
+  longer hard-stops. Instead the flow is **detect → preview → confirm → delete-and-replace**:
+  - *Detect (upload):* overlap is computed per `(distributor, year, month)` via
+    `account__distributor` — which incoming distributor-months already have sales
+    data. The same month for a different distributor (no existing data) is not an
+    overlap. The overlap set is carried into the preview; nothing aborts.
+  - *Preview:* when overlap exists, a distinct "Existing data to be replaced"
+    section shows a table (distributor × month, with record count and
+    accounts-impacted count) plus grand totals, and the user must type `DELETE`
+    (exact, uppercase) to enable the confirm button. **Enforced server-side**, not
+    just in JS — a confirm POST with overlap and the wrong/absent `confirm_text` is
+    rejected and the preview re-rendered with an error. A no-overlap import needs no
+    typed confirmation and proceeds as before.
+  - *Execute (atomic):* inside the single existing `transaction.atomic()`, and
+    BEFORE importing — capture the affected `ImportBatch` ids, append **one** audit
+    note line per affected batch listing all of that batch's replaced months (e.g.
+    `"Jan 2026, Mar 2026 data deleted and replaced by import on 2026-06-04 by <user>."`,
+    appended never overwritten), then **hard-delete the entire overlapping month(s)**
+    (all days) per distributor — only `SalesRecord` rows; accounts and
+    non-overlapping sales are preserved — then run the normal import. If anything
+    fails, the whole thing (notes + delete + import) rolls back; nothing is partially
+    applied. Cancelling / not confirming imports nothing.
+  - *Month grain:* an overlapping month is deleted **in full** and replaced, not
+    just the colliding dates.
+  - *No batch-stat recompute:* the old batch keeps its original `records_imported`
+    and `date_range`; the audit note is the whole record of what changed. Per-month
+    batches remain deferred (see `REFACTORING_BACKLOG.md`).
+  - Relies on `Account.distributor` being non-null + PROTECT, so the
+    `account__distributor` overlap/delete path can't be null (no null guard needed).
 - Unknown item codes (Item Name ID values not present in ItemMapping) trigger
   a redirect to `/imports/resolve-mappings/` with `next_url` pointing back to
   the sales upload page; after saving mappings the user re-uploads the CSV

@@ -19,6 +19,7 @@ Batch history:
   batch_list / batch_detail / batch_delete
 """
 
+import calendar
 import csv
 import json
 import os
@@ -29,7 +30,8 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.db import transaction
-from django.db.models.functions import ExtractYear
+from django.db.models import Q
+from django.db.models.functions import ExtractMonth, ExtractYear
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -363,38 +365,9 @@ def import_upload(request):
                     messages.error(request, dist_errors[0])
                     return render(request, 'imports/upload.html', {'form': form})
 
-                # --- Validation 1: Per-(distributor, date) duplicate check ---
-                csv_pairs = {(r['distributor'].pk, r['sale_date']) for r in all_rows}
-                dist_ids_set = {pk for pk, _ in csv_pairs}
-                dates_set = {d for _, d in csv_pairs}
-
-                existing_pairs = set(
-                    SalesRecord.objects
-                    .filter(
-                        company=company,
-                        account__distributor_id__in=dist_ids_set,
-                        sale_date__in=dates_set,
-                    )
-                    .values_list('account__distributor_id', 'sale_date')
-                    .distinct()
-                )
-                conflicts = csv_pairs & existing_pairs
-                if conflicts:
-                    dist_name_map = {r['distributor'].pk: r['distributor'].name for r in all_rows}
-                    conflict_lines = sorted(
-                        f"{dist_name_map.get(pk, 'Unknown')} — {dt.strftime('%m/%d/%Y')}"
-                        for pk, dt in conflicts
-                    )
-                    messages.error(
-                        request,
-                        'Import aborted. Sales records already exist for the following '
-                        'distributor + date combinations: '
-                        + ', '.join(conflict_lines)
-                        + '. These dates cannot be imported again.',
-                    )
-                    return render(request, 'imports/upload.html', {'form': form})
-
-                # --- Validation 2: Unknown item codes → redirect to resolve_mappings ---
+                # --- Validation: Unknown item codes → redirect to resolve_mappings ---
+                # (The former per-(distributor, date) hard stop is gone; overlap is
+                #  now DETECTED below and replaced on confirm — see replace-on-import.)
                 from collections import defaultdict
                 csv_dist_items = {(r['distributor'].pk, r['item_id']) for r in all_rows}
                 all_dist_ids = {pk for pk, _ in csv_dist_items}
@@ -487,6 +460,13 @@ def import_upload(request):
                     })
                 item_mappings.sort(key=lambda x: (x['distributor'], x['code']))
 
+                # --- Replace-on-import: month-grain overlap DETECTION (no abort) ---
+                # Which (distributor, year, month) combos in this upload already
+                # have existing sales data?  Those months will be deleted and
+                # replaced on confirm.  Distributor is read via account__distributor
+                # (non-null, PROTECT), matching every other sales query.
+                overlap, replace_preview = _detect_overlap(company, all_rows)
+
                 # Write all combined rows to a single temp file
                 combined_filepath = _write_combined_csv(all_rows)
 
@@ -495,6 +475,10 @@ def import_upload(request):
                     'filename': json.dumps(filenames),
                     'files_count': len(uploaded_files),
                     'temp_file_path': combined_filepath,
+                    # Raw overlap set (the exact combos the user reviews + confirms),
+                    # used verbatim by the execute step — no re-derivation surprises.
+                    'overlap': [[dpk, y, m] for (dpk, y, m) in overlap],
+                    'replace_preview': replace_preview,
                     'preview': {
                         'date_range_start': min_date.isoformat(),
                         'date_range_end': max_date.isoformat(),
@@ -539,6 +523,24 @@ def import_preview(request):
 
     company = request.user.company
     preview = pending['preview']
+    overlap = pending.get('overlap') or []
+    replace_preview = pending.get('replace_preview') or {'has_overlap': False}
+
+    filenames = json.loads(pending.get('filename', '[]'))
+    if isinstance(filenames, list):
+        if len(filenames) == 1:
+            filename_display = filenames[0]
+        else:
+            filename_display = f'{len(filenames)} files: ' + ', '.join(filenames)
+    else:
+        filename_display = filenames  # legacy plain string
+
+    context = {
+        'pending': pending,
+        'preview': preview,
+        'filename_display': filename_display,
+        'replace_preview': replace_preview,
+    }
 
     if request.method == 'POST':
         action = request.POST.get('action')
@@ -550,6 +552,16 @@ def import_preview(request):
             return redirect('import_upload')
 
         if action == 'confirm':
+            # Server-side typed-confirmation enforcement (not just JS): when this
+            # import will replace existing data, the user must type DELETE exactly.
+            if overlap and request.POST.get('confirm_text') != 'DELETE':
+                messages.error(
+                    request,
+                    'This import will replace existing data. Type DELETE '
+                    '(uppercase) to confirm.',
+                )
+                return render(request, 'imports/preview.html', context)
+
             filepath = pending.get('temp_file_path')
             if not filepath or not os.path.exists(filepath):
                 messages.error(request, 'Upload file not found. Please start over.')
@@ -581,6 +593,14 @@ def import_preview(request):
 
                 created_batches = []
                 with transaction.atomic():
+                    # Replace-on-import: append audit notes to affected batches and
+                    # delete the overlapping month(s) BEFORE importing — all in this
+                    # one transaction, so a failure below rolls back the deletion too.
+                    # Uses the stashed overlap set (the exact combos the user reviewed
+                    # and confirmed) rather than re-deriving, so the delete can never
+                    # exceed what was shown and confirmed.
+                    _replace_overlapping_months(request, company, overlap)
+
                     for dist in sorted(dist_rows.keys(), key=lambda d: d.name):
                         batch = _execute_import(
                             request, company, dist,
@@ -602,21 +622,137 @@ def import_preview(request):
                 messages.error(request, f'Import failed: {exc}')
                 return redirect('import_upload')
 
-    filenames = json.loads(pending.get('filename', '[]'))
-    if isinstance(filenames, list):
-        if len(filenames) == 1:
-            filename_display = filenames[0]
-        else:
-            filename_display = f'{len(filenames)} files: ' + ', '.join(filenames)
-    else:
-        filename_display = filenames  # legacy plain string
-
-    context = {
-        'pending': pending,
-        'preview': preview,
-        'filename_display': filename_display,
-    }
     return render(request, 'imports/preview.html', context)
+
+
+def _month_label(year, month):
+    """Format a (year, month) pair as a short chronological label, e.g. 'May 2026'."""
+    return f'{calendar.month_abbr[month]} {year}'
+
+
+def _detect_overlap(company, all_rows):
+    """
+    Month-grain overlap detection for replace-on-import.
+
+    Returns (overlap, replace_preview):
+      - overlap: sorted list of (distributor_pk, year, month) tuples whose existing
+        sales data overlaps this upload (and will be deleted + replaced on confirm).
+      - replace_preview: dict for the preview template — per-distributor groups with
+        per-month record/account counts, plus accurate distinct grand totals.
+
+    Distributor is read via account__distributor (non-null, PROTECT), matching the
+    grain used by every other sales query.
+    """
+    incoming = {
+        (r['distributor'].pk, r['sale_date'].year, r['sale_date'].month)
+        for r in all_rows
+    }
+    dist_ids = {d for d, _, _ in incoming}
+
+    existing = set(
+        SalesRecord.objects
+        .filter(company=company, account__distributor_id__in=dist_ids)
+        .annotate(y=ExtractYear('sale_date'), m=ExtractMonth('sale_date'))
+        .values_list('account__distributor_id', 'y', 'm')
+        .distinct()
+    )
+    overlap = sorted(incoming & existing)
+
+    dist_name_map = {r['distributor'].pk: r['distributor'].name for r in all_rows}
+
+    from collections import defaultdict
+    groups_map = defaultdict(list)
+    for dpk, y, m in overlap:
+        qs = SalesRecord.objects.filter(
+            company=company, account__distributor_id=dpk,
+            sale_date__year=y, sale_date__month=m,
+        )
+        groups_map[dpk].append({
+            'label': _month_label(y, m),
+            'year': y,
+            'month': m,
+            'record_count': qs.count(),
+            'account_count': qs.values('account').distinct().count(),
+        })
+
+    groups = []
+    for dpk in sorted(groups_map, key=lambda k: dist_name_map.get(k, '')):
+        months = groups_map[dpk]
+        groups.append({
+            'distributor': dist_name_map.get(dpk, 'Unknown'),
+            'months': months,
+            'subtotal_records': sum(x['record_count'] for x in months),
+        })
+
+    # Accurate distinct grand totals across the whole overlap (an account active in
+    # two replaced months must be counted once, so sum-of-per-month is wrong).
+    if overlap:
+        q = Q()
+        for dpk, y, m in overlap:
+            q |= Q(account__distributor_id=dpk, sale_date__year=y, sale_date__month=m)
+        total_qs = SalesRecord.objects.filter(company=company).filter(q)
+        total_records = total_qs.count()
+        total_accounts = total_qs.values('account').distinct().count()
+    else:
+        total_records = 0
+        total_accounts = 0
+
+    replace_preview = {
+        'has_overlap': bool(overlap),
+        'groups': groups,
+        'total_records': total_records,
+        'total_accounts': total_accounts,
+        'combo_count': len(overlap),
+    }
+    return overlap, replace_preview
+
+
+def _replace_overlapping_months(request, company, overlap):
+    """
+    Inside an OPEN transaction: append an audit note to every affected ImportBatch,
+    then hard-delete the entire overlapping month(s) per distributor.
+
+    `overlap` is an iterable of (distributor_pk, year, month).  For each affected
+    batch we append ONE note line listing all of that batch's months replaced in
+    this import (chronologically), then delete the SalesRecords for the whole month
+    (all days) per distributor.
+
+    Deletes ONLY SalesRecords.  Accounts and any non-overlapping sales (other months,
+    other distributors) are preserved.  No batch-stat recompute — the audit note is
+    the record of what changed (per-month batches deferred; see REFACTORING_BACKLOG).
+    """
+    overlap = [tuple(o) for o in overlap]
+    if not overlap:
+        return
+
+    from collections import defaultdict
+
+    # 1. Capture affected batches → set of (year, month) being replaced — BEFORE delete.
+    batch_months = defaultdict(set)
+    for dpk, y, m in overlap:
+        qs = SalesRecord.objects.filter(
+            company=company, account__distributor_id=dpk,
+            sale_date__year=y, sale_date__month=m,
+        )
+        for bid in qs.values_list('import_batch_id', flat=True).distinct():
+            batch_months[bid].add((y, m))
+
+    # 2. Append one audit-note line per affected batch (append, never overwrite).
+    who = request.user.email or request.user.get_username()
+    today = date.today().isoformat()
+    for bid, ymset in batch_months.items():
+        labels = ', '.join(_month_label(y, m) for (y, m) in sorted(ymset))
+        note = f'{labels} data deleted and replaced by import on {today} by {who}.'
+        batch = ImportBatch.objects.get(pk=bid)
+        batch.notes = (batch.notes + '\n' + note).strip()
+        batch.save(update_fields=['notes'])
+
+    # 3. Delete the entire overlapping month(s) per distributor (sales records only).
+    for dpk, y, m in overlap:
+        SalesRecord.objects.filter(
+            company=company, account__distributor_id=dpk,
+            sale_date__year=y, sale_date__month=m,
+        ).delete()
 
 
 def _execute_import(request, company, distributor, rows, filename):
