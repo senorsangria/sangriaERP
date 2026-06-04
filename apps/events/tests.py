@@ -46,8 +46,12 @@ def make_user(company, role_codename, username="testuser"):
 
 
 def make_account(company, name="Test Liquors"):
+    distributor, _ = Distributor.objects.get_or_create(
+        company=company, name="Default Test Dist",
+    )
     return Account.objects.create(
         company=company,
+        distributor=distributor,
         name=name,
         street="1 Main St",
         city="Hoboken",
@@ -1734,18 +1738,19 @@ class AjaxEventAccountsSearchTest(TestCase):
         self.client = Client()
         self.client.login(username='sadmin', password='testpass123')
         self.url = reverse('ajax_event_accounts')
+        self.distributor = make_distributor(self.company)
 
         # Three accounts with distinctive names and cities
         Account.objects.create(
-            company=self.company, name='BuyRite Wine & Spirits',
+            company=self.company, distributor=self.distributor, name='BuyRite Wine & Spirits',
             street='10 Bergen Ave', city='Kearny', state='NJ',
         )
         Account.objects.create(
-            company=self.company, name='BuyRite Liquors',
+            company=self.company, distributor=self.distributor, name='BuyRite Liquors',
             street='50 Market St', city='Newark', state='NJ',
         )
         Account.objects.create(
-            company=self.company, name='Crown Wine & Spirits',
+            company=self.company, distributor=self.distributor, name='Crown Wine & Spirits',
             street='200 Broad St', city='Newark', state='NJ',
         )
 
@@ -2134,6 +2139,10 @@ class CsvExportTabFilterTest(TestCase):
 # ---------------------------------------------------------------------------
 
 def make_account_with_county(company, name, county, distributor=None):
+    if distributor is None:
+        distributor, _ = Distributor.objects.get_or_create(
+            company=company, name="Default Test Dist",
+        )
     return Account.objects.create(
         company=company,
         distributor=distributor,
@@ -2245,6 +2254,10 @@ class CountyFilterTest(TestCase):
 # ---------------------------------------------------------------------------
 
 def make_account_with_city(company, name, city, county='Unknown', distributor=None):
+    if distributor is None:
+        distributor, _ = Distributor.objects.get_or_create(
+            company=company, name="Default Test Dist",
+        )
     return Account.objects.create(
         company=company,
         distributor=distributor,

@@ -88,24 +88,33 @@ Relevant models at time of writing:
 - **Recommendation:** Either (a) denormalize `distributor` directly onto
   `SalesRecord` — removes the account join, enables a clean
   `(distributor, sale_date)` index, and eliminates the nullable risk — or
-  (b) make `Account.distributor` non-null with `on_delete=PROTECT`. See the
-  **Promoted** note below: option (b) is being handled as its own near-term
-  change; the broader denormalize-onto-`SalesRecord` idea (a) remains deferred.
-- **Status:** `Deferred — not scheduled` (broader denormalization). See promoted
-  note for the `Account.distributor` hardening.
+  (b) make `Account.distributor` non-null with `on_delete=PROTECT`. Option (b)
+  is now **done** (see note below); the broader denormalize-onto-`SalesRecord`
+  idea (a) remains deferred.
+- **Status:** `Deferred — not scheduled` (broader denormalization onto
+  `SalesRecord`). The `Account.distributor` hardening (option b) is **DONE**.
 
-#### Promoted to near-term work — `Account.distributor` non-null + PROTECT — **Status: IN PROGRESS / NEXT**
+#### ✅ DONE — `Account.distributor` non-null + PROTECT
 
-The specific change to make `Account.distributor` non-nullable (currently
-`SET_NULL` / `null=True`) with `on_delete=PROTECT` is being addressed as its own
-focused change soon, **not** as part of this deferred backlog. It requires a
-null-distributor audit first (find and resolve any existing accounts with a null
-distributor before tightening the constraint). It is being promoted because it
-hardens the foundation that replace-on-import depends on — replace-on-import
-detects and deletes overlapping data by `account__distributor`, so a reliable,
-non-null distributor on every account directly protects that feature's
-correctness. Tracked as **In progress / next**, distinct from the deferred items
-above.
+The change to make `Account.distributor` non-nullable with `on_delete=PROTECT`
+(previously `SET_NULL` / `null=True`) is **complete** (migration
+`accounts/0013_alter_account_distributor`). Dev was audited clean (0
+null-distributor accounts), so it shipped as a simple `AlterField` with no data
+migration. A companion fix hardened the account-import flow to reject rows with
+a blank distributor cell (a clean upload error instead of an `IntegrityError`),
+and tests now cover the constraint, the PROTECT-on-delete behavior, and the
+blank-distributor rejection. It hardens the foundation that replace-on-import
+depends on — that feature detects and deletes overlapping data by
+`account__distributor`, so a reliable non-null distributor protects its
+correctness.
+
+> **Production deploy gate (still outstanding):** before the
+> `0013_alter_account_distributor` migration is deployed to production,
+> production must be confirmed to have **zero** null-distributor accounts. This
+> was verified in dev only; the prod check is a deploy-time gate.
+
+Only the broader idea (a) — denormalizing `distributor` directly onto
+`SalesRecord` — remains in this backlog as deferred.
 
 ### 4. No soft-delete / mutation audit log for sales data — **Priority: MEDIUM-HIGH (rises with financial sync)**
 

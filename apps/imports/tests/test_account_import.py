@@ -135,6 +135,17 @@ class AccountImportDistributorValidationTest(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertNotIn('account_import_preview', self.client.session)
 
+    def test_account_import_rejects_blank_distributor(self):
+        """A row with a blank distributor cell is rejected with a clear error;
+        no account is created and the import does not proceed to preview."""
+        before = Account.objects.count()
+        resp = _upload(self.client, _csv_bytes([{'dist': '', 'name': 'Blank Dist Store'}]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('blank distributor', resp.content.decode().lower())
+        self.assertNotIn('account_import_preview', self.client.session)
+        self.assertEqual(Account.objects.count(), before)
+        self.assertFalse(Account.objects.filter(name='Blank Dist Store').exists())
+
 
 # ---------------------------------------------------------------------------
 # Execute: accounts created with correct distributor

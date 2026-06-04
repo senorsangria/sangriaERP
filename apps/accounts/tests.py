@@ -30,6 +30,10 @@ def make_distributor(company, name="Dist A"):
 
 
 def make_account(company, distributor=None, name="Test Liquors"):
+    if distributor is None:
+        distributor, _ = Distributor.objects.get_or_create(
+            company=company, name="Default Test Dist",
+        )
     return Account.objects.create(
         company=company,
         distributor=distributor,
@@ -232,13 +236,14 @@ class AccountDeleteTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
+        self.distributor = make_distributor(self.company)
         self.admin = make_user(self.company, 'supplier_admin', "admin")
         self.client = Client()
         self.client.login(username="admin", password="testpass123")
 
     def test_delete_manual_account_with_no_data_succeeds(self):
         account = Account.objects.create(
-            company=self.company, name="Delete Me",
+            company=self.company, distributor=self.distributor, name="Delete Me",
             street="1 Main", city="Newark", state="NJ",
             auto_created=False,
         )
@@ -248,7 +253,7 @@ class AccountDeleteTest(TestCase):
 
     def test_delete_redirects_to_account_list_on_success(self):
         account = Account.objects.create(
-            company=self.company, name="Delete Me",
+            company=self.company, distributor=self.distributor, name="Delete Me",
             street="1 Main", city="Newark", state="NJ",
             auto_created=False,
         )
@@ -257,7 +262,7 @@ class AccountDeleteTest(TestCase):
 
     def test_delete_blocked_for_imported_account(self):
         account = Account.objects.create(
-            company=self.company, name="Imported",
+            company=self.company, distributor=self.distributor, name="Imported",
             street="2 Oak", city="Newark", state="NJ",
             auto_created=True,
         )
@@ -267,7 +272,7 @@ class AccountDeleteTest(TestCase):
 
     def test_delete_blocked_with_event(self):
         account = Account.objects.create(
-            company=self.company, name="Has Event",
+            company=self.company, distributor=self.distributor, name="Has Event",
             street="3 Elm", city="Newark", state="NJ",
             auto_created=False,
         )
@@ -282,7 +287,7 @@ class AccountDeleteTest(TestCase):
 
     def test_delete_error_message_lists_blocking_data(self):
         account = Account.objects.create(
-            company=self.company, name="Has Event",
+            company=self.company, distributor=self.distributor, name="Has Event",
             street="3 Elm", city="Newark", state="NJ",
             auto_created=False,
         )
@@ -305,13 +310,14 @@ class AccountToggleAllAccountsTest(TestCase):
 
     def setUp(self):
         self.company = make_company()
+        self.distributor = make_distributor(self.company)
         self.admin = make_user(self.company, 'supplier_admin', "admin")
         self.client = Client()
         self.client.login(username="admin", password="testpass123")
 
     def test_deactivate_manual_account(self):
         account = Account.objects.create(
-            company=self.company, name="Manual",
+            company=self.company, distributor=self.distributor, name="Manual",
             street="1 Main", city="Newark", state="NJ",
             auto_created=False, is_active=True,
         )
@@ -321,7 +327,7 @@ class AccountToggleAllAccountsTest(TestCase):
 
     def test_reactivate_manual_account(self):
         account = Account.objects.create(
-            company=self.company, name="Manual",
+            company=self.company, distributor=self.distributor, name="Manual",
             street="1 Main", city="Newark", state="NJ",
             auto_created=False, is_active=False,
         )
@@ -332,7 +338,7 @@ class AccountToggleAllAccountsTest(TestCase):
     def test_deactivate_imported_account(self):
         """Imported accounts can now be deactivated."""
         account = Account.objects.create(
-            company=self.company, name="Imported",
+            company=self.company, distributor=self.distributor, name="Imported",
             street="2 Oak", city="Newark", state="NJ",
             auto_created=True, is_active=True,
         )
@@ -343,7 +349,7 @@ class AccountToggleAllAccountsTest(TestCase):
     def test_reactivate_imported_account(self):
         """Imported accounts can be reactivated."""
         account = Account.objects.create(
-            company=self.company, name="Imported",
+            company=self.company, distributor=self.distributor, name="Imported",
             street="2 Oak", city="Newark", state="NJ",
             auto_created=True, is_active=False,
         )
@@ -419,18 +425,19 @@ class AjaxAccountsSearchTest(TestCase):
         self.client.login(username='sadmin', password='testpass123')
         self.url = reverse('ajax_accounts_search')
 
+        self.distributor = make_distributor(self.company)
         Account.objects.create(
-            company=self.company, name='BuyRite Wine & Spirits',
+            company=self.company, distributor=self.distributor, name='BuyRite Wine & Spirits',
             street='10 Bergen Ave', city='Kearny', state='NJ',
             state_normalized='NJ',
         )
         Account.objects.create(
-            company=self.company, name='BuyRite Liquors',
+            company=self.company, distributor=self.distributor, name='BuyRite Liquors',
             street='50 Market St', city='Newark', state='NJ',
             state_normalized='NJ',
         )
         Account.objects.create(
-            company=self.company, name='Crown Wine & Spirits',
+            company=self.company, distributor=self.distributor, name='Crown Wine & Spirits',
             street='200 Broad St', city='Newark', state='NJ',
             state_normalized='NJ',
         )
@@ -492,6 +499,7 @@ class AccountBulkDeleteTest(TestCase):
 
     def setUp(self):
         self.company = make_company('Bulk Delete Co')
+        self.distributor = make_distributor(self.company)
 
         self.sa_user = make_user(self.company, 'supplier_admin', 'sa_bulk')
         self.amb_user = make_user(self.company, 'ambassador', 'amb_bulk')
@@ -501,6 +509,7 @@ class AccountBulkDeleteTest(TestCase):
     def _make_account(self, name='Test Account'):
         return Account.objects.create(
             company=self.company,
+            distributor=self.distributor,
             name=name,
             street='1 Test St',
             city='Testville',
@@ -1232,6 +1241,10 @@ class NoteAPITest(TestCase):
 # ---------------------------------------------------------------------------
 
 def _make_account(company, distributor=None, name="Test Liquors", **kwargs):
+    if distributor is None:
+        distributor, _ = Distributor.objects.get_or_create(
+            company=company, name="Default Test Dist",
+        )
     defaults = dict(
         street="1 Main St", city="Hoboken", state="NJ",
         address_normalized="1 MAIN ST", city_normalized="HOBOKEN",
@@ -1286,13 +1299,12 @@ class AccountListFilterTest(TestCase):
         self.assertNotIn(a2.pk, pks)
 
     def test_filter_by_distributor_none(self):
-        a_no_dist = _make_account(self.company, None, "No Dist Store")
-        a_has_dist = _make_account(self.company, self.dist_a, "Has Dist Store")
+        # Account.distributor is required (non-null, PROTECT), so no account can
+        # lack a distributor; the "none" sentinel therefore matches nothing.
+        _make_account(self.company, self.dist_a, "Has Dist Store")
         resp = self.client.get(self.url + "?distributor=none")
         self.assertEqual(resp.status_code, 200)
-        pks = [a.pk for a in resp.context["page_obj"].object_list]
-        self.assertIn(a_no_dist.pk, pks)
-        self.assertNotIn(a_has_dist.pk, pks)
+        self.assertEqual(len(resp.context["page_obj"].object_list), 0)
 
     # --- on_off filter ---
 
@@ -1428,13 +1440,12 @@ class GetFilteredAccountQuerysetTest(TestCase):
 
     def test_filters_by_distributor_none_sentinel(self):
         from apps.accounts.views import get_filtered_account_queryset
-        a1 = _make_account(self.company, None, "No Dist")
-        a2 = _make_account(self.company, self.dist, "Has Dist")
+        # Account.distributor is required (non-null, PROTECT); the "none"
+        # sentinel can no longer match any account.
+        _make_account(self.company, self.dist, "Has Dist")
         qs = Account.objects.filter(company=self.company)
         result = get_filtered_account_queryset(qs, {'distributor': 'none'})
-        pks = list(result.values_list('pk', flat=True))
-        self.assertIn(a1.pk, pks)
-        self.assertNotIn(a2.pk, pks)
+        self.assertEqual(list(result.values_list('pk', flat=True)), [])
 
     def test_filters_by_account_type_list(self):
         from apps.accounts.views import get_filtered_account_queryset
@@ -1551,3 +1562,38 @@ class CountyFilterTest(TestCase):
         counties = list(response.context['counties'])
         self.assertEqual(counties.index("albany"), 0)
         self.assertEqual(counties.index("Bronx"), 1)
+
+
+# ---------------------------------------------------------------------------
+# Account.distributor required (non-null) + PROTECT on delete
+# ---------------------------------------------------------------------------
+
+from django.db import transaction
+from django.db.models import ProtectedError
+
+
+class AccountDistributorRequiredTest(TestCase):
+    """Account.distributor is non-null and PROTECTs its distributor from deletion."""
+
+    def setUp(self):
+        self.company = make_company('Dist Required Co')
+        self.distributor = make_distributor(self.company)
+
+    def test_account_requires_distributor(self):
+        """Creating an Account without a distributor violates the NOT NULL constraint."""
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Account.objects.create(
+                    company=self.company,
+                    name='No Distributor',
+                    street='1 Main St', city='Hoboken', state='NJ',
+                )
+
+    def test_distributor_with_accounts_cannot_be_deleted(self):
+        """A distributor that has accounts cannot be deleted (on_delete=PROTECT)."""
+        make_account(self.company, self.distributor, 'Protected Store')
+        with self.assertRaises(ProtectedError):
+            with transaction.atomic():
+                self.distributor.delete()
+        # The distributor and its account survive the blocked delete.
+        self.assertTrue(Distributor.objects.filter(pk=self.distributor.pk).exists())

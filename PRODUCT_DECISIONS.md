@@ -5,6 +5,11 @@ and design note is recorded here. This file should be updated as new
 decisions are made. It serves as the source of truth for anyone working
 on this project including AI coding assistants.
 
+> **Deferred structural / tech-debt items** live in
+> [`REFACTORING_BACKLOG.md`](REFACTORING_BACKLOG.md) — improvements we've
+> consciously identified but not yet scheduled. Check there for known schema
+> trade-offs before planning foundational changes.
+
 ---
 
 ## Company & Brand Context
@@ -86,6 +91,20 @@ on this project including AI coding assistants.
 - Accounts represent physical retail locations
 - A Distributor services an Account — the Account is not owned
   by the Distributor
+- **`Account.distributor` is required (non-null) with `on_delete=PROTECT`.**
+  Every account must name a distributor, and a distributor cannot be deleted
+  while it still has accounts. This brings `Account` into line with every other
+  FK to `Distributor` (`ImportBatch`, `Route`, `UserCoverageArea`,
+  `InventorySnapshot`, `PurchaseOrder`, `DistributorItemProfile`,
+  `DistributorGroup`), all of which already use PROTECT. Previously this FK was
+  the lone exception (`null=True`, `SET_NULL`).
+  - Account import rejects rows with a blank distributor cell with a friendly
+    validation error on upload (no account is created), so the constraint never
+    surfaces as an `IntegrityError`.
+  - **Production deploy gate:** before the migration making this column
+    non-null is deployed to production, production must be confirmed to have
+    **zero** null-distributor accounts. Dev was audited clean (0 nulls) so the
+    migration there is a simple `AlterField` with no data migration.
 - Accounts have a nullable FK to MasterAccount for future
   deduplication logic
 - Account attributes: distributor, county, city,
