@@ -87,6 +87,21 @@
         </tbody>
       </table>
     </div>
+
+    {% if batch.notes %}
+    <!-- Notes / Audit history -->
+    <div class="card mt-3 border-warning">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-journal-text me-2"></i>Notes / Audit history
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">
+          System-recorded changes to this batch's data (e.g., data replaced by a later import).
+        </p>
+        <div class="small">{{ batch.notes|linebreaksbr }}</div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 
   <!-- Auto-created accounts -->

@@ -901,3 +901,48 @@ class ReplaceOnImportTest(ImportTestBase):
         # Original days are gone.
         self.assertFalse(may.filter(sale_date__day=1).exists())
         self.assertFalse(may.filter(sale_date__day=28).exists())
+
+
+# ---------------------------------------------------------------------------
+# Import History — audit-note display (detail card + list indicator)
+# ---------------------------------------------------------------------------
+
+class ImportHistoryNotesDisplayTest(ImportTestBase):
+    """The replace-on-import audit note (ImportBatch.notes) is surfaced in the UI."""
+
+    NOTE = 'Apr 2026 data deleted and replaced by import on 2026-06-04 by admin.'
+
+    def setUp(self):
+        super().setUp()
+        self.user = _make_supplier_admin(self.company)
+        self.client = Client()
+        self.client.login(username='admin', password='testpass')
+        self.noted = ImportBatch.objects.create(
+            company=self.company, distributor=self.distributor,
+            import_type=ImportBatch.ImportType.SALES_DATA,
+            filename='old.csv', status=ImportBatch.Status.COMPLETE,
+            notes=self.NOTE,
+        )
+        self.plain = ImportBatch.objects.create(
+            company=self.company, distributor=self.distributor,
+            import_type=ImportBatch.ImportType.SALES_DATA,
+            filename='new.csv', status=ImportBatch.Status.COMPLETE,
+        )
+
+    def test_batch_detail_shows_notes_when_present(self):
+        resp = self.client.get(reverse('batch_detail', args=[self.noted.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Notes / Audit history')
+        self.assertContains(resp, self.NOTE)
+
+    def test_batch_detail_hides_notes_when_empty(self):
+        resp = self.client.get(reverse('batch_detail', args=[self.plain.pk]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'Notes / Audit history')
+
+    def test_batch_list_indicates_notes(self):
+        resp = self.client.get(reverse('batch_list'))
+        self.assertEqual(resp.status_code, 200)
+        # The list shows BOTH batches; only the noted one carries the indicator,
+        # so the indicator tooltip text appears exactly once.
+        self.assertContains(resp, 'data was modified by a later import', count=1)

@@ -284,6 +284,14 @@ rows for multiple distributors in a single file.
     batches remain deferred (see `REFACTORING_BACKLOG.md`).
   - Relies on `Account.distributor` being non-null + PROTECT, so the
     `account__distributor` overlap/delete path can't be null (no null guard needed).
+  - *Audit note is surfaced in the UI:* the appended `ImportBatch.notes` shows as a
+    "Notes / Audit history" card on the **batch detail** page (multi-line, one line
+    per replace event; hidden when empty), and the **Import History list** shows a
+    "Notes" indicator on batches that carry notes. Because the note lands on the
+    *older* replaced batch (which sorts below the newer replacement batch), the list
+    indicator is what makes it discoverable. The deeper awkwardness — two batches per
+    replaced month (stale old + fresh new) — remains the deferred
+    per-`(distributor, month)` batch item in `REFACTORING_BACKLOG.md`.
 - Unknown item codes (Item Name ID values not present in ItemMapping) trigger
   a redirect to `/imports/resolve-mappings/` with `next_url` pointing back to
   the sales upload page; after saving mappings the user re-uploads the CSV
