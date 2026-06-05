@@ -1232,7 +1232,11 @@
       var statusLabel = '';
       _statusChoices.forEach(function (sc) { if (sc[0] === savedPo.status) statusLabel = sc[1]; });
       var statusBg = savedPo.status === 'actual' ? 'success' : (savedPo.status === 'cancelled' ? 'danger' : (savedPo.status === 'invoiced' ? 'dark' : 'warning text-dark'));
-      html += '<span class="badge bg-' + statusBg + '">' + (statusLabel || savedPo.status) + '</span></div>';
+      html += '<span class="badge bg-' + statusBg + '">' + (statusLabel || savedPo.status) + '</span>';
+      if (savedPo.so_number) {
+        html += '<span class="badge bg-light text-dark border">SO# ' + savedPo.so_number + '</span>';
+      }
+      html += '</div>';
       // Only projected POs may be deleted. For any other (saved) status, show the
       // button DISABLED with an explanatory note. Enforced again on the backend.
       if (savedPo.status === 'projected') {

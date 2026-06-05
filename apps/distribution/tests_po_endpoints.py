@@ -198,6 +198,18 @@ class DistributorPOModalDataTest(TestCase):
         self.assertEqual(len(data['saved_orders'][0]['lines']), 1)
         self.assertEqual(data['saved_orders'][0]['lines'][0]['item_id'], self.item.pk)
 
+    # saved_orders include so_number (for SO# display in the modal)
+    def test_single_modal_data_includes_so_number(self):
+        po = _make_po(self.dist, 2026, 5, status='submitted', ext_po='PO-3')
+        po.so_number = 8888
+        po.save(update_fields=['so_number'])
+        _make_po_line(po, self.item, 24)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('so_number', data['saved_orders'][0])
+        self.assertEqual(data['saved_orders'][0]['so_number'], 8888)
+
     # 9. Modal data does NOT include suggested_orders (suggestions are now on-demand)
     def test_modal_data_includes_suggested_orders_structure(self):
         self.dist.order_quantity_value = 2

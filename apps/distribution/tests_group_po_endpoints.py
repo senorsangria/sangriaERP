@@ -65,6 +65,19 @@ class GroupPOModalDataTest(TestCase):
         self.assertTrue(primary_po['is_primary'])
         self.assertFalse(other_po['is_primary'])
 
+    # 1b. saved_orders include so_number (for SO# display in the modal)
+    def test_group_modal_data_includes_so_number(self):
+        po = _make_po(self.primary, 2026, 5, status='submitted', ext_po='PO-9')
+        po.so_number = 7777
+        po.save(update_fields=['so_number'])
+        _make_po_line(po, self.item, 24)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        primary_po = next(o for o in data['saved_orders'] if o['distributor_pk'] == self.primary.pk)
+        self.assertIn('so_number', primary_po)
+        self.assertEqual(primary_po['so_number'], 7777)
+
     # 2. Response includes items list with active group items
     def test_group_modal_data_includes_items_active_for_any_member(self):
         resp = self.client.get(self.url)
@@ -204,8 +217,8 @@ class GroupPOSaveTest(TestCase):
         self.assertFalse(DistributorPO.objects.filter(pk=po.pk).exists())
 
     # 8c. Save-path deletion is rejected for non-projected primary POs (persisted
-    #     status drives eligibility; the group path only accepts submitted
-    #     'projected'/'actual', so 'actual' is the representative non-projected case)
+    #     status drives eligibility; the group path now accepts all statuses, so
+    #     'actual' is a representative non-projected case)
     def test_group_save_path_delete_rejected_when_not_projected(self):
         po = _make_po(self.primary, 2026, 6, status='actual', ext_po='PO-7')
         _make_po_line(po, self.item, 24)
@@ -249,6 +262,61 @@ class GroupPOSaveTest(TestCase):
         resp = self._post(payload)
         self.assertEqual(resp.status_code, 400)
         self.assertIn('PO number', resp.json()['error'])
+
+    # --- Parity: full status range + SO# assignment (mirrors the single path) ---
+
+    # Previously the group save rejected any status beyond projected/actual.
+    # It now accepts the full DistributorPO.Status range, like the single save.
+    def test_group_po_save_accepts_all_statuses(self):
+        for status in ('submitted', 'in_transit', 'delivered', 'invoiced', 'cancelled'):
+            payload = self._payload(orders=[{
+                'id': None, 'status': status, 'external_po_number': '', 'notes': '',
+                'lines': [{'item_id': self.item.pk, 'quantity_cases': 10}],
+            }])
+            resp = self._post(payload)
+            self.assertEqual(resp.status_code, 200, f'status {status!r} should be accepted')
+            self.assertTrue(resp.json()['ok'])
+        # All five POs were created against the primary distributor.
+        self.assertEqual(
+            DistributorPO.objects.filter(distributor=self.primary, year=2026, month=6).count(),
+            5,
+        )
+
+    # Submitting via the group save assigns an SO# (company-scoped), exactly like
+    # the single path. First SO# uses company.so_sequence_start.
+    def test_group_po_save_assigns_so_number_on_submitted(self):
+        self.company.so_sequence_start = 3000
+        self.company.save(update_fields=['so_sequence_start'])
+        payload = self._payload(orders=[{
+            'id': None, 'status': 'submitted', 'external_po_number': '', 'notes': '',
+            'lines': [{'item_id': self.item.pk, 'quantity_cases': 24}],
+        }])
+        resp = self._post(payload)
+        self.assertEqual(resp.status_code, 200)
+        po = DistributorPO.objects.get(distributor=self.primary, year=2026, month=6)
+        self.assertEqual(po.status, 'submitted')
+        self.assertEqual(po.so_number, 3000)
+
+    # An SO# assigned via the group path is an ordinary company-scoped SO# —
+    # it follows MAX+1 alongside single-path SO#s in the same company.
+    def test_group_po_submitted_so_number_matches_single_behavior(self):
+        from apps.distribution.models import assign_so_number
+        self.company.so_sequence_start = 5000
+        self.company.save(update_fields=['so_sequence_start'])
+        # A single-path submitted PO on a member distributor → SO# 5000.
+        existing = _make_po(self.other, 2026, 5, status='submitted', ext_po='PO-X')
+        assign_so_number(existing)
+        existing.save(update_fields=['so_number'])
+        self.assertEqual(existing.so_number, 5000)
+        # A group submitted PO → next sequential SO# 5001.
+        payload = self._payload(orders=[{
+            'id': None, 'status': 'submitted', 'external_po_number': '', 'notes': '',
+            'lines': [{'item_id': self.item.pk, 'quantity_cases': 24}],
+        }])
+        resp = self._post(payload)
+        self.assertEqual(resp.status_code, 200)
+        group_po = DistributorPO.objects.get(distributor=self.primary, year=2026, month=6)
+        self.assertEqual(group_po.so_number, 5001)
 
     # 12. Item IDs from another company are rejected
     def test_group_po_save_rejects_invalid_item_id(self):

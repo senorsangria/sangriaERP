@@ -1397,6 +1397,7 @@ def distributor_po_modal_data(request, dist_pk, year, month):
             'external_po_number': po.external_po_number,
             'notes': po.notes,
             'generated_by_algorithm': po.generated_by_algorithm,
+            'so_number': po.so_number,
             'lines': [
                 {
                     'item_id': line.item_id,
@@ -1690,6 +1691,7 @@ def distributor_group_forecast(request, group_pk):
         'orders_result': orders_result,
         'available_distributors': available_distributors,
         'available_groups': available_groups,
+        'po_status_choices': DistributorPO.Status.choices,
     })
 
 
@@ -1768,6 +1770,7 @@ def distributor_group_orders_modal_data(request, group_pk, year, month):
             'external_po_number': po.external_po_number or '',
             'notes': po.notes or '',
             'generated_by_algorithm': po.generated_by_algorithm,
+            'so_number': po.so_number,
             'is_primary': po.distributor_id == primary.pk,
             'distributor_name': po.distributor.name,
             'distributor_pk': po.distributor_id,
@@ -1898,10 +1901,12 @@ def distributor_group_po_save(request, group_pk):
     all_item_ids = set()
     existing_po_ids = []
 
+    valid_statuses = [s[0] for s in DistributorPO.Status.choices]
+
     for i, order_data in enumerate(orders):
         label = f'Order {i + 1}'
         status = order_data.get('status', 'projected')
-        if status not in ('projected', 'actual'):
+        if status not in valid_statuses:
             errors.append(f'{label}: invalid status "{status}"')
             continue
 
@@ -2005,9 +2010,11 @@ def distributor_group_po_save(request, group_pk):
                         po.external_po_number = po_number
                         po.notes = notes
                         po.generated_by_algorithm = False
-                        po.save(update_fields=[
-                            'status', 'external_po_number', 'notes', 'generated_by_algorithm',
-                        ])
+                        update_fields = ['status', 'external_po_number', 'notes', 'generated_by_algorithm']
+                        if status == DistributorPO.Status.SUBMITTED and po.so_number is None:
+                            assign_so_number(po)
+                            update_fields.append('so_number')
+                        po.save(update_fields=update_fields)
                         po.lines.all().delete()
                         for line in nonzero_lines:
                             DistributorPOLine.objects.create(
@@ -2018,7 +2025,7 @@ def distributor_group_po_save(request, group_pk):
                 else:
                     if not nonzero_lines:
                         continue
-                    po = DistributorPO.objects.create(
+                    po = DistributorPO(
                         distributor=primary,
                         year=year,
                         month=month,
@@ -2028,6 +2035,9 @@ def distributor_group_po_save(request, group_pk):
                         generated_by_algorithm=False,
                         created_by=request.user,
                     )
+                    if status == DistributorPO.Status.SUBMITTED:
+                        assign_so_number(po)
+                    po.save()
                     for line in nonzero_lines:
                         DistributorPOLine.objects.create(
                             po=po,

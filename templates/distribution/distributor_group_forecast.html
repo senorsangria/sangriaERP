@@ -285,6 +285,12 @@
 
   var MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+  // All 7 status choices for the modal dropdown (mirrors the single-distributor modal)
+  var _statusChoices = [
+    {% for value, label in po_status_choices %}['{{ value }}', '{{ label }}']{% if not forloop.last %},{% endif %}
+    {% endfor %}
+  ];
+
   // Populate static banner text from data-attributes
   var _pnEl = document.getElementById('po-modal-primary-name');
   var _gnEl = document.getElementById('po-modal-group-name');
@@ -484,10 +490,24 @@
       html += '<span class="badge bg-' + (savedPo.generated_by_algorithm ? 'secondary' : 'primary') + '">';
       html += savedPo.generated_by_algorithm ? 'Algorithm' : 'Manual';
       html += '</span>';
-      html += '<span class="badge bg-' + (savedPo.status === 'actual' ? 'success' : 'warning text-dark') + '">';
-      html += savedPo.status === 'actual' ? 'Actual' : 'Projected';
-      html += '</span></div>';
-      html += '<button type="button" class="btn btn-outline-danger btn-sm po-delete-btn">Delete Order</button>';
+      var statusLabel = '';
+      _statusChoices.forEach(function (sc) { if (sc[0] === savedPo.status) statusLabel = sc[1]; });
+      var statusBg = savedPo.status === 'actual' ? 'success' : (savedPo.status === 'cancelled' ? 'danger' : (savedPo.status === 'invoiced' ? 'dark' : 'warning text-dark'));
+      html += '<span class="badge bg-' + statusBg + '">' + (statusLabel || savedPo.status) + '</span>';
+      if (savedPo.so_number) {
+        html += '<span class="badge bg-light text-dark border">SO# ' + savedPo.so_number + '</span>';
+      }
+      html += '</div>';
+      // Only projected POs may be deleted. For any other (saved) status, show the
+      // button DISABLED with an explanatory note. Enforced again on the backend.
+      if (savedPo.status === 'projected') {
+        html += '<button type="button" class="btn btn-outline-danger btn-sm po-delete-btn">Delete Order</button>';
+      } else {
+        html += '<div class="text-end">';
+        html += '<button type="button" class="btn btn-outline-danger btn-sm" disabled>Delete Order</button>';
+        html += '<div class="text-muted small mt-1">Only projected POs can be deleted.</div>';
+        html += '</div>';
+      }
     } else {
       html += suggestedOrder
         ? '<span class="badge bg-info text-dark">Algorithm suggestion</span>'
@@ -502,8 +522,9 @@
     html += '<div class="row g-2 mb-3">';
     html += '<div class="col-sm-3"><label class="form-label small text-muted mb-1">Status</label>';
     html += '<select class="form-select form-select-sm po-status-select">';
-    html += '<option value="projected"' + (curStatus === 'projected' ? ' selected' : '') + '>Projected</option>';
-    html += '<option value="actual"' + (curStatus === 'actual' ? ' selected' : '') + '>Actual</option>';
+    _statusChoices.forEach(function (sc) {
+      html += '<option value="' + sc[0] + '"' + (curStatus === sc[0] ? ' selected' : '') + '>' + sc[1] + '</option>';
+    });
     html += '</select></div>';
     html += '<div class="col-sm-4"><label class="form-label small text-muted mb-1">PO Number <span class="text-muted">(required if Actual)</span></label>';
     html += '<input type="text" class="form-control form-control-sm po-number-input" value="' + _esc(curPoNum) + '"></div>';

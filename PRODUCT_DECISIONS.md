@@ -4451,6 +4451,15 @@ The nav system has no submenu/child-item concept — flat list only.
 - **Tab labeling:** Non-primary (read-only) tabs labeled by distributor name; editable tabs labeled "Order N".
 - **`_esc()` in group modal JS** uses DOM-based approach (safer than the string-replace version in the individual modal).
 
+### Group PO creation — full parity with single-distributor PO creation
+
+- **Why this is safe with no schema change:** a group PO is *literally the primary distributor's `DistributorPO`* — there is no group-origin marker on the model. The group save was simply a restricted copy of `distributor_po_save` (statuses limited to `projected`/`actual`, no SO# assignment, no projected-only delete affordance in its modal). Giving it full capability therefore required **no migration** (`DistributorPO` already has `status` and `so_number`).
+- **Full status range:** `distributor_group_po_save` now accepts all 7 `DistributorPO.Status` choices (was `projected`/`actual` only), using the identical validation as the single path (`valid_statuses = [s[0] for s in DistributorPO.Status.choices]`).
+- **SO# assignment on submit:** mirrors the single path exactly — when a PO's status is `submitted`, `assign_so_number(po)` is called on both the create and update branches (idempotent, company-scoped `MAX+1` / `so_sequence_start`). An SO# assigned via the group modal is an ordinary company-scoped SO#, indistinguishable from a single-path SO# (intended — it's the primary's PO).
+- **Group modal now matches the single modal exactly** for the three areas that were previously a less-complete copy: the **status dropdown** renders all 7 statuses (injected via `po_status_choices`, same as single), the **delete affordance** is projected-only (enabled for projected; disabled + "Only projected POs can be deleted." note otherwise), and the **status badge** uses the full multi-status color logic (actual=success, cancelled=danger, invoiced=dark, else warning). Copied verbatim so the two modals stay identical here (keeps a future merge trivial).
+- **Retained group-specific behavior (NOT broadened):** the **primary-only edit scope** (existing PO IDs must belong to the primary; "only primary distributor POs may be edited from the group view") and its paired **read-only member-PO tabs**, the **info banner**, the **`primary_distributor` data key**, and the **all-members saved-orders scope**. The **projected-only delete guard** was already at parity and is unchanged.
+- **SO# now displayed (read-only) in BOTH PO modals.** Previously the SO# was visible only on the Distributor POs tab table. Both `distributor_po_modal_data` and `distributor_group_orders_modal_data` now include `so_number` in each saved order, and both modals' `buildOrderForm` render a muted "SO# N" badge beside the status badge when an SO# is present (nothing shown for projected/unsubmitted or new orders). SO# remains system-generated — never an input.
+
 ---
 
 ## Inventory Mapping UX
