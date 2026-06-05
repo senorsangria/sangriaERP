@@ -489,6 +489,108 @@ class GroupForecastViewTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Forecast TAB group-mode tests (consolidation part 1) — selecting a group
+# via ?forecast_group=N renders the group forecast INSIDE the Forecast tab.
+# The standalone distributor_group_forecast page still exists (fallback).
+# ---------------------------------------------------------------------------
+
+class GroupForecastTabTest(TestCase):
+
+    def setUp(self):
+        self.company = _make_company('Tab Test Co')
+        self.admin = _make_supplier_admin(self.company, 'tab_admin')
+        self.brand = _make_brand(self.company)
+        self.item_a = _make_item(self.brand, name='Item A', item_code='ITMA', sort_order=1)
+        self.item_b = _make_item(self.brand, name='Item B', item_code='ITMB', sort_order=2)
+
+        self.acme = _make_distributor(self.company, name='Acme Dist')
+        self.bayside = _make_distributor(self.company, name='Bayside Dist')
+        self.group = _make_group(
+            self.company, 'MA Group', self.acme, [self.acme, self.bayside]
+        )
+
+        self.client = Client()
+        self.client.login(username='tab_admin', password='testpass123')
+        self.tab_url = reverse('distributor_list') + f'?tab=forecast&forecast_group={self.group.pk}'
+
+    def _add_aligned_snapshots(self, year=2026, month=3):
+        for dist in [self.acme, self.bayside]:
+            _make_snapshot(dist, self.item_a, year, month, quantity=100)
+            _make_snapshot(dist, self.item_b, year, month, quantity=100)
+
+    # 1. Aligned group renders the forecast grid in-tab
+    def test_forecast_tab_renders_group_ok(self):
+        self._add_aligned_snapshots()
+        resp = self.client.get(self.tab_url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['forecast_result']['alignment_status'], 'ok')
+        self.assertEqual(resp.context['forecast_group'], self.group)
+        self.assertTrue(resp.context['forecast_result']['rows'])
+        # The aligned group grid renders (its in-tab generation note is present)
+        self.assertContains(resp, 'Generate group orders')
+        self.assertNotContains(resp, 'snapshots not aligned')
+
+    # 2. Misaligned group renders the alignment panel (partial), no grid
+    def test_forecast_tab_renders_group_misaligned(self):
+        # Acme has snapshots; Bayside requires Item A but has none → misaligned
+        DistributorItemProfile.objects.create(
+            distributor=self.bayside, item=self.item_a, is_active=True
+        )
+        _make_snapshot(self.acme, self.item_a, 2026, 3, quantity=100)
+        _make_snapshot(self.acme, self.item_b, 2026, 3, quantity=100)
+
+        resp = self.client.get(self.tab_url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['forecast_result']['alignment_status'], 'misaligned')
+        self.assertContains(resp, 'snapshots not aligned')
+        self.assertContains(resp, self.bayside.name)
+        # No order-generation grid in the misaligned state
+        self.assertNotContains(resp, 'Generate group orders')
+
+    # 3. Group with no members renders the no_data card
+    def test_forecast_tab_renders_group_no_data(self):
+        lone_primary = _make_distributor(self.company, name='Lone Primary')
+        empty_group = DistributorGroup.objects.create(
+            company=self.company, name='Empty Group', primary_distributor=lone_primary,
+        )
+        url = reverse('distributor_list') + f'?tab=forecast&forecast_group={empty_group.pk}'
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['forecast_result']['alignment_status'], 'no_data')
+        self.assertContains(resp, 'Group has no members')
+
+    # 4. Group mode does not set forecast_distributor
+    def test_forecast_tab_group_does_not_set_forecast_distributor(self):
+        self._add_aligned_snapshots()
+        resp = self.client.get(self.tab_url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.context['forecast_distributor'])
+        self.assertEqual(resp.context['forecast_group'], self.group)
+        self.assertEqual(resp.context['primary_distributor'], self.acme)
+
+    # 5. Single-distributor mode still works (regression guard)
+    def test_forecast_tab_single_still_works(self):
+        solo = _make_distributor(self.company, name='Solo Dist')
+        _make_snapshot(solo, self.item_a, 2026, 3, quantity=100)
+        url = reverse('distributor_list') + f'?tab=forecast&forecast_distributor={solo.pk}'
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['forecast_distributor'], solo)
+        self.assertIsNone(resp.context['forecast_group'])
+        self.assertTrue(resp.context['forecast_result']['rows'])
+
+    # 6. Dropdown group option points into the tab, not the standalone page
+    def test_forecast_dropdown_group_option_points_to_tab(self):
+        resp = self.client.get(reverse('distributor_list') + '?tab=forecast')
+        self.assertEqual(resp.status_code, 200)
+        # Literal '&' in the template is not auto-escaped (only variable output is)
+        self.assertContains(resp, f'data-url="?tab=forecast&forecast_group={self.group.pk}"')
+        # The group option no longer links to the standalone group URL
+        standalone = reverse('distributor_group_forecast', args=[self.group.pk])
+        self.assertNotContains(resp, f'data-url="{standalone}"')
+
+
+# ---------------------------------------------------------------------------
 # Modal endpoint tests
 # ---------------------------------------------------------------------------
 

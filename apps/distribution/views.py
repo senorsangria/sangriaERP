@@ -442,6 +442,8 @@ def distributor_list(request):
     forecast_result = None
     orders_result = None
     forecast_distributor = None
+    forecast_group = None
+    primary_distributor = None
     available_distributors = []
     available_groups = []
 
@@ -570,11 +572,57 @@ def distributor_list(request):
             .order_by('name')
         )
         available_groups = list(DistributorGroup.objects.filter(company=company).order_by('name'))
-        # No auto-selection: the forecast is only computed when a distributor is
-        # explicitly chosen via ?forecast_distributor=. The dropdown defaults to
-        # a "Select a distributor" prompt with a friendly empty state below.
+        # No auto-selection: the forecast is only computed when a distributor or
+        # group is explicitly chosen via ?forecast_distributor= / ?forecast_group=.
+        # The dropdown defaults to a "Select a distributor" prompt with a friendly
+        # empty state below. The two params are mutually exclusive; if both are
+        # present, the group takes precedence.
+        forecast_group_pk = request.GET.get('forecast_group', '')
         forecast_dist_pk = request.GET.get('forecast_distributor', '')
-        if forecast_dist_pk:
+        if forecast_group_pk:
+            # Group mode: render the aggregated group forecast in-tab. Mirrors the
+            # standalone distributor_group_forecast view's body (kept as a fallback
+            # until the modal is unified). Distributor mode is skipped entirely.
+            try:
+                group_pk = int(forecast_group_pk)
+                forecast_group = DistributorGroup.objects.filter(
+                    company=company, pk=group_pk
+                ).select_related('primary_distributor').first()
+            except (ValueError, TypeError):
+                forecast_group = None
+            if forecast_group:
+                primary_distributor = forecast_group.primary_distributor
+                members = list(forecast_group.members.all())
+
+                # Build po_additions and saved_pos_by_month from all member POs
+                saved_pos = list(
+                    DistributorPO.objects.filter(distributor__in=members)
+                    .prefetch_related('lines')
+                )
+                po_additions = {}
+                saved_pos_by_month = {}
+                for po in saved_pos:
+                    ym = (po.year, po.month)
+                    saved_pos_by_month.setdefault(ym, []).append(po)
+                    for line in po.lines.all():
+                        key = (line.item_id, po.year, po.month)
+                        po_additions[key] = po_additions.get(key, 0.0) + float(line.quantity_cases)
+
+                forecast_result = compute_group_forecast(
+                    forecast_group, po_additions=po_additions or None,
+                )
+
+                # Orders are only generated when the group's snapshots align.
+                if forecast_result.get('alignment_status') == 'ok':
+                    orders_result = generate_projected_orders(
+                        primary_distributor, forecast_result,
+                    )
+                    for slot in orders_result.get('orders_per_horizon', []):
+                        ym = (slot['year'], slot['month'])
+                        saved_count = len(saved_pos_by_month.get(ym, []))
+                        slot['saved_count'] = saved_count
+                        slot['total_count'] = saved_count
+        elif forecast_dist_pk:
             try:
                 pk = int(forecast_dist_pk)
                 forecast_distributor = next(
@@ -771,6 +819,8 @@ def distributor_list(request):
         'forecast_result': forecast_result,
         'orders_result': orders_result,
         'forecast_distributor': forecast_distributor,
+        'forecast_group': forecast_group,
+        'primary_distributor': primary_distributor,
         'available_distributors': available_distributors,
         'available_groups': available_groups,
         # Distributor POs / Invoiced POs tabs

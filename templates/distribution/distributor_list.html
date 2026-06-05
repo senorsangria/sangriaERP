@@ -454,7 +454,7 @@
     <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
       <h4 class="mb-0 fw-semibold">Forecast for</h4>
       <select id="forecast-distributor-select" class="form-select form-select-sm" style="max-width:340px;">
-        <option value="" {% if not forecast_distributor %}selected{% endif %}>Select a distributor…</option>
+        <option value="" {% if not forecast_distributor and not forecast_group %}selected{% endif %}>Select a distributor…</option>
         <optgroup label="Distributors">
           {% for dist in available_distributors %}
           <option value="dist-{{ dist.pk }}"
@@ -467,7 +467,9 @@
         {% if available_groups %}
         <optgroup label="Groups">
           {% for g in available_groups %}
-          <option value="group-{{ g.pk }}" data-url="{% url 'distributor_group_forecast' g.pk %}">
+          <option value="group-{{ g.pk }}"
+                  data-url="?tab=forecast&forecast_group={{ g.pk }}"
+                  {% if forecast_group and g.pk == forecast_group.pk %}selected{% endif %}>
             {{ g.name }}
           </option>
           {% endfor %}
@@ -483,14 +485,126 @@
     </div>
     {% endif %}
 
-    {% if not forecast_distributor %}
-    <!-- No distributor selected — friendly empty state -->
+    {% if not forecast_distributor and not forecast_group %}
+    <!-- Nothing selected — friendly empty state -->
     <div class="card border-0 shadow-sm" id="forecast-empty-state">
       <div class="card-body text-center py-5 text-muted">
         <i class="bi bi-arrow-up-circle fs-1 d-block mb-3"></i>
         <p class="mb-0">Select a distributor to view the forecast.</p>
       </div>
     </div>
+
+    {% elif forecast_group %}
+      <!-- GROUP MODE — aggregated group forecast rendered in-tab.
+           Prompt A scope: the forecast grid is shown read-only for order
+           generation. Generating group POs still routes to the standalone
+           group forecast page until the modal is unified (Prompt B). -->
+      {% if forecast_result.alignment_status == 'ok' %}
+        {% if not forecast_result.rows %}
+        <!-- Aligned but no active items -->
+        <div class="card border-0 shadow-sm">
+          <div class="card-body text-center py-4 text-muted">
+            No active items configured for this group.
+          </div>
+        </div>
+        {% else %}
+
+        {% if orders_result and orders_result.skipped_items %}
+        <div class="alert alert-warning small mb-3">
+          <strong>⚠ Some items were excluded from order projections:</strong>
+          <ul class="mb-0 mt-1">
+            {% for skipped in orders_result.skipped_items %}
+            <li>
+              <strong>{{ skipped.item.name }}</strong> ({{ skipped.item.item_code }}):
+              {% if skipped.reason == 'no_cases_per_pallet' %}
+                Missing "cases per pallet" — set this on the
+                <a href="{% url 'item_edit' skipped.item.brand.pk skipped.item.pk %}">item edit page</a>.
+              {% elif skipped.reason == 'no_depletion_data' %}
+                No prior year sales data available to project depletion.
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+
+        <!-- Temporary (Prompt A): generation still happens on the standalone page. -->
+        <div class="alert alert-info py-2 mb-3 small">
+          Generate group orders from the
+          <a href="{% url 'distributor_group_forecast' forecast_group.pk %}">group forecast page →</a>
+        </div>
+
+        <div class="card border-0 shadow-sm">
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered forecast-table mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th rowspan="2" class="align-middle small fw-semibold" style="min-width:130px;">Item</th>
+                  {% for span in forecast_result.year_spans %}
+                  <th colspan="{{ span.colspan }}" class="text-center small fw-semibold border-start">{{ span.year }}</th>
+                  {% endfor %}
+                </tr>
+                <tr>
+                  {% for h in forecast_result.horizon %}
+                  <th class="text-center small border-start forecast-cell"
+                      {% if h.is_snapshot %}title="Aggregated on-hand inventory across all group members"{% endif %}>
+                    {{ h.month_short }}{% if h.is_snapshot %} *{% endif %}
+                  </th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                <!-- Orders row — read-only counts in Prompt A (no in-tab generation yet) -->
+                {% if orders_result %}
+                <tr class="forecast-orders-row">
+                  <td class="small fw-semibold">Orders</td>
+                  {% if not orders_result.has_order_profile %}
+                    <td colspan="13" class="text-center small text-warning">
+                      ⚠ No order profile configured for {{ primary_distributor.name }} —
+                      <a href="{% url 'distributor_edit' primary_distributor.pk %}?tab=order-profile">configure order quantity</a>.
+                    </td>
+                  {% else %}
+                    {% for slot in orders_result.orders_per_horizon %}
+                      {% if slot.is_snapshot %}
+                        <td class="text-center small text-muted">—</td>
+                      {% else %}
+                        <td class="text-center small">
+                          {% if slot.saved_count > 0 %}
+                            <span class="badge bg-primary">{{ slot.total_count }}</span>
+                          {% else %}—{% endif %}
+                        </td>
+                      {% endif %}
+                    {% endfor %}
+                  {% endif %}
+                </tr>
+                {% endif %}
+                {% for row in forecast_result.rows %}
+                <tr>
+                  <td class="small fw-medium">{{ row.item.name }}</td>
+                  {% for cell in row.monthly_data %}
+                  <td class="text-center small forecast-cell forecast-{{ cell.status }}"
+                      {% if cell.reason %}title="{{ cell.reason }}"{% endif %}>
+                    {% if cell.status == 'no_data' %}
+                      —
+                    {% elif cell.inventory < 0 %}
+                      <strong>{{ cell.inventory_display }}</strong>
+                    {% else %}
+                      {{ cell.inventory_display }}
+                    {% endif %}
+                  </td>
+                  {% endfor %}
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+      {% else %}
+        <!-- misaligned / no_data states -->
+        {% include "distribution/_group_alignment_panel.html" %}
+      {% endif %}
+
     {% elif forecast_result %}
       {% if forecast_result.message %}
       <!-- No snapshots for selected distributor -->
