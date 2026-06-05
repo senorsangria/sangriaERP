@@ -2791,3 +2791,29 @@ class EventItemRecapProtectTest(TestCase):
         except ProtectedError:
             pass
         self.assertTrue(EventItemRecap.objects.filter(pk=self.recap.pk).exists())
+
+
+# ---------------------------------------------------------------------------
+# Event listing: weekday name under the date
+# ---------------------------------------------------------------------------
+
+class EventListWeekdayTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_user(self.company, "supplier_admin", username="admin")
+        self.account = make_account(self.company)
+        self.client = Client()
+        self.client.login(username="admin", password="testpass123")
+
+    def test_event_listing_shows_weekday(self):
+        event_date = date(2026, 6, 9)  # a Tuesday
+        make_event(
+            self.company, self.admin, Event.EventType.SPECIAL_EVENT,
+            status=Event.Status.SCHEDULED,
+            date=event_date, account=self.account,
+        )
+        resp = self.client.get(reverse("event_list"))
+        self.assertEqual(resp.status_code, 200)
+        # The full weekday name (Django's date:"l") renders under the date.
+        self.assertContains(resp, event_date.strftime("%A"))

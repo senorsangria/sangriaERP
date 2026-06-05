@@ -762,3 +762,39 @@ class SingleModalDataTest(POMixin):
         other_po = make_production_po(other_company, other_cp)
         r = self.client.get(self._single_url(po_pk=other_po.pk))
         self.assertEqual(r.status_code, 404)
+
+
+# ---------------------------------------------------------------------------
+# Post-save redirect target (Forecast grid, not Inventory)
+# ---------------------------------------------------------------------------
+
+class POCreationRedirectTest(POMixin):
+
+    def test_production_po_creation_redirects_to_forecast(self):
+        """A PO entered from the Forecast grid returns the user to the Forecast
+        tab (refreshed), not the Inventory tab.
+
+        The post-save navigation is client-side (the save endpoint returns
+        JSON), so we assert the production page renders the forecast-tab
+        redirect target that the save handler navigates to for forecast-grid
+        (month-mode) entries.
+        """
+        payload = {
+            'year': 2026, 'month': 7,
+            'pos': [{
+                'po_id': None,
+                'co_packer_id': self.cp1.pk,
+                'status': 'projected',
+                'external_po_number': '',
+                'notes': '',
+                'lines': [{'item_id': self.item1.pk, 'batch_count': 2}],
+            }],
+        }
+        resp = post_save(self.client, payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get('success'))
+        self.assertEqual(ProductionPO.objects.count(), 1)
+
+        page = self.client.get(reverse('production_home'))
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, '?tab=forecast')

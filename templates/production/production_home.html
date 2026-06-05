@@ -1240,7 +1240,15 @@
     .then(function (r) { return r.json(); })
     .then(function (data) {
       if (data.success) {
-        window.location.reload();
+        // Return the user to the tab they came from, refreshed. A PO entered
+        // from the Forecast grid (mode 'month') lands back on the Forecast grid
+        // so the just-saved order is reflected; a single-PO edit (mode 'single',
+        // opened from the Production POs tab) returns there. A bare reload would
+        // default to the Inventory tab, since tab switches are client-side only.
+        var dest = (_state.mode === 'single')
+          ? "{% url 'production_home' %}?tab=production_pos"
+          : "{% url 'production_home' %}?tab=forecast";
+        window.location.assign(dest);
       } else {
         saveBtn.disabled = false;
         saveBtn.textContent = 'Save All Orders';

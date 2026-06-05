@@ -113,7 +113,7 @@
                 <tr>
                   <td>
                     <div class="fw-medium">
-                      <a href="{% url 'distributor_detail' dist.pk %}" class="text-decoration-none text-dark">
+                      <a href="{% url 'distributor_edit' dist.pk %}?next={{ request.path|urlencode }}" class="text-decoration-none text-dark">
                         {{ dist.name }}
                       </a>
                       {% if dist == group_data.group.primary_distributor %}
@@ -148,9 +148,6 @@
                         <i class="bi bi-eye d-sm-none"></i>
                         <span class="d-none d-sm-inline">View</span>
                       </a>
-                      <a href="{% url 'distributor_edit' dist.pk %}?next={{ request.path|urlencode }}" class="btn btn-outline-secondary btn-sm">
-                        <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
-                      </a>
                       <form method="post" action="{% url 'distributor_toggle' dist.pk %}" class="d-inline">
                         {% csrf_token %}
                         {% if dist.is_active %}
@@ -183,7 +180,7 @@
                 <tr>
                   <td>
                     <div class="fw-medium">
-                      <a href="{% url 'distributor_detail' dist.pk %}" class="text-decoration-none text-dark">
+                      <a href="{% url 'distributor_edit' dist.pk %}?next={{ request.path|urlencode }}" class="text-decoration-none text-dark">
                         {{ dist.name }}
                       </a>
                     </div>
@@ -214,9 +211,6 @@
                       <a href="{% url 'distributor_detail' dist.pk %}" class="btn btn-outline-secondary btn-sm">
                         <i class="bi bi-eye d-sm-none"></i>
                         <span class="d-none d-sm-inline">View</span>
-                      </a>
-                      <a href="{% url 'distributor_edit' dist.pk %}?next={{ request.path|urlencode }}" class="btn btn-outline-secondary btn-sm">
-                        <i class="bi bi-pencil me-1 d-none d-sm-inline"></i>Edit
                       </a>
                       <form method="post" action="{% url 'distributor_toggle' dist.pk %}" class="d-inline">
                         {% csrf_token %}

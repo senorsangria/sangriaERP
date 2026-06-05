@@ -1086,3 +1086,50 @@ class InventoryBulkDeleteEndpointTest(TestCase):
         self._post_delete([snap.pk])
         self.assertFalse(InventorySnapshot.objects.filter(pk=snap.pk).exists())
         self.assertTrue(InventoryImportBatch.objects.filter(pk=batch.pk).exists())
+
+
+# ---------------------------------------------------------------------------
+# Distributor management listing navigation:
+#   - clicking the distributor name opens the edit form
+#   - the per-row Edit button is removed
+#   - the edit form's back-link returns to the listing (standard label)
+# ---------------------------------------------------------------------------
+
+class DistributorListingNavTest(TestCase):
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.distributor = make_distributor(self.company)
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def test_distributor_listing_name_links_to_edit(self):
+        resp = self.client.get(reverse('distributor_list'))
+        self.assertEqual(resp.status_code, 200)
+        list_url = reverse('distributor_list')
+        edit_url = reverse('distributor_edit', kwargs={'pk': self.distributor.pk})
+        # The distributor name link now points to the edit form (carrying a
+        # ?next back to the listing — Django's urlencode filter leaves the
+        # slashes in the path unescaped).
+        self.assertContains(
+            resp,
+            f'href="{edit_url}?next={list_url}" class="text-decoration-none text-dark"',
+        )
+        # ...and the redundant per-row Edit button is gone (its unique pencil
+        # icon class no longer renders in the rows).
+        self.assertNotContains(resp, 'bi-pencil me-1')
+
+    def test_distributor_edit_back_link(self):
+        resp = self.client.get(
+            reverse('distributor_edit', kwargs={'pk': self.distributor.pk})
+        )
+        self.assertEqual(resp.status_code, 200)
+        # Back-link returns to the distributor listing, using the standard
+        # "Back to Distributors" label rather than the distributor's name.
+        self.assertContains(
+            resp,
+            f'<a href="{reverse("distributor_list")}" class="text-muted text-decoration-none small">',
+        )
+        self.assertContains(resp, 'Back to Distributors')
+        self.assertNotContains(resp, f'Back to {self.distributor.name}')
