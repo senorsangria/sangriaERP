@@ -580,9 +580,9 @@ def distributor_list(request):
         forecast_group_pk = request.GET.get('forecast_group', '')
         forecast_dist_pk = request.GET.get('forecast_distributor', '')
         if forecast_group_pk:
-            # Group mode: render the aggregated group forecast in-tab. Mirrors the
-            # standalone distributor_group_forecast view's body (kept as a fallback
-            # until the modal is unified). Distributor mode is skipped entirely.
+            # Group mode: render the aggregated group forecast in-tab (this is the
+            # sole group-forecast surface — the standalone page was retired).
+            # Distributor mode is skipped entirely.
             try:
                 group_pk = int(forecast_group_pk)
                 forecast_group = DistributorGroup.objects.filter(
@@ -1684,66 +1684,12 @@ def distributor_po_delete(request, dist_pk, po_pk):
 
 
 # ---------------------------------------------------------------------------
-# Group forecast views (Phase G2)
+# Group PO endpoints (back the unified Forecast-tab #poModal in group mode)
+#
+# The standalone group forecast PAGE was retired once the Forecast tab learned
+# to render a group's forecast in-tab (?forecast_group=N, see distributor_list).
+# These endpoints — modal-data, save, suggest — remain as the modal's backend.
 # ---------------------------------------------------------------------------
-
-@login_required
-def distributor_group_forecast(request, group_pk):
-    """Read-only aggregated forecast for a DistributorGroup."""
-    if not request.user.has_permission('can_manage_distributor_inventory'):
-        return render(request, '403.html', status=403)
-
-    company = request.user.company
-    group = get_object_or_404(
-        DistributorGroup.objects.select_related('primary_distributor', 'company'),
-        pk=group_pk, company=company,
-    )
-    members = list(group.members.order_by('name'))
-    primary = group.primary_distributor
-
-    # Build po_additions and saved_pos_by_month from all member POs
-    saved_pos = list(
-        DistributorPO.objects.filter(distributor__in=members)
-        .select_related('distributor')
-        .prefetch_related('lines')
-    )
-    po_additions = {}
-    saved_pos_by_month = {}
-    for po in saved_pos:
-        ym = (po.year, po.month)
-        saved_pos_by_month.setdefault(ym, []).append(po)
-        for line in po.lines.all():
-            key = (line.item_id, po.year, po.month)
-            po_additions[key] = po_additions.get(key, 0.0) + float(line.quantity_cases)
-
-    forecast_result = compute_group_forecast(group, po_additions=po_additions or None)
-
-    orders_result = None
-    if forecast_result.get('alignment_status') == 'ok':
-        orders_result = generate_projected_orders(primary, forecast_result)
-        for slot in orders_result.get('orders_per_horizon', []):
-            ym = (slot['year'], slot['month'])
-            slot['saved_count'] = len(saved_pos_by_month.get(ym, []))
-            slot['total_count'] = slot['saved_count']
-
-    available_distributors = list(
-        Distributor.objects.filter(company=company, is_active=True)
-        .select_related('group', 'group__primary_distributor')
-        .order_by('name')
-    )
-    available_groups = list(DistributorGroup.objects.filter(company=company).order_by('name'))
-
-    return render(request, 'distribution/distributor_group_forecast.html', {
-        'group': group,
-        'members': members,
-        'primary_distributor': primary,
-        'forecast_result': forecast_result,
-        'orders_result': orders_result,
-        'available_distributors': available_distributors,
-        'available_groups': available_groups,
-        'po_status_choices': DistributorPO.Status.choices,
-    })
-
 
 @login_required
 def distributor_group_orders_modal_data(request, group_pk, year, month):

@@ -481,7 +481,7 @@
     {% if forecast_distributor and forecast_distributor.group %}
     <div class="alert alert-info py-2 mb-3 small">
       This distributor is part of <strong>{{ forecast_distributor.group.name }}</strong>.
-      <a href="{% url 'distributor_group_forecast' forecast_distributor.group.pk %}" class="ms-2">View Group Forecast →</a>
+      <a href="?tab=forecast&forecast_group={{ forecast_distributor.group.pk }}" class="ms-2">View Group Forecast →</a>
     </div>
     {% endif %}
 
@@ -495,10 +495,10 @@
     </div>
 
     {% elif forecast_group %}
-      <!-- GROUP MODE — aggregated group forecast rendered in-tab.
-           Prompt A scope: the forecast grid is shown read-only for order
-           generation. Generating group POs still routes to the standalone
-           group forecast page until the modal is unified (Prompt B). -->
+      <!-- GROUP MODE — aggregated group forecast rendered in-tab. Order-cell
+           buttons open the unified #poModal in group mode (isGroup): new POs
+           are created against the group's primary distributor via
+           distributor_group_po_save; member (non-primary) POs show read-only. -->
       {% if forecast_result.alignment_status == 'ok' %}
         {% if not forecast_result.rows %}
         <!-- Aligned but no active items -->
@@ -528,12 +528,6 @@
         </div>
         {% endif %}
 
-        <!-- Temporary (Prompt A): generation still happens on the standalone page. -->
-        <div class="alert alert-info py-2 mb-3 small">
-          Generate group orders from the
-          <a href="{% url 'distributor_group_forecast' forecast_group.pk %}">group forecast page →</a>
-        </div>
-
         <div class="card border-0 shadow-sm">
           <div class="table-responsive">
             <table class="table table-sm table-bordered forecast-table mb-0">
@@ -554,7 +548,7 @@
                 </tr>
               </thead>
               <tbody>
-                <!-- Orders row — read-only counts in Prompt A (no in-tab generation yet) -->
+                <!-- Orders row — opens the unified #poModal in group mode -->
                 {% if orders_result %}
                 <tr class="forecast-orders-row">
                   <td class="small fw-semibold">Orders</td>
@@ -568,10 +562,26 @@
                       {% if slot.is_snapshot %}
                         <td class="text-center small text-muted">—</td>
                       {% else %}
-                        <td class="text-center small">
-                          {% if slot.saved_count > 0 %}
-                            <span class="badge bg-primary">{{ slot.total_count }}</span>
-                          {% else %}—{% endif %}
+                        <td class="text-center small p-0 forecast-order-cell">
+                          {% if can_manage_inventory %}
+                          <button type="button"
+                                  class="btn btn-link p-1 w-100 forecast-order-btn"
+                                  data-url="{% url 'distributor_group_orders_modal_data' group_pk=forecast_group.pk year=slot.year month=slot.month %}"
+                                  data-year="{{ slot.year }}"
+                                  data-month="{{ slot.month }}"
+                                  data-is-group="1"
+                                  data-save-url="{% url 'distributor_group_po_save' group_pk=forecast_group.pk %}"
+                                  data-delete-base="/distributors/{{ primary_distributor.pk }}/po/"
+                                  data-suggest-pattern="/distributors/group/{{ forecast_group.pk }}/orders/YEAR/MONTH/suggest/">
+                            {% if slot.saved_count > 0 %}
+                              <span class="badge bg-primary">{{ slot.total_count }}</span>
+                            {% else %}—{% endif %}
+                          </button>
+                          {% else %}
+                            {% if slot.saved_count > 0 %}
+                              <span class="badge bg-primary">{{ slot.total_count }}</span>
+                            {% else %}—{% endif %}
+                          {% endif %}
                         </td>
                       {% endif %}
                     {% endfor %}
@@ -733,11 +743,12 @@
   </div>
 
   <!-- PO Modal (Phase 4-step-2b) —
-       Rendered for the Forecast tab (uses the selected distributor's URLs as
-       defaults) and for the Distributor POs tab (which overrides save/delete/
-       suggest URLs per-row via window.openDistributorPoModal), so the modal
-       element must exist there even when no forecast distributor is selected. -->
-  {% if forecast_distributor or active_tab == 'distributor_pos' %}
+       Rendered for the Forecast tab in single mode (uses the selected
+       distributor's URLs as defaults), in GROUP mode (the order-cell buttons
+       supply the group endpoints + isGroup via window.openDistributorPoModal),
+       and for the Distributor POs tab (which overrides save/delete/suggest URLs
+       per-row), so the modal element must exist when any of these is active. -->
+  {% if forecast_distributor or forecast_group or active_tab == 'distributor_pos' %}
   <div class="modal fade" id="poModal" tabindex="-1"
        aria-labelledby="poModalLabel" aria-hidden="true"
        {% if forecast_distributor %}
@@ -760,6 +771,8 @@
             </div>
           </div>
           <div id="po-modal-content" style="display:none;">
+            <!-- Group-mode banner (hidden in single mode; populated by the modal JS) -->
+            <div class="alert alert-info py-2 mb-3 small" id="po-modal-group-banner" style="display:none;"></div>
             <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
               <ul class="nav nav-pills flex-grow-1 flex-wrap" id="po-order-tabs" role="tablist"></ul>
               <button type="button" class="btn btn-outline-primary btn-sm" id="po-add-order-btn">
@@ -1175,12 +1188,24 @@
     orderUnit: null,
     tabs: [],
     nextTabId: 1,
+    isGroup: false,
   };
 
-  // Wire up order-cell buttons
+  // Wire up order-cell buttons. Group-mode buttons (data-is-group) carry the
+  // group endpoints and route through the override hook with isGroup=true;
+  // single-mode buttons use the modal's default (distributor) URLs.
   document.querySelectorAll('.forecast-order-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
-      openModal(btn.dataset.url, parseInt(btn.dataset.year, 10), parseInt(btn.dataset.month, 10));
+      var y = parseInt(btn.dataset.year, 10);
+      var m = parseInt(btn.dataset.month, 10);
+      if (btn.dataset.isGroup) {
+        window.openDistributorPoModal(
+          btn.dataset.url, y, m,
+          btn.dataset.saveUrl, btn.dataset.deleteBase, btn.dataset.suggestPattern, true
+        );
+      } else {
+        window.openDistributorPoModal(btn.dataset.url, y, m, null, null, null, false);
+      }
     });
   });
 
@@ -1239,6 +1264,8 @@
     document.getElementById('po-modal-period').textContent = MONTH_NAMES[month - 1] + ' ' + year;
     var distNameEl = document.getElementById('po-modal-distributor-name');
     if (distNameEl) distNameEl.textContent = '';
+    var bannerEl = document.getElementById('po-modal-group-banner');
+    if (bannerEl) bannerEl.style.display = 'none';
     document.getElementById('po-modal-loading').style.display = '';
     document.getElementById('po-modal-content').style.display = 'none';
     document.getElementById('po-modal-error').style.display = 'none';
@@ -1255,13 +1282,18 @@
         return r.json();
       })
       .then(function (data) {
-        _state.items     = data.items;
-        _state.orderUnit = data.distributor.order_quantity_unit;
+        _state.items = data.items;
+        // DELTA 1 — group payload returns primary_distributor; single returns distributor.
+        var src = data.primary_distributor || data.distributor;
+        _state.orderUnit = src ? src.order_quantity_unit : null;
 
-        // Show distributor name in title
-        if (distNameEl && data.distributor && data.distributor.name) {
-          distNameEl.textContent = data.distributor.name + ' —';
+        // Show the (primary) distributor name in the title
+        if (distNameEl && src && src.name) {
+          distNameEl.textContent = src.name + ' —';
         }
+
+        // DELTA 3 — group banner (shown only in group mode)
+        updateGroupBanner(data);
 
         document.getElementById('po-modal-loading').style.display = 'none';
         document.getElementById('po-modal-content').style.display = '';
@@ -1283,9 +1315,14 @@
   }
 
   function addOrderTab(savedPo, suggestedOrder) {
+    // DELTA 2 — in group mode, a member (non-primary) PO renders READ-ONLY.
+    // In single mode is_primary is never false, so this is inert.
+    var readOnly = _state.isGroup && savedPo && !savedPo.is_primary;
     var tabId  = 'po-tab-' + (_state.nextTabId++);
-    var tabNum = _state.tabs.length + 1;
-    _state.tabs.push({tabId: tabId, savedPo: savedPo});
+    // Tab numbering counts only editable tabs ("Order N"); read-only member
+    // tabs are labeled by distributor name instead.
+    var tabNum = _state.tabs.filter(function (t) { return !t.readOnly; }).length + 1;
+    _state.tabs.push({tabId: tabId, savedPo: savedPo, readOnly: readOnly});
 
     // Nav pill
     var tabsEl = document.getElementById('po-order-tabs');
@@ -1300,7 +1337,7 @@
     btn.setAttribute('data-bs-target', '#' + tabId);
     btn.setAttribute('type', 'button');
     btn.setAttribute('role', 'tab');
-    btn.textContent = 'Order ' + tabNum;
+    btn.textContent = readOnly ? savedPo.distributor_name : 'Order ' + tabNum;
     li.appendChild(btn);
     tabsEl.appendChild(li);
 
@@ -1310,6 +1347,13 @@
     pane.className = 'tab-pane fade';
     pane.id = tabId;
     pane.setAttribute('role', 'tabpanel');
+
+    if (readOnly) {
+      pane.innerHTML = buildReadOnlyTabContent(savedPo);
+      contentEl.appendChild(pane);
+      return;
+    }
+
     pane.innerHTML = buildOrderForm(tabId, savedPo, suggestedOrder);
     contentEl.appendChild(pane);
 
@@ -1329,6 +1373,61 @@
     var rmBtn = pane.querySelector('.po-remove-btn');
     if (rmBtn) {
       rmBtn.addEventListener('click', function () { removeTab(tabId); });
+    }
+  }
+
+  // DELTA 2 — read-only pane for a member (non-primary) PO in group mode.
+  // Ported from the retired standalone group modal; uses the full status badge.
+  function buildReadOnlyTabContent(savedPo) {
+    var statusLabel = '';
+    _statusChoices.forEach(function (sc) { if (sc[0] === savedPo.status) statusLabel = sc[1]; });
+    var statusBg = savedPo.status === 'actual' ? 'success' : (savedPo.status === 'cancelled' ? 'danger' : (savedPo.status === 'invoiced' ? 'dark' : 'warning text-dark'));
+    var html = '<div class="mb-3 d-flex align-items-center gap-2 flex-wrap">';
+    html += '<span class="badge bg-' + statusBg + '">' + (statusLabel || savedPo.status) + '</span>';
+    if (savedPo.so_number) {
+      html += '<span class="badge bg-light text-dark border">SO# ' + savedPo.so_number + '</span>';
+    }
+    if (savedPo.external_po_number) {
+      html += '<span class="text-muted small">PO #: ' + _esc(savedPo.external_po_number) + '</span>';
+    }
+    html += '</div>';
+
+    if (savedPo.lines && savedPo.lines.length > 0) {
+      html += '<div class="table-responsive"><table class="table table-sm table-bordered mb-0">';
+      html += '<thead class="table-light"><tr><th class="small">Item</th>';
+      html += '<th class="small text-end">Cases</th></tr></thead><tbody>';
+      savedPo.lines.forEach(function (line) {
+        html += '<tr><td class="small">' + _esc(line.item_name) + '</td>';
+        html += '<td class="small text-end fw-medium">' + line.quantity_cases + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    } else {
+      html += '<p class="text-muted small">No line items.</p>';
+    }
+
+    if (savedPo.notes) {
+      html += '<div class="mt-2 small"><strong>Notes:</strong> ' + _esc(savedPo.notes) + '</div>';
+    }
+
+    html += '<div class="alert alert-info mt-3 mb-0 small">'
+      + 'This PO belongs to <strong>' + _esc(savedPo.distributor_name) + '</strong>. '
+      + 'To edit, go to their <a href="?tab=forecast&forecast_distributor='
+      + savedPo.distributor_pk + '">individual forecast</a>.'
+      + '</div>';
+
+    return html;
+  }
+
+  function updateGroupBanner(data) {
+    var banner = document.getElementById('po-modal-group-banner');
+    if (!banner) return;
+    if (_state.isGroup && data.primary_distributor && data.group) {
+      banner.innerHTML = 'New orders will be placed for <strong>'
+        + _esc(data.primary_distributor.name) + '</strong> (the primary of '
+        + _esc(data.group.name) + ')';
+      banner.style.display = '';
+    } else {
+      banner.style.display = 'none';
     }
   }
 
@@ -1445,10 +1544,13 @@
     if (li)   li.remove();
     if (pane) pane.remove();
 
-    // Renumber remaining tabs
-    _state.tabs.forEach(function (t, i) {
+    // Renumber remaining EDITABLE tabs only (read-only member tabs keep their
+    // distributor-name labels).
+    var num = 1;
+    _state.tabs.forEach(function (t) {
+      if (t.readOnly) return;
       var b = document.getElementById('po-btn-' + t.tabId);
-      if (b) b.textContent = 'Order ' + (i + 1);
+      if (b) b.textContent = 'Order ' + (num++);
     });
 
     // Activate first remaining tab
@@ -1471,9 +1573,12 @@
     var orders = [];
     var valid  = true;
     var errMsg = '';
+    var editableNum = 0;  // labels reference editable orders only (skips read-only member tabs)
 
     for (var i = 0; i < _state.tabs.length; i++) {
       var tab  = _state.tabs[i];
+      if (tab.readOnly) continue;  // DELTA 2 — read-only member POs are never saved
+      editableNum++;
       var pane = document.getElementById(tab.tabId);
       if (!pane) continue;
 
@@ -1483,7 +1588,7 @@
 
       if (status === 'actual' && !poNumber) {
         valid  = false;
-        errMsg = 'PO number is required for orders with status "Actual" (Order ' + (i + 1) + ').';
+        errMsg = 'PO number is required for orders with status "Actual" (Order ' + editableNum + ').';
         break;
       }
 
@@ -1579,8 +1684,12 @@
     return m ? m[1] : '';
   }
 
-  // Expose for use by Distributor POs / Invoiced POs tab rows
-  window.openDistributorPoModal = function (dataUrl, year, month, saveUrl, deleteUrlBase, suggestPattern) {
+  // Expose for use by Forecast group-mode order buttons and the Distributor POs
+  // / Invoiced POs tab rows. isGroup toggles group-mode behavior (primary key,
+  // read-only member tabs, banner). Existing 6-arg callers pass isGroup
+  // undefined → single mode.
+  window.openDistributorPoModal = function (dataUrl, year, month, saveUrl, deleteUrlBase, suggestPattern, isGroup) {
+    _state.isGroup = !!isGroup;
     if (saveUrl) _saveUrl = saveUrl;
     if (deleteUrlBase) _deleteUrlBase = deleteUrlBase;
     if (suggestPattern) _modalEl.dataset.suggestUrlPattern = suggestPattern;

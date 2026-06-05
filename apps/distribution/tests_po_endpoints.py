@@ -1801,7 +1801,8 @@ class DistributorAreaTweaksTest(TestCase):
         self.assertNotIn(inactive, avail)
 
     def test_group_forecast_dropdown_active_only(self):
-        # Audit: the group forecast page uses the same "Forecast for" dropdown.
+        # Audit: the group forecast (now in the Forecast tab via ?forecast_group=N)
+        # uses the same "Forecast for" dropdown — active distributors only.
         member = _make_distributor(self.company, 'Member Dist')
         group = DistributorGroup.objects.create(
             company=self.company, name='Test Group', primary_distributor=member,
@@ -1812,7 +1813,7 @@ class DistributorAreaTweaksTest(TestCase):
         inactive.is_active = False
         inactive.save(update_fields=['is_active'])
         resp = self.client.get(
-            reverse('distributor_group_forecast', kwargs={'group_pk': group.pk})
+            reverse('distributor_list') + f'?tab=forecast&forecast_group={group.pk}'
         )
         self.assertEqual(resp.status_code, 200)
         avail = list(resp.context['available_distributors'])

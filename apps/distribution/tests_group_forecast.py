@@ -1,10 +1,11 @@
 """
 Tests for Phase G2 — Group forecast view and compute_group_forecast().
 """
+import json
 from datetime import date
 
 from django.test import Client, TestCase
-from django.urls import reverse
+from django.urls import NoReverseMatch, reverse
 
 from apps.catalog.models import Brand, Item
 from apps.core.models import Company, User
@@ -373,7 +374,9 @@ class GroupForecastViewTest(TestCase):
 
         self.client = Client()
         self.client.login(username='view_admin', password='testpass123')
-        self.url = reverse('distributor_group_forecast', args=[self.group.pk])
+        # The standalone group forecast page was retired; the group forecast now
+        # renders in the Forecast tab via ?forecast_group=N.
+        self.url = reverse('distributor_list') + f'?tab=forecast&forecast_group={self.group.pk}'
 
     def _add_aligned_snapshots(self, year=2026, month=3):
         for dist in [self.acme, self.bayside]:
@@ -405,7 +408,9 @@ class GroupForecastViewTest(TestCase):
         self.assertContains(resp, self.bayside.name)
 
     # -----------------------------------------------------------------------
-    # 14. Requires can_manage_distributor_inventory
+    # 14. Group forecast still gated by can_manage_distributor_inventory
+    #     (the Forecast tab is inventory-gated; without it the group forecast
+    #     is not computed/rendered).
     # -----------------------------------------------------------------------
     def test_group_forecast_view_requires_permission(self):
         role, _ = Role.objects.get_or_create(
@@ -421,31 +426,24 @@ class GroupForecastViewTest(TestCase):
         c = Client()
         c.login(username='limited_gf', password='testpass123')
         resp = c.get(self.url)
-        self.assertEqual(resp.status_code, 403)
+        # Reaches the page (is a supplier admin) but the inventory-gated forecast
+        # is not rendered — no group forecast in context.
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.context['forecast_group'])
 
     # -----------------------------------------------------------------------
-    # 15. 404 for group belonging to another company
+    # 15. Group belonging to another company is not rendered (scoped out)
     # -----------------------------------------------------------------------
-    def test_group_forecast_view_404_for_other_company_group(self):
+    def test_group_forecast_view_other_company_group_not_rendered(self):
         other_company = _make_company('Other Co')
         other_dist = _make_distributor(other_company, name='Other Dist')
         other_group = _make_group(other_company, 'Other Group', other_dist, [other_dist])
 
-        resp = self.client.get(
-            reverse('distributor_group_forecast', args=[other_group.pk])
-        )
-        self.assertEqual(resp.status_code, 404)
-
-    # -----------------------------------------------------------------------
-    # 16. Member list with primary marked
-    # -----------------------------------------------------------------------
-    def test_group_forecast_view_displays_member_list_with_primary(self):
-        self._add_aligned_snapshots()
-        resp = self.client.get(self.url)
+        url = reverse('distributor_list') + f'?tab=forecast&forecast_group={other_group.pk}'
+        resp = self.client.get(url)
+        # Company-scoped lookup yields no group → forecast_group None (not a 404).
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, self.acme.name)
-        self.assertContains(resp, self.bayside.name)
-        self.assertContains(resp, 'Primary')
+        self.assertIsNone(resp.context['forecast_group'])
 
     # -----------------------------------------------------------------------
     # 17. Banner on individual forecast for a grouped distributor
@@ -489,9 +487,10 @@ class GroupForecastViewTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Forecast TAB group-mode tests (consolidation part 1) — selecting a group
-# via ?forecast_group=N renders the group forecast INSIDE the Forecast tab.
-# The standalone distributor_group_forecast page still exists (fallback).
+# Forecast TAB group-mode tests — selecting a group via ?forecast_group=N
+# renders the group forecast INSIDE the Forecast tab, and group POs are
+# generated in-tab via the unified #poModal. The standalone group forecast
+# page has been retired.
 # ---------------------------------------------------------------------------
 
 class GroupForecastTabTest(TestCase):
@@ -520,14 +519,18 @@ class GroupForecastTabTest(TestCase):
 
     # 1. Aligned group renders the forecast grid in-tab
     def test_forecast_tab_renders_group_ok(self):
+        # Primary needs an order profile for the (functional) order buttons to render
+        self.acme.order_quantity_value = 10
+        self.acme.order_quantity_unit = 'cases'
+        self.acme.save(update_fields=['order_quantity_value', 'order_quantity_unit'])
         self._add_aligned_snapshots()
         resp = self.client.get(self.tab_url)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.context['forecast_result']['alignment_status'], 'ok')
         self.assertEqual(resp.context['forecast_group'], self.group)
         self.assertTrue(resp.context['forecast_result']['rows'])
-        # The aligned group grid renders (its in-tab generation note is present)
-        self.assertContains(resp, 'Generate group orders')
+        # The aligned group grid renders functional group-mode order buttons
+        self.assertContains(resp, 'data-is-group="1"')
         self.assertNotContains(resp, 'snapshots not aligned')
 
     # 2. Misaligned group renders the alignment panel (partial), no grid
@@ -544,8 +547,8 @@ class GroupForecastTabTest(TestCase):
         self.assertEqual(resp.context['forecast_result']['alignment_status'], 'misaligned')
         self.assertContains(resp, 'snapshots not aligned')
         self.assertContains(resp, self.bayside.name)
-        # No order-generation grid in the misaligned state
-        self.assertNotContains(resp, 'Generate group orders')
+        # No order-generation grid/buttons in the misaligned state
+        self.assertNotContains(resp, 'data-is-group="1"')
 
     # 3. Group with no members renders the no_data card
     def test_forecast_tab_renders_group_no_data(self):
@@ -585,9 +588,68 @@ class GroupForecastTabTest(TestCase):
         self.assertEqual(resp.status_code, 200)
         # Literal '&' in the template is not auto-escaped (only variable output is)
         self.assertContains(resp, f'data-url="?tab=forecast&forecast_group={self.group.pk}"')
-        # The group option no longer links to the standalone group URL
-        standalone = reverse('distributor_group_forecast', args=[self.group.pk])
-        self.assertNotContains(resp, f'data-url="{standalone}"')
+        # The retired standalone group URL name no longer resolves
+        with self.assertRaises(NoReverseMatch):
+            reverse('distributor_group_forecast', args=[self.group.pk])
+
+    # 7. A PO generated via the tab modal (group save endpoint) lands on the primary
+    def test_group_po_generated_from_tab(self):
+        save_url = reverse('distributor_group_po_save', kwargs={'group_pk': self.group.pk})
+        payload = {
+            'year': 2026, 'month': 6,
+            'orders': [{
+                'id': None, 'status': 'projected', 'external_po_number': '', 'notes': '',
+                'lines': [{'item_id': self.item_a.pk, 'quantity_cases': 24}],
+            }],
+        }
+        resp = self.client.post(
+            save_url, data=json.dumps(payload),
+            content_type='application/json', HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        # The new PO is created against the group's PRIMARY distributor (Acme)
+        po = DistributorPO.objects.get(year=2026, month=6, distributor=self.acme)
+        self.assertEqual(po.lines.count(), 1)
+
+    # 8. The group modal-data the tab fetches uses the primary_distributor key
+    def test_group_modal_uses_primary_distributor_key(self):
+        url = reverse(
+            'distributor_group_orders_modal_data',
+            kwargs={'group_pk': self.group.pk, 'year': 2026, 'month': 6},
+        )
+        resp = self.client.get(url, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        # DELTA 1 — the modal reads data.primary_distributor (not data.distributor)
+        self.assertIn('primary_distributor', data)
+        self.assertEqual(data['primary_distributor']['id'], self.acme.pk)
+        self.assertIn('order_quantity_unit', data['primary_distributor'])
+        self.assertNotIn('distributor', data)
+
+    # 9. Member (non-primary) POs are flagged so the modal renders them read-only
+    def test_group_modal_member_pos_read_only(self):
+        primary_po = _make_po(self.acme, 2026, 6)       # Acme = primary
+        _make_po_line(primary_po, self.item_a, 10)
+        member_po = _make_po(self.bayside, 2026, 6)     # Bayside = non-primary member
+        _make_po_line(member_po, self.item_a, 5)
+
+        url = reverse(
+            'distributor_group_orders_modal_data',
+            kwargs={'group_pk': self.group.pk, 'year': 2026, 'month': 6},
+        )
+        resp = self.client.get(url, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        data = resp.json()
+        by_dist = {o['distributor_pk']: o for o in data['saved_orders']}
+        # DELTA 2 — is_primary drives the read-only branch in the modal JS
+        self.assertTrue(by_dist[self.acme.pk]['is_primary'])
+        self.assertFalse(by_dist[self.bayside.pk]['is_primary'])
+        self.assertEqual(by_dist[self.bayside.pk]['distributor_name'], self.bayside.name)
+
+    # 10. The standalone group forecast URL name is fully retired
+    def test_no_references_to_standalone_group_forecast(self):
+        with self.assertRaises(NoReverseMatch):
+            reverse('distributor_group_forecast', args=[self.group.pk])
 
 
 # ---------------------------------------------------------------------------
