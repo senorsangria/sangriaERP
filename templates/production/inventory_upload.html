@@ -13,7 +13,11 @@
 
 <h1 class="h3 fw-bold mb-1">Enter Inventory Snapshot</h1>
 <p class="text-muted small mb-4">
-  Enter on-hand case counts for each item. Leave blank to skip an item; enter 0 to record zero on hand.
+  Enter on-hand case counts for each item. Pick a Year and Month to load any
+  values already saved for that period — you can fill in more items or correct
+  a value, then save. Leave an item blank to skip it (its existing value, if
+  any, is left unchanged); enter 0 to record zero on hand. To remove a value,
+  use the delete controls on the Production Inventory tab.
 </p>
 
 {% if general_error %}
@@ -104,5 +108,25 @@
     <a href="{% url 'production_home' %}" class="btn btn-outline-secondary">Cancel</a>
   </div>
 </form>
+
+<script>
+// Reload the page with ?year=&month= when the period changes, so the item
+// inputs pre-fill with any values already saved for that period (handled
+// server-side on GET). The Save button still POSTs the whole form to upsert.
+(function () {
+  var yearSel = document.getElementById('{{ period_form.year.id_for_label }}');
+  var monthSel = document.getElementById('{{ period_form.month.id_for_label }}');
+  function loadPeriod() {
+    if (yearSel && monthSel && yearSel.value && monthSel.value) {
+      var params = new URLSearchParams();
+      params.set('year', yearSel.value);
+      params.set('month', monthSel.value);
+      window.location.assign(window.location.pathname + '?' + params.toString());
+    }
+  }
+  if (yearSel) yearSel.addEventListener('change', loadPeriod);
+  if (monthSel) monthSel.addEventListener('change', loadPeriod);
+})();
+</script>
 {% endif %}
 {% endblock %}

@@ -316,7 +316,12 @@
                 <td class="small text-muted">{{ snap.brand_name }}</td>
                 <td><code class="small">{{ snap.item_code }}</code></td>
                 <td class="text-end fw-medium">{{ snap.quantity_display }}</td>
-                <td class="small text-muted">{{ snap.created_at|date:"M j, Y" }}</td>
+                <td class="small text-muted">
+                  {{ snap.created_at|date:"M j, Y" }}
+                  {% if snap.updated_by_display %}
+                  <div class="text-muted" style="font-size:0.7rem;">Updated by {{ snap.updated_by_display }}</div>
+                  {% endif %}
+                </td>
               </tr>
               {% endfor %}
             </tbody>

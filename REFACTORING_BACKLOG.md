@@ -178,6 +178,42 @@ Only the broader idea (a) — denormalizing `distributor` directly onto
 
 ---
 
+## Accounts / pricing schema (assessed June 2026)
+
+### 7. Shelf price history (`AccountItemPriceHistory`) is write-only dead data with incomplete semantics — **Priority: MEDIUM (rises when account-item dated-history work begins)**
+
+- **What it is:** Shelf price is modeled as two pieces. `AccountItem.current_price`
+  (`apps/accounts/models.py`) is a single, overwritten value — the only price ever
+  *displayed* (account detail, account-item views, recap). `AccountItemPriceHistory`
+  is a separate dated table that is **populated but never read or displayed anywhere**
+  (the only references in `apps/` and `templates/` are the write site in
+  `apps/events/views.py` `_apply_price_updates`). Worse, its semantics are off: a
+  history row stores the **superseded (old)** price (`price=account_item.current_price`,
+  the previous value) dated `recorded_at = now` at the moment it is replaced — not
+  one-row-per-capture. The **first** price writes no history row, and the **current**
+  price is never a history row either.
+- **Why it matters:** "What was the shelf price at this account on date X" cannot be
+  reconstructed from this table — the dates mark *supersession*, not *capture*, and the
+  endpoints (first + current) are missing. So the history is misleading if ever surfaced,
+  and any feature that "follows the shelf-price pattern" would inherit a half-built shape
+  whose display side was never written. This becomes a real blocker when the planned
+  **ending-inventory capture at the account-item level** (a value captured during an
+  event but belonging to the account-item relationship, with a dated history and a
+  "most recent" surfaced on account detail) is built — it is conceptually the same
+  pattern and would be tempted to copy this broken one.
+- **Recommendation:** When a genuine dated-history-at-account-item feature is built
+  (e.g. ending inventory), establish clean **one-capture = one dated row** semantics
+  (each captured value is its own row dated at capture time, "most recent" derived by
+  max date) **with an actual display**, and consider refactoring shelf price to match.
+  `OwnInventorySnapshot` (`apps/production/models.py`) — one row per
+  `(company, item, year, month)`, period stored as data, latest derived by `max(year, month)`,
+  and actually consumed by the forecast — is the **better precedent** to follow than the
+  shelf-price archive-on-change model.
+- **Status:** `Deferred — not scheduled` (priority rises when ending-inventory /
+  account-item history work begins).
+
+---
+
 ## Keeping this document current
 
 Update this document whenever we identify a structural improvement that we

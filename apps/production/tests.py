@@ -409,6 +409,17 @@ class ProductionInventoryUploadGetTest(TestCase):
         resp = self.client.get(reverse('production_inventory_upload'))
         self.assertContains(resp, 'No active items found')
 
+    def test_inventory_form_prefills_existing(self):
+        # Displaying the form for a period with saved values pre-fills the
+        # item inputs with those values.
+        make_snapshot(self.company, self.item, year=2026, month=5, qty='42')
+        resp = self.client.get(
+            reverse('production_inventory_upload') + '?year=2026&month=5'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, f'name="qty_{self.item.pk}"')
+        self.assertContains(resp, 'value="42"')
+
 
 class ProductionInventoryUploadPostTest(TestCase):
     """POST /production/inventory/upload/"""
@@ -469,13 +480,16 @@ class ProductionInventoryUploadPostTest(TestCase):
         self.assertEqual(OwnInventorySnapshot.objects.count(), 0)
         self.assertContains(resp, 'Invalid number')
 
-    def test_post_with_period_conflict_rejects(self):
+    def test_post_no_month_block_adds_to_existing_month(self):
+        # Repurposed from the old period-conflict test: entering a value for a
+        # different item in a month that already has data is NO LONGER blocked.
+        # The coarse month block was removed in favour of a per-item upsert.
         make_snapshot(self.company, self.item_a, year=2026, month=5)
         resp = self._base_post(**{f'qty_{self.item_b.pk}': '50'})
-        self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'already exists')
-        # No new snapshots created (only the original one)
-        self.assertEqual(OwnInventorySnapshot.objects.filter(company=self.company).count(), 1)
+        # Success now redirects to the inventory tab (the old behaviour returned
+        # a 200 page carrying the "already exists" error).
+        self.assertRedirects(resp, self._inventory_tab_url())
+        self.assertEqual(OwnInventorySnapshot.objects.filter(company=self.company).count(), 2)
 
     def test_post_all_blank_shows_info_message(self):
         resp = self._base_post()
@@ -504,6 +518,104 @@ class ProductionInventoryUploadPostTest(TestCase):
         })
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, '100')
+
+
+# ---------------------------------------------------------------------------
+# Incremental entry + per-item upsert (no month block, edit in place)
+# ---------------------------------------------------------------------------
+
+class ProductionInventoryUpsertTest(TestCase):
+    """Inventory for a month can be entered incrementally and edited."""
+
+    def setUp(self):
+        self.company = make_company()
+        self.admin = make_supplier_admin(self.company)
+        self.other_admin = make_supplier_admin(self.company, username='admin2')
+        self.brand = make_brand(self.company)
+        self.item_a = make_item(self.brand, 'Item A', 'A001')
+        self.item_b = make_item(self.brand, 'Item B', 'B001')
+        self.client = Client()
+        self.client.login(username='admin', password='testpass123')
+
+    def _post(self, **overrides):
+        data = {'year': '2026', 'month': '5'}
+        data.update(overrides)
+        return self.client.post(reverse('production_inventory_upload'), data)
+
+    def _inventory_tab_url(self):
+        return reverse('production_home') + '?tab=inventory'
+
+    def test_inventory_partial_then_add_more(self):
+        # Enter a value for one item in May 2026...
+        self._post(**{f'qty_{self.item_a.pk}': '100'})
+        # ...then come back later and enter values for OTHER items, same month.
+        resp = self._post(**{f'qty_{self.item_b.pk}': '50'})
+        self.assertRedirects(resp, self._inventory_tab_url())
+        snaps = OwnInventorySnapshot.objects.filter(
+            company=self.company, year=2026, month=5,
+        )
+        self.assertEqual(snaps.count(), 2)  # both coexist, no block
+        self.assertEqual(snaps.get(item=self.item_a).quantity_cases, Decimal('100'))
+        self.assertEqual(snaps.get(item=self.item_b).quantity_cases, Decimal('50'))
+
+    def test_inventory_no_month_block(self):
+        # A month that already has data does NOT return the old error.
+        make_snapshot(self.company, self.item_a, year=2026, month=5)
+        resp = self._post(**{f'qty_{self.item_b.pk}': '50'})
+        self.assertRedirects(resp, self._inventory_tab_url())
+        self.assertNotContains(
+            self.client.get(reverse('production_inventory_upload')),
+            'already exists',
+        )
+
+    def test_inventory_edit_existing_value(self):
+        make_snapshot(
+            self.company, self.item_a, year=2026, month=5, qty='100', user=self.admin,
+        )
+        original = OwnInventorySnapshot.objects.get(
+            company=self.company, item=self.item_a, year=2026, month=5,
+        )
+        resp = self._post(**{f'qty_{self.item_a.pk}': '250'})
+        self.assertRedirects(resp, self._inventory_tab_url())
+        snaps = OwnInventorySnapshot.objects.filter(
+            company=self.company, item=self.item_a, year=2026, month=5,
+        )
+        self.assertEqual(snaps.count(), 1)  # updated, not duplicated
+        snap = snaps.get()
+        self.assertEqual(snap.pk, original.pk)  # same row upserted
+        self.assertEqual(snap.quantity_cases, Decimal('250'))
+        self.assertEqual(snap.updated_by, self.admin)
+
+    def test_inventory_blank_leaves_existing_unchanged(self):
+        make_snapshot(self.company, self.item_a, year=2026, month=5, qty='100')
+        # item_a blank (skip), item_b filled.
+        resp = self._post(**{
+            f'qty_{self.item_a.pk}': '',
+            f'qty_{self.item_b.pk}': '50',
+        })
+        self.assertRedirects(resp, self._inventory_tab_url())
+        snap_a = OwnInventorySnapshot.objects.get(company=self.company, item=self.item_a)
+        self.assertEqual(snap_a.quantity_cases, Decimal('100'))  # unchanged
+        self.assertTrue(
+            OwnInventorySnapshot.objects.filter(
+                company=self.company, item=self.item_b,
+            ).exists()
+        )
+
+    def test_inventory_upsert_sets_updated_by(self):
+        # Create via the view as admin → created_by and updated_by both admin.
+        self._post(**{f'qty_{self.item_a.pk}': '100'})
+        snap = OwnInventorySnapshot.objects.get(company=self.company, item=self.item_a)
+        self.assertEqual(snap.created_by, self.admin)
+        self.assertEqual(snap.updated_by, self.admin)
+        # Update as a DIFFERENT admin → created_by preserved, updated_by changes.
+        self.client.logout()
+        self.client.login(username='admin2', password='testpass123')
+        self._post(**{f'qty_{self.item_a.pk}': '120'})
+        snap.refresh_from_db()
+        self.assertEqual(snap.created_by, self.admin)        # preserved on update
+        self.assertEqual(snap.updated_by, self.other_admin)  # stamped on update
+        self.assertEqual(snap.quantity_cases, Decimal('120'))
 
 
 # ---------------------------------------------------------------------------

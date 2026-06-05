@@ -142,6 +142,14 @@ class OwnInventorySnapshot(TimeStampedModel):
         blank=True,
         related_name='own_snapshots_created',
     )
+    updated_by = models.ForeignKey(
+        'core.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='own_snapshots_updated',
+        help_text='User who most recently created or updated this snapshot value.',
+    )
 
     class Meta:
         verbose_name = 'Own Inventory Snapshot'
