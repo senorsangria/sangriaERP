@@ -485,6 +485,40 @@ class DistributorPOSaveTest(TestCase):
         self.assertEqual(resp.status_code, 500)
         self.assertEqual(DistributorPO.objects.filter(distributor=self.dist).count(), 0)
 
+    # --- #8: bidirectional case/pallet entry — endpoint CONTRACT -------------
+    # The live two-way sync itself is JS (no JS engine in the test client); these
+    # assert the stored contract: only quantity_cases is saved, always WHOLE.
+
+    def test_save_payload_cases_only(self):
+        """Save persists quantity_cases; a stray 'pallets' key is ignored (never
+        stored — pallets is a UI convenience only)."""
+        payload = self._payload(orders=[{
+            'id': None, 'status': 'projected', 'external_po_number': '', 'notes': '',
+            'lines': [{'item_id': self.item.pk, 'quantity_cases': 24, 'pallets': 2}],
+        }])
+        resp = self._post(payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+        po = DistributorPO.objects.get(distributor=self.dist, year=2026, month=6)
+        line = po.lines.first()
+        self.assertEqual(float(line.quantity_cases), 24.0)
+        # No pallets attribute is stored on the line model.
+        self.assertFalse(hasattr(line, 'pallets'))
+
+    def test_cases_stored_whole(self):
+        """Cases are always whole — a fractional quantity_cases is rounded to the
+        nearest whole case on save (defensive backend guard; UI guarantees it too)."""
+        payload = self._payload(orders=[{
+            'id': None, 'status': 'projected', 'external_po_number': '', 'notes': '',
+            'lines': [{'item_id': self.item.pk, 'quantity_cases': 24.6}],
+        }])
+        resp = self._post(payload)
+        self.assertEqual(resp.status_code, 200)
+        po = DistributorPO.objects.get(distributor=self.dist, year=2026, month=6)
+        stored = po.lines.first().quantity_cases
+        self.assertEqual(stored, stored.to_integral_value())
+        self.assertEqual(float(stored), 25.0)
+
 
 # ---------------------------------------------------------------------------
 # 4. distributor_po_delete POST view
@@ -1624,6 +1658,35 @@ class DistributorPOMoveTest(TestCase):
         self.assertNotIn('Row 2: column headers', content)
         self.assertNotIn('{#', content)
 
+    def test_no_stray_multiline_comment_in_distribution_templates(self):
+        """Structural guard (4th instance of this bug class): Django {# #} comments
+        are single-line only — a multi-line one renders as visible text. Scan EVERY
+        distribution template (including partials) for a {# not closed by #} on the
+        same line, and fail if any are found."""
+        import glob
+        import os
+        from django.conf import settings
+
+        base = os.path.join(settings.BASE_DIR, 'templates', 'distribution')
+        paths = glob.glob(os.path.join(base, '*.html'))
+        self.assertTrue(paths, 'No distribution templates found to scan.')
+
+        offenders = []
+        for path in paths:
+            with open(path, encoding='utf-8') as f:
+                for lineno, line in enumerate(f, 1):
+                    idx = line.find('{#')
+                    while idx != -1:
+                        if line.find('#}', idx) == -1:
+                            offenders.append(f'{os.path.basename(path)}:{lineno}')
+                            break
+                        idx = line.find('{#', line.find('#}', idx) + 2)
+
+        self.assertEqual(
+            offenders, [],
+            f'Unclosed/multi-line {{# #}} comments found (use {{% comment %}}): {offenders}',
+        )
+
     def test_move_modal_has_year_and_month_selectors(self):
         _make_po(self.dist, 2026, 5, status='projected')
         resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
@@ -1819,3 +1882,92 @@ class DistributorAreaTweaksTest(TestCase):
         avail = list(resp.context['available_distributors'])
         self.assertNotIn(inactive, avail)
         self.assertIn(member, avail)
+
+
+# ---------------------------------------------------------------------------
+# 5. Unified PO modal — #7 (decimal pallets + total row) JS contract
+# ---------------------------------------------------------------------------
+#
+# The modal's line table is built client-side (buildOrderForm in the inline IIFE
+# of distributor_list.html), so there's no server-rendered DOM to assert on and
+# no JS engine in the test client. These assert the inline JS *source* shipped to
+# the browser carries the #7 behavior. The live arithmetic/sync is UI-verified.
+
+class UnifiedPoModalJsContractTest(TestCase):
+
+    def setUp(self):
+        self.company = _make_company('Modal JS Co')
+        self.admin = _make_inventory_user(self.company, 'modaljs_admin')
+        self.dist = _make_distributor(self.company)
+        self.brand = _make_brand(self.company)
+        self.item = _make_item(self.brand, item_code='MJSIT')
+        self.client = Client()
+        self.client.login(username='modaljs_admin', password='testpass123')
+
+    def _page(self):
+        resp = self.client.get(reverse('distributor_list') + '?tab=distributor_pos')
+        self.assertEqual(resp.status_code, 200)
+        return resp.content.decode()
+
+    # #7.1 — pallet display uses EXACT division via fmtQty, not Math.ceil.
+    def test_pallet_display_shows_decimal(self):
+        content = self._page()
+        # Shared formatter present, and the pallet figure is computed by exact
+        # division fed through fmtQty (decimal when fractional, whole otherwise).
+        self.assertIn('function fmtQty', content)
+        self.assertIn('fmtQty(casesVal / cpp)', content)
+        # The old ceil-based pallet computation is gone (a historical mention may
+        # remain in a comment — assert the actual call form is absent).
+        self.assertNotIn('Math.ceil(casesVal / item.cases_per_pallet)', content)
+        self.assertNotIn('Math.ceil(cases / cpp)', content)
+
+    # #7.2 — the line table has a total row whose cases total is the line sum.
+    def test_total_row_present(self):
+        content = self._page()
+        self.assertIn('<tfoot>', content)
+        self.assertIn('po-total-cases', content)
+        # Cases total = sum of per-line cases (computed in updateTotals).
+        self.assertIn('function updateTotals', content)
+        self.assertIn('totalCases += cases', content)
+
+    # #7.3 — pallet total only in pallet mode; cases-mode shows cases only.
+    def test_total_row_pallets_only_in_pallet_mode(self):
+        content = self._page()
+        # The pallets total cell is rendered only behind the isPallets guard.
+        self.assertIn("if (isPallets) html += '<td class=\"small text-end po-total-pallets\">0</td>';", content)
+
+
+# ---------------------------------------------------------------------------
+# 6. Unified PO modal — #8 group save contract (cases stored whole)
+# ---------------------------------------------------------------------------
+#
+# The bidirectional sync is shared JS, so it applies to the group modal too. The
+# group save endpoint must store whole cases (same contract as the single one).
+
+class GroupSaveCasesWholeTest(TestCase):
+
+    def setUp(self):
+        from apps.distribution.tests_group_forecast import _make_group
+        self.company = _make_company('Group Whole Co')
+        self.admin = _make_supplier_admin(self.company, 'gw_admin')
+        self.primary = _make_distributor(self.company, 'GW Primary')
+        self.member = _make_distributor(self.company, 'GW Member')
+        self.group = _make_group(self.company, 'GW Group', self.primary,
+                                 [self.primary, self.member])
+        self.brand = _make_brand(self.company)
+        self.item = _make_item(self.brand, item_code='GWIT')
+        self.client = Client()
+        self.client.login(username='gw_admin', password='testpass123')
+        self.url = reverse('distributor_group_po_save', kwargs={'group_pk': self.group.pk})
+
+    def test_group_save_stores_whole_cases(self):
+        payload = {'year': 2026, 'month': 6, 'orders': [{
+            'id': None, 'status': 'projected', 'external_po_number': '', 'notes': '',
+            'lines': [{'item_id': self.item.pk, 'quantity_cases': 99.6}],
+        }]}
+        resp = _ajax_post(self.client, self.url, payload)
+        self.assertEqual(resp.status_code, 200)
+        po = DistributorPO.objects.get(distributor=self.primary, year=2026, month=6)
+        stored = po.lines.first().quantity_cases
+        self.assertEqual(stored, stored.to_integral_value())
+        self.assertEqual(float(stored), 100.0)

@@ -1620,7 +1620,9 @@ def distributor_po_save(request, dist_pk):
                             DistributorPOLine.objects.create(
                                 po=po,
                                 item_id=line['item_id'],
-                                quantity_cases=float(line['quantity_cases']),
+                                # Cases are always whole; round defensively (the UI
+                                # already guarantees this). Field stays Decimal(10,6).
+                                quantity_cases=round(float(line['quantity_cases'])),
                             )
                 else:
                     if not nonzero_lines:
@@ -1642,7 +1644,9 @@ def distributor_po_save(request, dist_pk):
                         DistributorPOLine.objects.create(
                             po=po,
                             item_id=line['item_id'],
-                            quantity_cases=float(line['quantity_cases']),
+                            # Cases are always whole; round defensively (the UI
+                            # already guarantees this). Field stays Decimal(10,6).
+                            quantity_cases=round(float(line['quantity_cases'])),
                         )
     except ValidationError as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=400)
@@ -2016,7 +2020,9 @@ def distributor_group_po_save(request, group_pk):
                             DistributorPOLine.objects.create(
                                 po=po,
                                 item_id=line['item_id'],
-                                quantity_cases=float(line['quantity_cases']),
+                                # Cases are always whole; round defensively (the UI
+                                # already guarantees this). Field stays Decimal(10,6).
+                                quantity_cases=round(float(line['quantity_cases'])),
                             )
                 else:
                     if not nonzero_lines:
@@ -2038,7 +2044,9 @@ def distributor_group_po_save(request, group_pk):
                         DistributorPOLine.objects.create(
                             po=po,
                             item_id=line['item_id'],
-                            quantity_cases=float(line['quantity_cases']),
+                            # Cases are always whole; round defensively (the UI
+                            # already guarantees this). Field stays Decimal(10,6).
+                            quantity_cases=round(float(line['quantity_cases'])),
                         )
     except ValidationError as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=400)

@@ -4479,6 +4479,20 @@ The nav system has no submenu/child-item concept — flat list only.
 - **Full capability in group mode:** because `buildOrderForm` was already unified by the parity work, group POs generated in-tab get the full status range, SO#-on-submit, projected-only delete affordance, and multi-status badges.
 - **Standalone page retired:** the `distributor_group_forecast` view, its URL route, and `templates/distribution/distributor_group_forecast.html` (which held a duplicate group-modal IIFE) are **deleted**. The three group endpoints (`distributor_group_orders_modal_data`, `distributor_group_po_save`, `distributor_group_po_suggest`) **remain** — they now back the unified tab modal. No schema/migration/permission changes.
 
+#### Bidirectional case/pallet entry + decimal pallets + total row (unified modal)
+
+- **Cases is the stored source of truth; pallets is a UI convenience.** `DistributorPOLine.quantity_cases` (Decimal(10,6)) is what's saved; pallets are display-time computed as `cases / cases_per_pallet` (**exact division**, replacing the prior `Math.ceil`, which hid fractions). So 100 cases at cpp 40 now shows **2.50 pallets**, not 3. Items with no `cases_per_pallet` (null) show no pallet figure.
+- **Cases are ALWAYS WHOLE.** Both fields are editable with **live two-way sync**: typing in cases recomputes the pallet display; typing in pallets sets `cases = round(pallets × cpp)` to the **nearest whole case**, then both fields reflect that stored whole-case value (mathematically consistent rather than the literal typed pallet value). A decimal typed directly into the cases field is rounded to whole on blur/save. Only `quantity_cases` (whole) is saved — no pallets field is ever stored or sent.
+- **Decimal display via `fmtQty`.** A single JS helper in the modal IIFE mirrors `views._format_quantity_cases`: integer string when whole, 2-decimal string when fractional. It is the one formatter used for every pallet figure (per-line pallet display **and** the total row) — formatting logic is not scattered.
+- **Total row (`<tfoot>`).** Sums **cases** across all lines (always shown, whole). Sums **pallets** (`sum(cases_i / cpp_i)`, formatted via `fmtQty`) **only when the pallet column is present** (pallet-unit distributors); cases-mode distributors show the cases total only. Items without cpp count toward cases but contribute 0 to the pallet sum. The row recomputes live on every input.
+- **Applies to BOTH modes.** Because `buildOrderForm` is the single unified code path, single-distributor and group PO entry both get decimal pallets, the total row, and bidirectional sync.
+- **Backend defensive round.** `distributor_po_save` / `distributor_group_po_save` round `quantity_cases` to whole on store (the UI already guarantees this). The `Decimal(10,6)` field is unchanged. The live JS sync is UI-verified; tests assert the stored contract (whole cases, payload shape) at the endpoints.
+
+#### Stray multi-line template comment + broadened guard
+
+- **Fixed** a stray top-of-file multi-line `{# … #}` comment in `_group_alignment_panel.html` (Django `{# #}` is single-line only, so a multi-line one rendered as visible text) — converted to `{% comment %}…{% endcomment %}`.
+- **Broadened the regression guard** (`test_no_stray_multiline_comment_in_distribution_templates`): it now scans **all** `templates/distribution/*.html` (including partials) for a `{#` not closed by `#}` on the same line, failing if any are found. This is the **4th instance** of this bug class; the original single-template test is retained.
+
 ---
 
 ## Inventory Mapping UX

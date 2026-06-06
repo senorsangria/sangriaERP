@@ -1357,10 +1357,16 @@
     pane.innerHTML = buildOrderForm(tabId, savedPo, suggestedOrder);
     contentEl.appendChild(pane);
 
-    // Wire inputs for pallet display
+    // Wire inputs for live two-way case/pallet sync + total row.
     pane.querySelectorAll('.po-cases-input').forEach(function (inp) {
       inp.addEventListener('input', function () { updatePallets(pane, inp); });
+      inp.addEventListener('change', function () { normalizeCases(pane, inp); });
     });
+    pane.querySelectorAll('.po-pallets-input').forEach(function (inp) {
+      inp.addEventListener('input', function () { updateCasesFromPallets(pane, inp); });
+      inp.addEventListener('change', function () { syncPalletsDisplay(pane, inp); });
+    });
+    updateTotals(pane);
 
     // Delete / Remove buttons
     var delBtn = pane.querySelector('.po-delete-btn');
@@ -1494,7 +1500,7 @@
     html += '<thead class="table-light"><tr>';
     html += '<th class="small">Item</th>';
     html += '<th class="small text-end" style="width:100px;">Cases</th>';
-    if (isPallets) html += '<th class="small text-end" style="width:80px;">Pallets</th>';
+    if (isPallets) html += '<th class="small text-end" style="width:90px;">Pallets</th>';
     html += '</tr></thead><tbody>';
 
     _state.items.forEach(function (item) {
@@ -1506,8 +1512,9 @@
         var foundS = (suggestedOrder.lines || []).find(function (l) { return l.item_id === item.id; });
         if (foundS) casesVal = foundS.cases || 0;
       }
-      var palletsVal = (isPallets && item.cases_per_pallet && casesVal > 0)
-        ? Math.ceil(casesVal / item.cases_per_pallet) : 0;
+      var cpp = item.cases_per_pallet || 0;
+      // EXACT division (was Math.ceil) — fractional pallets are shown as decimals.
+      var palletsVal = (cpp && casesVal > 0) ? fmtQty(casesVal / cpp) : '';
 
       html += '<tr>';
       html += '<td class="small">' + _esc(item.name) + '</td>';
@@ -1519,22 +1526,104 @@
       html += ' value="' + casesVal + '">';
       html += '</td>';
       if (isPallets) {
-        html += '<td class="small text-end po-pallets-cell" data-item-id="' + item.id + '">' + palletsVal + '</td>';
+        // Pallets is an editable input (two-way sync) only when the item has a
+        // cases_per_pallet. Without cpp there's no pallet concept — show a dash.
+        if (cpp) {
+          html += '<td>';
+          html += '<input type="number" min="0" step="0.01"';
+          html += ' class="form-control form-control-sm po-pallets-input text-end"';
+          html += ' data-item-id="' + item.id + '"';
+          html += ' data-cpp="' + cpp + '"';
+          html += ' value="' + palletsVal + '">';
+          html += '</td>';
+        } else {
+          html += '<td class="small text-end text-muted">—</td>';
+        }
       }
       html += '</tr>';
     });
 
-    html += '</tbody></table></div>';
+    html += '</tbody>';
+
+    // Total row — cases always; pallets only when the pallet column is present.
+    html += '<tfoot><tr class="table-light fw-semibold">';
+    html += '<td class="small text-end text-muted">Total</td>';
+    html += '<td class="small text-end po-total-cases">0</td>';
+    if (isPallets) html += '<td class="small text-end po-total-pallets">0</td>';
+    html += '</tr></tfoot>';
+
+    html += '</table></div>';
     return html;
   }
 
+  // Shared JS mirror of views._format_quantity_cases: whole number when integral,
+  // otherwise 2 decimal places. Single formatter for every pallet figure shown.
+  function fmtQty(n) {
+    var num = Number(n);
+    if (!isFinite(num)) return '';
+    if (num === Math.round(num)) return String(Math.round(num));
+    return num.toFixed(2);
+  }
+
+  // Cases → pallets (live, on input): recompute this row's pallet input from the
+  // entered cases, then refresh the totals. Cases are normalized to whole on blur.
   function updatePallets(pane, inp) {
     var cpp = parseFloat(inp.dataset.cpp);
-    if (!cpp) return;
     var cases = parseFloat(inp.value) || 0;
-    var pallets = cases > 0 ? Math.ceil(cases / cpp) : 0;
-    var cell = pane.querySelector('.po-pallets-cell[data-item-id="' + inp.dataset.itemId + '"]');
-    if (cell) cell.textContent = pallets;
+    var pInp = pane.querySelector('.po-pallets-input[data-item-id="' + inp.dataset.itemId + '"]');
+    if (pInp && cpp) pInp.value = (cases > 0) ? fmtQty(cases / cpp) : '';
+    updateTotals(pane);
+  }
+
+  // Cases blur: cases are ALWAYS whole — round to the nearest whole case, then
+  // resync the pallet display so both fields reflect the stored value.
+  function normalizeCases(pane, inp) {
+    var cases = parseFloat(inp.value);
+    if (isNaN(cases) || cases < 0) cases = 0;
+    inp.value = Math.round(cases);
+    updatePallets(pane, inp);
+  }
+
+  // Pallets → cases (live, on input): cases = round(pallets × cpp) to the nearest
+  // WHOLE case; write it into the cases input and refresh the totals. The pallet
+  // input is re-formatted to the stored value on blur (syncPalletsDisplay).
+  function updateCasesFromPallets(pane, inp) {
+    var cpp = parseFloat(inp.dataset.cpp);
+    if (!cpp) return;
+    var pallets = parseFloat(inp.value) || 0;
+    if (pallets < 0) pallets = 0;
+    var cases = Math.round(pallets * cpp);
+    var cInp = pane.querySelector('.po-cases-input[data-item-id="' + inp.dataset.itemId + '"]');
+    if (cInp) cInp.value = cases;
+    updateTotals(pane);
+  }
+
+  // Pallets blur: reformat the pallet input to (whole cases) / cpp via fmtQty so
+  // it shows the actual stored whole-case value rather than the literal typed one.
+  function syncPalletsDisplay(pane, inp) {
+    var cpp = parseFloat(inp.dataset.cpp);
+    if (!cpp) return;
+    var cInp = pane.querySelector('.po-cases-input[data-item-id="' + inp.dataset.itemId + '"]');
+    var cases = cInp ? (parseFloat(cInp.value) || 0) : 0;
+    inp.value = (cases > 0) ? fmtQty(cases / cpp) : '';
+    updateTotals(pane);
+  }
+
+  // Recompute the total row: cases total (whole) always; pallets total — the sum
+  // of per-line exact cases/cpp — only when the pallet column is present. Items
+  // without cpp count toward cases but contribute 0 pallets.
+  function updateTotals(pane) {
+    var totalCases = 0, totalPallets = 0;
+    pane.querySelectorAll('.po-cases-input').forEach(function (inp) {
+      var cases = parseFloat(inp.value) || 0;
+      totalCases += cases;
+      var cpp = parseFloat(inp.dataset.cpp);
+      if (cpp) totalPallets += cases / cpp;
+    });
+    var cEl = pane.querySelector('.po-total-cases');
+    if (cEl) cEl.textContent = fmtQty(totalCases);
+    var pEl = pane.querySelector('.po-total-pallets');
+    if (pEl) pEl.textContent = fmtQty(totalPallets);
   }
 
   function removeTab(tabId) {
@@ -1594,7 +1683,8 @@
 
       var lines = [];
       pane.querySelectorAll('.po-cases-input').forEach(function (inp) {
-        var cases = parseFloat(inp.value) || 0;
+        // Cases are always whole — round to guard against an unblurred decimal.
+        var cases = Math.round(parseFloat(inp.value) || 0);
         if (cases > 0) {
           lines.push({item_id: parseInt(inp.dataset.itemId, 10), quantity_cases: cases});
         }

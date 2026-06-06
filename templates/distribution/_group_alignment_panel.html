@@ -1,7 +1,9 @@
-{# Group forecast alignment states — reused by the Forecast tab (group mode).
-   Renders the 'misaligned' panel (per-member missing snapshots) and the
-   'no_data' empty card. Expects `forecast_result` with alignment_status,
-   alignment_errors, and message. #}
+{% comment %}
+Group forecast alignment states — reused by the Forecast tab (group mode).
+Renders the 'misaligned' panel (per-member missing snapshots) and the
+'no_data' empty card. Expects `forecast_result` with alignment_status,
+alignment_errors, and message.
+{% endcomment %}
 {% if forecast_result.alignment_status == 'misaligned' %}
 
 <div class="card border-0 shadow-sm mb-4">
