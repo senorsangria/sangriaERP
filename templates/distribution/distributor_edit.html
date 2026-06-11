@@ -6,8 +6,8 @@
 {% block content %}
 
 <div class="mb-4">
-  <a href="{% url 'distributor_detail' distributor.pk %}" class="text-muted text-decoration-none small">
-    <i class="bi bi-arrow-left me-1"></i>Back to {{ distributor.name }}
+  <a href="{% url 'distributor_list' %}" class="text-muted text-decoration-none small">
+    <i class="bi bi-arrow-left me-1"></i>Back to Distributors
   </a>
   <h1 class="h3 mb-0 fw-bold mt-1">Edit Distributor — {{ distributor.name }}</h1>
 </div>

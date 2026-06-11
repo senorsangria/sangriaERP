@@ -1,0 +1,43 @@
+{% comment %}
+Group forecast alignment states — reused by the Forecast tab (group mode).
+Renders the 'misaligned' panel (per-member missing snapshots) and the
+'no_data' empty card. Expects `forecast_result` with alignment_status,
+alignment_errors, and message.
+{% endcomment %}
+{% if forecast_result.alignment_status == 'misaligned' %}
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="alert alert-warning mb-0">
+      <h6 class="alert-heading fw-semibold">Cannot generate group forecast — snapshots not aligned</h6>
+      <p class="mb-2 small">Each member must have inventory snapshots for all their active items in the same period.</p>
+      <ul class="mb-2 small">
+        {% for err in forecast_result.alignment_errors %}
+        <li>
+          <strong>{{ err.distributor }}</strong>:
+          {% if err.missing_items %}
+            missing snapshots for {{ err.missing_items|join:", " }}
+          {% else %}
+            snapshots present for all active items
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      <hr class="my-2">
+      <p class="mb-0 small text-muted">
+        Upload the missing inventory snapshots via <a href="{% url 'inventory_upload' %}">Inventory Upload</a>.
+      </p>
+    </div>
+  </div>
+</div>
+
+{% elif forecast_result.alignment_status == 'no_data' %}
+
+<div class="card border-0 shadow-sm">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-inbox fs-1 d-block mb-3"></i>
+    <p>{{ forecast_result.message }}</p>
+  </div>
+</div>
+
+{% endif %}

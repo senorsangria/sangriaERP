@@ -15,9 +15,9 @@ urlpatterns = [
     path('distributors/inventory/preview/', views.inventory_preview, name='inventory_preview'),
     path('distributors/inventory/confirm/', views.inventory_confirm, name='inventory_confirm'),
     path('distributors/inventory/delete/', views.inventory_bulk_delete, name='inventory_bulk_delete'),
-    # Group forecast endpoints (Phase G2/G3) — static sub-paths before <int:pk>
-    path('distributors/group/<int:group_pk>/',
-         views.distributor_group_forecast, name='distributor_group_forecast'),
+    # Group PO endpoints (back the Forecast-tab #poModal in group mode) —
+    # static sub-paths before <int:pk>. The standalone group forecast page was
+    # retired; the group forecast renders in the Forecast tab (?forecast_group=N).
     path('distributors/group/<int:group_pk>/orders/save/',
          views.distributor_group_po_save, name='distributor_group_po_save'),
     path('distributors/group/<int:group_pk>/orders/<int:year>/<int:month>/',

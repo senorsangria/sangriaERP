@@ -316,7 +316,12 @@
                 <td class="small text-muted">{{ snap.brand_name }}</td>
                 <td><code class="small">{{ snap.item_code }}</code></td>
                 <td class="text-end fw-medium">{{ snap.quantity_display }}</td>
-                <td class="small text-muted">{{ snap.created_at|date:"M j, Y" }}</td>
+                <td class="small text-muted">
+                  {{ snap.created_at|date:"M j, Y" }}
+                  {% if snap.updated_by_display %}
+                  <div class="text-muted" style="font-size:0.7rem;">Updated by {{ snap.updated_by_display }}</div>
+                  {% endif %}
+                </td>
               </tr>
               {% endfor %}
             </tbody>
@@ -1240,7 +1245,15 @@
     .then(function (r) { return r.json(); })
     .then(function (data) {
       if (data.success) {
-        window.location.reload();
+        // Return the user to the tab they came from, refreshed. A PO entered
+        // from the Forecast grid (mode 'month') lands back on the Forecast grid
+        // so the just-saved order is reflected; a single-PO edit (mode 'single',
+        // opened from the Production POs tab) returns there. A bare reload would
+        // default to the Inventory tab, since tab switches are client-side only.
+        var dest = (_state.mode === 'single')
+          ? "{% url 'production_home' %}?tab=production_pos"
+          : "{% url 'production_home' %}?tab=forecast";
+        window.location.assign(dest);
       } else {
         saveBtn.disabled = false;
         saveBtn.textContent = 'Save All Orders';

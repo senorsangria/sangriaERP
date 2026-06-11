@@ -62,6 +62,11 @@ def _build_snapshot_rows(snap_qs):
             'item_code': s.item.item_code,
             'quantity_display': _format_quantity_cases(s.quantity_cases),
             'created_at': s.created_at,
+            'updated_by_display': (
+                (s.updated_by.get_full_name() or s.updated_by.email
+                 or s.updated_by.username)
+                if s.updated_by_id else ''
+            ),
         }
         for s in snap_qs
     ]
@@ -144,7 +149,7 @@ def production_home(request):
 
     # Inventory tab — snapshot list with optional filters
     snap_qs = OwnInventorySnapshot.objects.filter(company=company).select_related(
-        'item', 'item__brand',
+        'item', 'item__brand', 'updated_by',
     )
 
     filter_period = request.GET.get('filter_period', '').strip()
@@ -351,19 +356,9 @@ def production_inventory_upload(request):
         year = period_form.cleaned_data['year']
         month = period_form.cleaned_data['month']
 
-        if OwnInventorySnapshot.objects.filter(company=company, year=year, month=month).exists():
-            month_label = MONTH_NAMES[month - 1]
-            return render(request, 'production/inventory_upload.html', {
-                'company': company,
-                'items': items,
-                'period_form': period_form,
-                'input_values': input_values,
-                'item_errors': {},
-                'general_error': (
-                    f'A snapshot for {month_label} {year} already exists. '
-                    'Return to Production and use the Inventory tab to delete it first.'
-                ),
-            })
+        # No month-level block: inventory for a month can be entered
+        # incrementally and edited. The per-(company, item, year, month) unique
+        # constraint is the real guard; the save below upserts per item.
 
         parsed_values = {}
         item_errors = {}
@@ -405,16 +400,29 @@ def production_inventory_upload(request):
                 'general_error': 'Please fix the errors below.',
             })
 
+        # Upsert per item, keyed on the unique fields. Existing rows for this
+        # (company, item, year, month) are updated in place; new ones are
+        # created. updated_by is stamped on both paths; created_by is set only
+        # on creation (create_defaults) so it is preserved on update.
+        # Blank inputs were skipped above, so they leave any existing row
+        # unchanged (deletion stays on the Inventory tab's delete controls).
         item_map = {i.pk: i for i in items}
         with transaction.atomic():
             for item_pk, qty in parsed_values.items():
-                OwnInventorySnapshot.objects.create(
+                OwnInventorySnapshot.objects.update_or_create(
                     company=company,
                     item=item_map[item_pk],
                     year=year,
                     month=month,
-                    quantity_cases=qty,
-                    created_by=request.user,
+                    defaults={
+                        'quantity_cases': qty,
+                        'updated_by': request.user,
+                    },
+                    create_defaults={
+                        'quantity_cases': qty,
+                        'updated_by': request.user,
+                        'created_by': request.user,
+                    },
                 )
 
         month_label = MONTH_NAMES[month - 1]
@@ -424,12 +432,34 @@ def production_inventory_upload(request):
         )
         return redirect(reverse('production_home') + '?tab=inventory')
 
-    period_form = OwnInventorySnapshotPeriodForm()
+    # GET — when a period is selected (?year=&month=), pre-fill each item's
+    # input with its existing snapshot value for that (company, year, month) so
+    # the form reads as "enter or update this month's inventory."
+    prefill_year = request.GET.get('year', '').strip()
+    prefill_month = request.GET.get('month', '').strip()
+    input_values = {}
+    period_initial = {}
+    if prefill_year and prefill_month:
+        try:
+            y = int(prefill_year)
+            m = int(prefill_month)
+        except (ValueError, TypeError):
+            y = m = None
+        if y and m:
+            period_initial = {'year': y, 'month': m}
+            input_values = {
+                s.item_id: _format_quantity_cases(s.quantity_cases)
+                for s in OwnInventorySnapshot.objects.filter(
+                    company=company, year=y, month=m,
+                )
+            }
+
+    period_form = OwnInventorySnapshotPeriodForm(initial=period_initial or None)
     return render(request, 'production/inventory_upload.html', {
         'company': company,
         'items': items,
         'period_form': period_form,
-        'input_values': {},
+        'input_values': input_values,
         'item_errors': {},
         'general_error': None,
     })

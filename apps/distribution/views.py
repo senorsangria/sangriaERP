@@ -442,6 +442,8 @@ def distributor_list(request):
     forecast_result = None
     orders_result = None
     forecast_distributor = None
+    forecast_group = None
+    primary_distributor = None
     available_distributors = []
     available_groups = []
 
@@ -570,11 +572,57 @@ def distributor_list(request):
             .order_by('name')
         )
         available_groups = list(DistributorGroup.objects.filter(company=company).order_by('name'))
-        # No auto-selection: the forecast is only computed when a distributor is
-        # explicitly chosen via ?forecast_distributor=. The dropdown defaults to
-        # a "Select a distributor" prompt with a friendly empty state below.
+        # No auto-selection: the forecast is only computed when a distributor or
+        # group is explicitly chosen via ?forecast_distributor= / ?forecast_group=.
+        # The dropdown defaults to a "Select a distributor" prompt with a friendly
+        # empty state below. The two params are mutually exclusive; if both are
+        # present, the group takes precedence.
+        forecast_group_pk = request.GET.get('forecast_group', '')
         forecast_dist_pk = request.GET.get('forecast_distributor', '')
-        if forecast_dist_pk:
+        if forecast_group_pk:
+            # Group mode: render the aggregated group forecast in-tab (this is the
+            # sole group-forecast surface — the standalone page was retired).
+            # Distributor mode is skipped entirely.
+            try:
+                group_pk = int(forecast_group_pk)
+                forecast_group = DistributorGroup.objects.filter(
+                    company=company, pk=group_pk
+                ).select_related('primary_distributor').first()
+            except (ValueError, TypeError):
+                forecast_group = None
+            if forecast_group:
+                primary_distributor = forecast_group.primary_distributor
+                members = list(forecast_group.members.all())
+
+                # Build po_additions and saved_pos_by_month from all member POs
+                saved_pos = list(
+                    DistributorPO.objects.filter(distributor__in=members)
+                    .prefetch_related('lines')
+                )
+                po_additions = {}
+                saved_pos_by_month = {}
+                for po in saved_pos:
+                    ym = (po.year, po.month)
+                    saved_pos_by_month.setdefault(ym, []).append(po)
+                    for line in po.lines.all():
+                        key = (line.item_id, po.year, po.month)
+                        po_additions[key] = po_additions.get(key, 0.0) + float(line.quantity_cases)
+
+                forecast_result = compute_group_forecast(
+                    forecast_group, po_additions=po_additions or None,
+                )
+
+                # Orders are only generated when the group's snapshots align.
+                if forecast_result.get('alignment_status') == 'ok':
+                    orders_result = generate_projected_orders(
+                        primary_distributor, forecast_result,
+                    )
+                    for slot in orders_result.get('orders_per_horizon', []):
+                        ym = (slot['year'], slot['month'])
+                        saved_count = len(saved_pos_by_month.get(ym, []))
+                        slot['saved_count'] = saved_count
+                        slot['total_count'] = saved_count
+        elif forecast_dist_pk:
             try:
                 pk = int(forecast_dist_pk)
                 forecast_distributor = next(
@@ -771,6 +819,8 @@ def distributor_list(request):
         'forecast_result': forecast_result,
         'orders_result': orders_result,
         'forecast_distributor': forecast_distributor,
+        'forecast_group': forecast_group,
+        'primary_distributor': primary_distributor,
         'available_distributors': available_distributors,
         'available_groups': available_groups,
         # Distributor POs / Invoiced POs tabs
@@ -1397,6 +1447,7 @@ def distributor_po_modal_data(request, dist_pk, year, month):
             'external_po_number': po.external_po_number,
             'notes': po.notes,
             'generated_by_algorithm': po.generated_by_algorithm,
+            'so_number': po.so_number,
             'lines': [
                 {
                     'item_id': line.item_id,
@@ -1569,7 +1620,9 @@ def distributor_po_save(request, dist_pk):
                             DistributorPOLine.objects.create(
                                 po=po,
                                 item_id=line['item_id'],
-                                quantity_cases=float(line['quantity_cases']),
+                                # Cases are always whole; round defensively (the UI
+                                # already guarantees this). Field stays Decimal(10,6).
+                                quantity_cases=round(float(line['quantity_cases'])),
                             )
                 else:
                     if not nonzero_lines:
@@ -1591,7 +1644,9 @@ def distributor_po_save(request, dist_pk):
                         DistributorPOLine.objects.create(
                             po=po,
                             item_id=line['item_id'],
-                            quantity_cases=float(line['quantity_cases']),
+                            # Cases are always whole; round defensively (the UI
+                            # already guarantees this). Field stays Decimal(10,6).
+                            quantity_cases=round(float(line['quantity_cases'])),
                         )
     except ValidationError as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=400)
@@ -1633,65 +1688,12 @@ def distributor_po_delete(request, dist_pk, po_pk):
 
 
 # ---------------------------------------------------------------------------
-# Group forecast views (Phase G2)
+# Group PO endpoints (back the unified Forecast-tab #poModal in group mode)
+#
+# The standalone group forecast PAGE was retired once the Forecast tab learned
+# to render a group's forecast in-tab (?forecast_group=N, see distributor_list).
+# These endpoints — modal-data, save, suggest — remain as the modal's backend.
 # ---------------------------------------------------------------------------
-
-@login_required
-def distributor_group_forecast(request, group_pk):
-    """Read-only aggregated forecast for a DistributorGroup."""
-    if not request.user.has_permission('can_manage_distributor_inventory'):
-        return render(request, '403.html', status=403)
-
-    company = request.user.company
-    group = get_object_or_404(
-        DistributorGroup.objects.select_related('primary_distributor', 'company'),
-        pk=group_pk, company=company,
-    )
-    members = list(group.members.order_by('name'))
-    primary = group.primary_distributor
-
-    # Build po_additions and saved_pos_by_month from all member POs
-    saved_pos = list(
-        DistributorPO.objects.filter(distributor__in=members)
-        .select_related('distributor')
-        .prefetch_related('lines')
-    )
-    po_additions = {}
-    saved_pos_by_month = {}
-    for po in saved_pos:
-        ym = (po.year, po.month)
-        saved_pos_by_month.setdefault(ym, []).append(po)
-        for line in po.lines.all():
-            key = (line.item_id, po.year, po.month)
-            po_additions[key] = po_additions.get(key, 0.0) + float(line.quantity_cases)
-
-    forecast_result = compute_group_forecast(group, po_additions=po_additions or None)
-
-    orders_result = None
-    if forecast_result.get('alignment_status') == 'ok':
-        orders_result = generate_projected_orders(primary, forecast_result)
-        for slot in orders_result.get('orders_per_horizon', []):
-            ym = (slot['year'], slot['month'])
-            slot['saved_count'] = len(saved_pos_by_month.get(ym, []))
-            slot['total_count'] = slot['saved_count']
-
-    available_distributors = list(
-        Distributor.objects.filter(company=company, is_active=True)
-        .select_related('group', 'group__primary_distributor')
-        .order_by('name')
-    )
-    available_groups = list(DistributorGroup.objects.filter(company=company).order_by('name'))
-
-    return render(request, 'distribution/distributor_group_forecast.html', {
-        'group': group,
-        'members': members,
-        'primary_distributor': primary,
-        'forecast_result': forecast_result,
-        'orders_result': orders_result,
-        'available_distributors': available_distributors,
-        'available_groups': available_groups,
-    })
-
 
 @login_required
 def distributor_group_orders_modal_data(request, group_pk, year, month):
@@ -1768,6 +1770,7 @@ def distributor_group_orders_modal_data(request, group_pk, year, month):
             'external_po_number': po.external_po_number or '',
             'notes': po.notes or '',
             'generated_by_algorithm': po.generated_by_algorithm,
+            'so_number': po.so_number,
             'is_primary': po.distributor_id == primary.pk,
             'distributor_name': po.distributor.name,
             'distributor_pk': po.distributor_id,
@@ -1898,10 +1901,12 @@ def distributor_group_po_save(request, group_pk):
     all_item_ids = set()
     existing_po_ids = []
 
+    valid_statuses = [s[0] for s in DistributorPO.Status.choices]
+
     for i, order_data in enumerate(orders):
         label = f'Order {i + 1}'
         status = order_data.get('status', 'projected')
-        if status not in ('projected', 'actual'):
+        if status not in valid_statuses:
             errors.append(f'{label}: invalid status "{status}"')
             continue
 
@@ -2005,20 +2010,24 @@ def distributor_group_po_save(request, group_pk):
                         po.external_po_number = po_number
                         po.notes = notes
                         po.generated_by_algorithm = False
-                        po.save(update_fields=[
-                            'status', 'external_po_number', 'notes', 'generated_by_algorithm',
-                        ])
+                        update_fields = ['status', 'external_po_number', 'notes', 'generated_by_algorithm']
+                        if status == DistributorPO.Status.SUBMITTED and po.so_number is None:
+                            assign_so_number(po)
+                            update_fields.append('so_number')
+                        po.save(update_fields=update_fields)
                         po.lines.all().delete()
                         for line in nonzero_lines:
                             DistributorPOLine.objects.create(
                                 po=po,
                                 item_id=line['item_id'],
-                                quantity_cases=float(line['quantity_cases']),
+                                # Cases are always whole; round defensively (the UI
+                                # already guarantees this). Field stays Decimal(10,6).
+                                quantity_cases=round(float(line['quantity_cases'])),
                             )
                 else:
                     if not nonzero_lines:
                         continue
-                    po = DistributorPO.objects.create(
+                    po = DistributorPO(
                         distributor=primary,
                         year=year,
                         month=month,
@@ -2028,11 +2037,16 @@ def distributor_group_po_save(request, group_pk):
                         generated_by_algorithm=False,
                         created_by=request.user,
                     )
+                    if status == DistributorPO.Status.SUBMITTED:
+                        assign_so_number(po)
+                    po.save()
                     for line in nonzero_lines:
                         DistributorPOLine.objects.create(
                             po=po,
                             item_id=line['item_id'],
-                            quantity_cases=float(line['quantity_cases']),
+                            # Cases are always whole; round defensively (the UI
+                            # already guarantees this). Field stays Decimal(10,6).
+                            quantity_cases=round(float(line['quantity_cases'])),
                         )
     except ValidationError as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=400)
