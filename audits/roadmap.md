@@ -53,7 +53,7 @@ Audits 02 (tenancy), 03 (permissions), and 05 (code structure) independently con
 | **R8** | CoPacker CRUD UI (mirror the Brand pattern) — currently tenants cannot manage co-packers at all; hard onboarding blocker for production features | 02 T11 | MEDIUM (blocker) | S | env-independent | — |
 | **R9** | `provision_tenant` management command + ONBOARDING.md runbook (company + so_sequence_start prompt + first admin; import order; smoke test) | 02 T12/§5, 06 §6b | LOW (T12) / MEDIUM (gap) | S | env-independent | Removes the so_sequence_start=2006 trap |
 | **R10** | Seeded-data hygiene: guard `catalog/0007` against fresh-environment contamination, `seed_data` refuses to run unless DEBUG/--force, stop shipping seed data as migrations | 01 D3, 02 T10, 06 O16 | HIGH (D3) | S | env-independent | — |
-| **R11** | Django 5.2 LTS upgrade (5.1.6 is EOL and missing nine security releases incl. a SQL-injection fix) + Pillow bump + enable Dependabot | 06 O1/O14 | HIGH | S-M | env-independent | Do early — all later code changes should land on a supported framework; the 1,337-test suite verifies it |
+| **R11** | Django 5.2 LTS upgrade (5.1.6 is EOL and missing nine security releases incl. a SQL-injection fix) + Pillow bump + enable Dependabot — ✅ IMPLEMENTED 2026-06-13 (on develop, pending deploy). | 06 O1/O14 | HIGH | S-M | env-independent | Do early — all later code changes should land on a supported framework; the 1,337-test suite verifies it |
 | **R12** | The SECURE_* settings block: proxy SSL header, SSL redirect, Secure cookies, HSTS (+ gate the Replit ALLOWED_HOSTS wildcards out of prod) — ✅ IMPLEMENTED 2026-06-13 (on develop, pending deploy). | 06 O2 (+O11) | HIGH | S | env-independent | Six lines of settings; cookies currently lack the Secure flag in production |
 | **R13** | Error visibility: LOGGING-to-stdout config + Sentry (tagged per company) + uptime check. Production 500s are currently discarded entirely — ✅ IMPLEMENTED 2026-06-13 (on develop, pending deploy). | 06 O3 | HIGH | S | env-independent | Cheapest high-value fix in the whole series |
 | **R14** | Backup posture: verify the Render plan's snapshot/PITR reality, automate nightly `pg_dump` to R2, automate/checklist the pre-deploy backup, run one restore drill, turn on R2 versioning (receipts are financial records) | 06 O4, 01 D2 (recovery side) | HIGH | S (verify+dump) / M (full) | env-independent | The only current recovery for any destructive op is "restore everything, lose the day" |
@@ -137,7 +137,7 @@ Note on framing: per PRODUCT_DECISIONS, no QuickBooks API integration will be bu
 1. ~~**R13 — Error visibility** (logging + Sentry + uptime). Cheapest high-value fix.~~
 2. ~~**R12 — SECURE_* settings block.** Closes the live cookie-security gap.~~
 3. ~~**R17 (S-half) — CI + deploy runbook.** Makes the 1,337 tests a deploy gate before the framework upgrade and everything after.~~
-4. **R11 — Django 5.2 LTS + Pillow + Dependabot.** Lands through the CI gate; the test suite verifies it.
+4. ~~**R11 — Django 5.2 LTS + Pillow + Dependabot.** Lands through the CI gate; the test suite verifies it.~~
 5. **R16 — /healthz + /ops/status.** Verifies in production that slices 2–4 took effect.
 6. **R24 (write-path stop only) — Stop the AccountItemPriceHistory write path.** Pulled forward from Bucket 2: cheap, standalone, stops active misleading-data generation now. Table drop stays deferred.
 7. **R18 — gunicorn workers.**
