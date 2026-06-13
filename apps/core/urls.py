@@ -7,6 +7,10 @@ urlpatterns = [
     path('logout/', views.logout_view, name='logout'),
     path('password-reset/', views.password_reset_stub, name='password_reset_stub'),
 
+    # Infrastructure endpoints (R16)
+    path('healthz', views.healthz, name='healthz'),
+    path('ops/status', views.ops_status, name='ops_status'),
+
     # Dashboard (root)
     path('', views.dashboard, name='dashboard'),
 

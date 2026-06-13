@@ -1,14 +1,18 @@
 """
 Core views: authentication, dashboard, user management, profile.
 """
+import os
+
+from django.conf import settings
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.contrib.auth import login, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib import messages
+from django.db import connection
 from django.db.models import Q
-from django.http import JsonResponse
+from django.http import JsonResponse, Http404
 from django.views.decorators.http import require_POST
 
 from .models import User
@@ -417,3 +421,117 @@ def save_admin_tools_state(request):
         return JsonResponse({'success': False, 'error': 'invalid value'}, status=400)
     request.session['admin_tools_collapsed'] = (collapsed_str == 'true')
     return JsonResponse({'success': True})
+
+
+# ---------------------------------------------------------------------------
+# Infrastructure endpoints (R16)
+#
+# Two endpoints that make production's real running configuration verifiable
+# on demand (audit 06 O6):
+#   /healthz     — unauthenticated liveness + DB-connectivity check
+#   /ops/status  — operator-only (staff-gated) mirror of the live config
+#
+# SECURITY: /ops/status reports booleans and names ONLY. It never returns any
+# secret VALUE (no SECRET_KEY, no DB password, no SENTRY_DSN, no R2 keys).
+# ---------------------------------------------------------------------------
+
+def healthz(request):
+    """Unauthenticated liveness probe for Render health checks / uptime monitors.
+
+    Minimal by design — no version strings, no config. Verifies the process is
+    up and the database answers a trivial query.
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT 1')
+            cursor.fetchone()
+    except Exception:
+        return JsonResponse(
+            {'status': 'error', 'database': 'unreachable'},
+            status=503,
+        )
+    return JsonResponse({'status': 'ok', 'database': 'ok'})
+
+
+def ops_status(request):
+    """Operator-only mirror of the LIVE running configuration (R16).
+
+    Gated to staff users. Non-staff and anonymous requests get a 404 so the
+    endpoint's existence stays hidden (deliberately not 403).
+
+    Reports the live values of DEBUG, ALLOWED_HOSTS, the secure-cookie/HSTS
+    flags, server software, worker count, DB connectivity + Postgres version,
+    pending-migration count, and the deployed commit — booleans and names
+    only, never secret values.
+    """
+    user = request.user
+    if not user.is_authenticated or not user.is_staff:
+        raise Http404()
+
+    # --- Database: connectivity boolean + Postgres version string -----------
+    db_ok = False
+    db_version = None
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT version()')
+            row = cursor.fetchone()
+            db_version = row[0] if row else None
+        db_ok = True
+    except Exception:
+        db_ok = False
+        db_version = None
+
+    # --- Pending (unapplied) migration count --------------------------------
+    try:
+        from django.db.migrations.executor import MigrationExecutor
+        executor = MigrationExecutor(connection)
+        targets = executor.loader.graph.leaf_nodes()
+        pending_migrations = len(executor.migration_plan(targets))
+    except Exception:
+        pending_migrations = None
+
+    # --- Storage backend: 'r2' vs 'local filesystem' (NOT credentials) ------
+    try:
+        backend = settings.STORAGES['default']['BACKEND']
+        storage_backend = 'r2' if 's3boto3' in backend.lower() else 'local filesystem'
+    except Exception:
+        storage_backend = 'unknown'
+
+    # --- Django deployment-check warning count (best-effort) ----------------
+    # Runs the system-check framework with deployment checks enabled; wrapped
+    # so a failure here can never break the page (reports null instead).
+    deploy_check_warnings = None
+    try:
+        from django.core import checks
+        check_messages = checks.run_checks(
+            tags=['security'],
+            include_deployment_checks=True,
+        )
+        deploy_check_warnings = len(check_messages)
+    except Exception:
+        deploy_check_warnings = None
+
+    payload = {
+        'server_software': os.environ.get('SERVER_SOFTWARE', 'unknown'),
+        'debug': settings.DEBUG,
+        'allowed_hosts': list(settings.ALLOWED_HOSTS),
+        'session_cookie_secure': bool(getattr(settings, 'SESSION_COOKIE_SECURE', False)),
+        'csrf_cookie_secure': bool(getattr(settings, 'CSRF_COOKIE_SECURE', False)),
+        'secure_ssl_redirect': bool(getattr(settings, 'SECURE_SSL_REDIRECT', False)),
+        'secure_hsts_seconds': getattr(settings, 'SECURE_HSTS_SECONDS', 0),
+        'secure_hsts_include_subdomains': bool(
+            getattr(settings, 'SECURE_HSTS_INCLUDE_SUBDOMAINS', False)
+        ),
+        'secure_hsts_preload': bool(getattr(settings, 'SECURE_HSTS_PRELOAD', False)),
+        'secure_proxy_ssl_header_set': getattr(settings, 'SECURE_PROXY_SSL_HEADER', None) is not None,
+        'database': {
+            'connected': db_ok,
+            'version': db_version,
+        },
+        'pending_migrations': pending_migrations,
+        'deployed_commit': os.environ.get('RENDER_GIT_COMMIT', 'unknown'),
+        'web_concurrency': os.environ.get('WEB_CONCURRENCY', 'not set'),
+        'storage_backend': storage_backend,
+        'deploy_check_warnings': deploy_check_warnings,
+    }
+    return JsonResponse(payload)

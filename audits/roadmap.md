@@ -58,7 +58,7 @@ Audits 02 (tenancy), 03 (permissions), and 05 (code structure) independently con
 | **R13** | Error visibility: LOGGING-to-stdout config + Sentry (tagged per company) + uptime check. Production 500s are currently discarded entirely — ✅ IMPLEMENTED 2026-06-13 (on develop, pending deploy). | 06 O3 | HIGH | S | env-independent | Cheapest high-value fix in the whole series |
 | **R14** | Backup posture: verify the Render plan's snapshot/PITR reality, automate nightly `pg_dump` to R2, automate/checklist the pre-deploy backup, run one restore drill, turn on R2 versioning (receipts are financial records) | 06 O4, 01 D2 (recovery side) | HIGH | S (verify+dump) / M (full) | env-independent | The only current recovery for any destructive op is "restore everything, lose the day" |
 | **R15** | ~~Rotate the GitHub PAT~~ — **COMPLETED** — ✅ DONE 2026-06-13. | 06 O5 | HIGH | — | done | Listed for completeness |
-| **R16** | `/healthz` + `/ops/status` endpoints — on-demand verification of prod config (DEBUG, ALLOWED_HOSTS, secure flags, migrations pending, deployed commit) | 06 O6 | MED-HIGH | S | env-independent | Settles the two unverifiable-from-repo items (prod DEBUG / ALLOWED_HOSTS) |
+| **R16** | `/healthz` + `/ops/status` endpoints — on-demand verification of prod config (DEBUG, ALLOWED_HOSTS, secure flags, migrations pending, deployed commit) | 06 O6 | MED-HIGH | S | env-independent | Settles the two unverifiable-from-repo items (prod DEBUG / ALLOWED_HOSTS) — ✅ IMPLEMENTED 2026-06-13 (on develop, pending deploy) |
 | **R17** | CI (GitHub Actions: full test suite + `check --deploy` + `makemigrations --check`) + one-page deploy runbook; staging Render service as the M-half — S-half (CI + deploy runbook) ✅ IMPLEMENTED 2026-06-13 (on develop, pending deploy); M-half (staging) still pending. | 06 O7, 05 §6c | MEDIUM (HIGH-leaning) | S (CI+runbook) / M (staging) | env-independent | CI should precede the heavy refactoring slices — it protects everything after it. R1's harness runs here |
 | **R18** | gunicorn worker config committed as `gunicorn.conf.py` (WEB_CONCURRENCY=1 today = one request at a time platform-wide) | 06 O8, 04 F2-remnant | MEDIUM | S | env-independent | — |
 | **R19** | DEPLOYMENT.md truth-up (remove EMAIL_* fiction, add CSRF_TRUSTED_ORIGINS + USE_OBJECT_STORAGE) + add `.env.example` | 06 O10 | MEDIUM | S | env-independent | The env-var contract doubles as the DR document |
@@ -138,7 +138,7 @@ Note on framing: per PRODUCT_DECISIONS, no QuickBooks API integration will be bu
 2. ~~**R12 — SECURE_* settings block.** Closes the live cookie-security gap.~~
 3. ~~**R17 (S-half) — CI + deploy runbook.** Makes the 1,337 tests a deploy gate before the framework upgrade and everything after.~~
 4. ~~**R11 — Django 5.2 LTS + Pillow + Dependabot.** Lands through the CI gate; the test suite verifies it.~~
-5. **R16 — /healthz + /ops/status.** Verifies in production that slices 2–4 took effect.
+5. ~~**R16 — /healthz + /ops/status.** Verifies in production that slices 2–4 took effect.~~
 6. **R24 (write-path stop only) — Stop the AccountItemPriceHistory write path.** Pulled forward from Bucket 2: cheap, standalone, stops active misleading-data generation now. Table drop stays deferred.
 7. **R18 — gunicorn workers.**
 8. **R14 — Backups**: verify plan, nightly dump to R2, restore drill, R2 versioning. Must precede any data-rewriting migration.
