@@ -1,0 +1,67 @@
+# CI workflow for productERP
+#
+# Notes:
+#   - Python 3.13 is intentional: runtime.txt still says 3.12 but is stale —
+#     packages are built for and tested on 3.13. Tracked for update under R46.
+#   - `check --deploy` runs at the DEFAULT fail-level (ERROR) intentionally.
+#     Two known warnings are permanently non-blocking:
+#       W021  SECURE_HSTS_PRELOAD — deliberately off; preload submission is
+#             hard to reverse and is a separate future decision (see R12).
+#       W342  ForeignKey unique=True — pre-existing model note, out of scope.
+#     Adding --fail-level WARNING would cause CI to fail on these forever.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: producterp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      SECRET_KEY: django-insecure-ci-only-not-for-production
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/producterp
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check for missing migrations
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Run deploy checks
+        run: python manage.py check --deploy
+
+      - name: Run test suite
+        run: python manage.py test
