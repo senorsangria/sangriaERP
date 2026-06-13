@@ -3,6 +3,7 @@ productERP Django Settings
 """
 import logging as _logging
 import os
+import sys
 from pathlib import Path
 import dj_database_url
 from dotenv import load_dotenv
@@ -21,20 +22,10 @@ load_dotenv(BASE_DIR / '.env')
 # ---------------------------------------------------------------------------
 SECRET_KEY = os.environ['SECRET_KEY']
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 'yes')
+TESTING = 'test' in sys.argv  # True only when running manage.py test
 
 _allowed = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0')
 ALLOWED_HOSTS = [h.strip() for h in _allowed.split(',') if h.strip()]
-
-# Replit injects a REPL_SLUG; accept *.repl.co hosts automatically in dev
-REPLIT_HOST = os.getenv('REPL_SLUG')
-if REPLIT_HOST:
-    ALLOWED_HOSTS += [
-        f'{REPLIT_HOST}.repl.co',
-        f'{REPLIT_HOST}-*.repl.co',
-        '*.repl.co',
-        '*.replit.app',
-        '*.replit.dev',
-    ]
 
 _csrf_origins = os.getenv(
     'CSRF_TRUSTED_ORIGINS',
@@ -45,36 +36,46 @@ CSRF_TRUSTED_ORIGINS = [
     if o.strip()
 ]
 
-# Always include Replit domains when running on Replit
-if os.getenv('REPL_SLUG'):
-    CSRF_TRUSTED_ORIGINS += [
-        'https://*.repl.co',
-        'https://*.replit.app',
-        'https://*.replit.dev',
+if DEBUG:
+    # Replit dev hosts — confined to DEBUG so production ALLOWED_HOSTS
+    # contains only the real host supplied via the ALLOWED_HOSTS env var.
+    REPLIT_HOST = os.getenv('REPL_SLUG')
+    if REPLIT_HOST:
+        ALLOWED_HOSTS += [
+            f'{REPLIT_HOST}.repl.co',
+            f'{REPLIT_HOST}-*.repl.co',
+            '*.repl.co',
+            '*.replit.app',
+            '*.replit.dev',
+        ]
+        CSRF_TRUSTED_ORIGINS += [
+            'https://*.repl.co',
+            'https://*.replit.app',
+            'https://*.replit.dev',
+        ]
+
+    # Support Replit's nested cluster subdomain format (e.g. *.riker.replit.dev).
+    # REPLIT_DEV_DOMAIN holds the exact preview host; Django's single-level wildcard
+    # matching can't reach it through *.replit.dev alone.
+    REPLIT_DEV_DOMAIN = os.getenv('REPLIT_DEV_DOMAIN', '')
+    if REPLIT_DEV_DOMAIN:
+        ALLOWED_HOSTS.append(REPLIT_DEV_DOMAIN)
+        CSRF_TRUSTED_ORIGINS.append(f'https://{REPLIT_DEV_DOMAIN}')
+
+    ALLOWED_HOSTS += [
+        '*.riker.replit.dev',
+        '*.picard.replit.dev',
+        '*.janeway.replit.dev',
+        '*.sisko.replit.dev',
+        '*.kirk.replit.dev',
     ]
-
-# Support Replit's nested cluster subdomain format (e.g. *.riker.replit.dev).
-# REPLIT_DEV_DOMAIN holds the exact preview host; Django's single-level wildcard
-# matching can't reach it through *.replit.dev alone.
-REPLIT_DEV_DOMAIN = os.getenv('REPLIT_DEV_DOMAIN', '')
-if REPLIT_DEV_DOMAIN:
-    ALLOWED_HOSTS.append(REPLIT_DEV_DOMAIN)
-    CSRF_TRUSTED_ORIGINS.append(f'https://{REPLIT_DEV_DOMAIN}')
-
-ALLOWED_HOSTS += [
-    '*.riker.replit.dev',
-    '*.picard.replit.dev',
-    '*.janeway.replit.dev',
-    '*.sisko.replit.dev',
-    '*.kirk.replit.dev',
-]
-CSRF_TRUSTED_ORIGINS += [
-    'https://*.riker.replit.dev',
-    'https://*.picard.replit.dev',
-    'https://*.janeway.replit.dev',
-    'https://*.sisko.replit.dev',
-    'https://*.kirk.replit.dev',
-]
+    CSRF_TRUSTED_ORIGINS += [
+        'https://*.riker.replit.dev',
+        'https://*.picard.replit.dev',
+        'https://*.janeway.replit.dev',
+        'https://*.sisko.replit.dev',
+        'https://*.kirk.replit.dev',
+    ]
 
 # ---------------------------------------------------------------------------
 # Application definition
@@ -276,6 +277,22 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/login/'
+
+# ---------------------------------------------------------------------------
+# Production security — active only when not DEBUG and not running tests (R12).
+# The TESTING guard is required: Django's test runner forces DEBUG=False, so
+# without it SECURE_SSL_REDIRECT would 301-redirect test-client HTTP requests.
+# SECURE_PROXY_SSL_HEADER is required behind Render's reverse proxy — without
+# it, SECURE_SSL_REDIRECT sees every request as non-HTTPS and infinite-loops.
+# ---------------------------------------------------------------------------
+if not DEBUG and not TESTING:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 3600              # conservative; ramp to 604800 then 31536000 once HTTPS confirmed stable in prod
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = False             # deliberately off — preload submission is hard to reverse; separate decision later
 
 # ---------------------------------------------------------------------------
 # Logging — emit all logs to stdout so Render captures them (R13).

@@ -54,10 +54,10 @@ Audits 02 (tenancy), 03 (permissions), and 05 (code structure) independently con
 | **R9** | `provision_tenant` management command + ONBOARDING.md runbook (company + so_sequence_start prompt + first admin; import order; smoke test) | 02 T12/§5, 06 §6b | LOW (T12) / MEDIUM (gap) | S | env-independent | Removes the so_sequence_start=2006 trap |
 | **R10** | Seeded-data hygiene: guard `catalog/0007` against fresh-environment contamination, `seed_data` refuses to run unless DEBUG/--force, stop shipping seed data as migrations | 01 D3, 02 T10, 06 O16 | HIGH (D3) | S | env-independent | — |
 | **R11** | Django 5.2 LTS upgrade (5.1.6 is EOL and missing nine security releases incl. a SQL-injection fix) + Pillow bump + enable Dependabot | 06 O1/O14 | HIGH | S-M | env-independent | Do early — all later code changes should land on a supported framework; the 1,337-test suite verifies it |
-| **R12** | The SECURE_* settings block: proxy SSL header, SSL redirect, Secure cookies, HSTS (+ gate the Replit ALLOWED_HOSTS wildcards out of prod) | 06 O2 (+O11) | HIGH | S | env-independent | Six lines of settings; cookies currently lack the Secure flag in production |
-| **R13** | Error visibility: LOGGING-to-stdout config + Sentry (tagged per company) + uptime check. Production 500s are currently discarded entirely | 06 O3 | HIGH | S | env-independent | Cheapest high-value fix in the whole series |
+| **R12** | The SECURE_* settings block: proxy SSL header, SSL redirect, Secure cookies, HSTS (+ gate the Replit ALLOWED_HOSTS wildcards out of prod) — ✅ IMPLEMENTED 2026-06-13 (on develop, pending deploy). | 06 O2 (+O11) | HIGH | S | env-independent | Six lines of settings; cookies currently lack the Secure flag in production |
+| **R13** | Error visibility: LOGGING-to-stdout config + Sentry (tagged per company) + uptime check. Production 500s are currently discarded entirely — ✅ IMPLEMENTED 2026-06-13 (on develop, pending deploy). | 06 O3 | HIGH | S | env-independent | Cheapest high-value fix in the whole series |
 | **R14** | Backup posture: verify the Render plan's snapshot/PITR reality, automate nightly `pg_dump` to R2, automate/checklist the pre-deploy backup, run one restore drill, turn on R2 versioning (receipts are financial records) | 06 O4, 01 D2 (recovery side) | HIGH | S (verify+dump) / M (full) | env-independent | The only current recovery for any destructive op is "restore everything, lose the day" |
-| **R15** | ~~Rotate the GitHub PAT~~ — **COMPLETED** | 06 O5 | HIGH | — | done | Listed for completeness |
+| **R15** | ~~Rotate the GitHub PAT~~ — **COMPLETED** — ✅ DONE 2026-06-13. | 06 O5 | HIGH | — | done | Listed for completeness |
 | **R16** | `/healthz` + `/ops/status` endpoints — on-demand verification of prod config (DEBUG, ALLOWED_HOSTS, secure flags, migrations pending, deployed commit) | 06 O6 | MED-HIGH | S | env-independent | Settles the two unverifiable-from-repo items (prod DEBUG / ALLOWED_HOSTS) |
 | **R17** | CI (GitHub Actions: full test suite + `check --deploy` + `makemigrations --check`) + one-page deploy runbook; staging Render service as the M-half | 06 O7, 05 §6c | MEDIUM (HIGH-leaning) | S (CI+runbook) / M (staging) | env-independent | CI should precede the heavy refactoring slices — it protects everything after it. R1's harness runs here |
 | **R18** | gunicorn worker config committed as `gunicorn.conf.py` (WEB_CONCURRENCY=1 today = one request at a time platform-wide) | 06 O8, 04 F2-remnant | MEDIUM | S | env-independent | — |
@@ -134,8 +134,8 @@ Note on framing: per PRODUCT_DECISIONS, no QuickBooks API integration will be bu
 > **PROPOSED — execution order is decided by the product owner, not this document.** Slices are small and independently shippable per the Phase 3 model. Sequencing honors: the PAT rotation (R15/O5) is already done; CI precedes the Django upgrade so the framework change lands through a gate; error visibility is the cheapest high-value fix; and the R24 write-stop is pulled forward as a cheap standalone to stop active misleading-data generation.
 
 0. ~~PAT rotation (R15)~~ — **completed.**
-1. **R13 — Error visibility** (logging + Sentry + uptime). Cheapest high-value fix.
-2. **R12 — SECURE_* settings block.** Closes the live cookie-security gap.
+1. ~~**R13 — Error visibility** (logging + Sentry + uptime). Cheapest high-value fix.~~
+2. ~~**R12 — SECURE_* settings block.** Closes the live cookie-security gap.~~
 3. **R17 (S-half) — CI + deploy runbook.** Makes the 1,337 tests a deploy gate before the framework upgrade and everything after.
 4. **R11 — Django 5.2 LTS + Pillow + Dependabot.** Lands through the CI gate; the test suite verifies it.
 5. **R16 — /healthz + /ops/status.** Verifies in production that slices 2–4 took effect.
