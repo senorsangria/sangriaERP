@@ -304,7 +304,11 @@ class AccountItemPriceHistory(models.Model):
     """
     Historical record of shelf prices for an AccountItem.
 
-    Created when a price is captured via event recap. Not created during import.
+    DEPRECATED 2026-06-13 (R24) — no longer written. Dead (zero reads in
+    production) and semantically broken (logged per import touch, not per price
+    change). Table and existing rows retained; drop pending a later slice. Do
+    NOT re-add writes.
+
     recorded_by is null when set by the system; populated with the user when
     captured via recap.
     """

@@ -656,7 +656,9 @@ class RecapSubmitTest(TestCase):
         ai.refresh_from_db()
         self.assertEqual(ai.current_price, round_decimal("14.99"))
 
-    def test_submit_archives_changed_price_to_history(self):
+    def test_submit_changed_price_writes_no_history(self):
+        # R24: the AccountItemPriceHistory write path was removed. A changed
+        # price must still update current_price, but must NOT log a history row.
         from decimal import Decimal
         ai = AccountItem.objects.create(
             account=self.account,
@@ -669,10 +671,12 @@ class RecapSubmitTest(TestCase):
             f"shelf_price_{self.item.pk}": "12.99",
         })
         ai.refresh_from_db()
+        # current_price still updates (unchanged behavior)
         self.assertEqual(ai.current_price, round_decimal("12.99"))
-        history = AccountItemPriceHistory.objects.filter(account_item=ai)
-        self.assertEqual(history.count(), 1)
-        self.assertEqual(history.first().price, round_decimal("9.99"))
+        # ...but no history row is written anymore
+        self.assertEqual(
+            AccountItemPriceHistory.objects.filter(account_item=ai).count(), 0
+        )
 
     def test_submit_no_history_if_price_unchanged(self):
         from decimal import Decimal

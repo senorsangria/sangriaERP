@@ -1251,9 +1251,13 @@ def _save_recap_data(request, event):
 def _apply_price_updates(event, user):
     """
     On recap submission, update AccountItem.current_price for each item in the
-    event. Archives the old price to AccountItemPriceHistory if it changed.
+    event.
+
+    Note: previously this also archived the old price to AccountItemPriceHistory
+    on change; that write path was removed in R24 (2026-06-13) — the history
+    table is dead and semantically broken. current_price logic is unchanged.
     """
-    from apps.accounts.models import AccountItem, AccountItemPriceHistory
+    from apps.accounts.models import AccountItem
 
     if event.event_type != Event.EventType.TASTING or event.account_id is None:
         return
@@ -1273,11 +1277,6 @@ def _apply_price_updates(event, user):
             account_item.current_price = recap.shelf_price
             account_item.save(update_fields=['current_price'])
         elif account_item.current_price != recap.shelf_price:
-            AccountItemPriceHistory.objects.create(
-                account_item=account_item,
-                price=account_item.current_price,
-                recorded_by=user,
-            )
             account_item.current_price = recap.shelf_price
             account_item.save(update_fields=['current_price'])
         # If price unchanged, do nothing
