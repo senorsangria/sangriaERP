@@ -1,10 +1,12 @@
 """
 productERP Django Settings
 """
+import logging as _logging
 import os
 from pathlib import Path
 import dj_database_url
 from dotenv import load_dotenv
+import sentry_sdk
 
 # ---------------------------------------------------------------------------
 # Base paths
@@ -107,6 +109,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'apps.core.middleware.SentryCompanyTagMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -273,6 +276,68 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/login/'
+
+# ---------------------------------------------------------------------------
+# Logging — emit all logs to stdout so Render captures them (R13).
+# django.request logs 500 error tracebacks at ERROR level — this config
+# ensures those reach stdout even in production (no DEBUG=True required).
+# ---------------------------------------------------------------------------
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'WARNING',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.request': {
+            # 500 tracebacks are logged at ERROR; capturing them here is the
+            # primary goal of R13. 4xx are at WARNING and also captured.
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Sentry error tracking — dormant until SENTRY_DSN is set (R13).
+#
+# To activate: set SENTRY_DSN in Render environment variables.
+# Optional — set to activate Sentry error tracking; leave blank to keep it
+# dormant. No code change required once the DSN is configured.
+# ---------------------------------------------------------------------------
+SENTRY_DSN = os.getenv('SENTRY_DSN', '')
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        # Django integration is auto-detected by sentry-sdk.
+        send_default_pii=False,   # financial multi-tenant app — no PII in events
+        traces_sample_rate=0,     # errors only; no performance tracing for now
+        environment='development' if DEBUG else 'production',
+    )
+else:
+    _logging.getLogger('producterp.settings').warning(
+        'Sentry DSN not configured — error tracking is dormant. '
+        'Set SENTRY_DSN to activate.'
+    )
 
 # ---------------------------------------------------------------------------
 # Message tags — map Django 'error' level to Bootstrap 'danger' class

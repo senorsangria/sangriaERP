@@ -8,3 +8,4 @@ Pillow==11.1.0
 rapidfuzz==3.14.3
 boto3==1.42.85
 django-storages[s3]==1.14.6
+sentry-sdk==2.62.0
