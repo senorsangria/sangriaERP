@@ -3440,6 +3440,8 @@ to `report_account_detail`. Each row dict in `account_sales_by_year` includes `a
 
 ## Historical Event Import Tool
 
+> **RETIRED 2026-06-13.** The event_import app is to be deleted outright (app, endpoints, migrations, and the `can_run_historical_event_import` permission) per the decision recorded in "event_import Retirement (2026-06-13)" at the end of this file and Roadmap R2. The event data it imported (Event rows with `is_imported=True`) is retained. Any future tenant-facing importer is a fresh build. The documentation below is preserved as a historical record of what was built.
+
 ### Overview
 A two-stage pipeline for importing historical tasting events from a CSV file.
 Stage 1 (matching) and Stage 2 (review interface) are built. Stage 3 (actual
@@ -4724,3 +4726,58 @@ Ad-hoc planning tool to gauge whether current on-hand stock covers a selected se
 ### Event Listing Tweaks
 
 - **Day-of-week shown under each event date.** In `event_list.html`, the full weekday name (`{{ event.date|date:"l" }}`, e.g. "Tuesday") renders as a muted, subordinate line beneath the date — in both the desktop table cell and the mobile card, across the Active and Past tabs. The mobile card previously prefixed the date with the abbreviated weekday (`date:"D"`, e.g. "Tue") inline; that inline abbreviation was dropped so the two views are consistent (date on top, full weekday muted underneath) and the day isn't shown twice. Display-only — no view change (the `date` field is already in context).
+
+---
+
+## event_import Retirement (2026-06-13)
+
+**Decision:** The event_import app is **RETIRED — to be deleted outright**: the app directory (`apps/event_import/`), all its endpoints, all its migrations, and the `can_run_historical_event_import` permission. It is not mothballed or preserved for future revival.
+
+**Rationale:** The tool has a confirmed cross-tenant read+write breach (accepts arbitrary account PKs with no company filter — audit 02-T1, CRITICAL) and single-tenant-hardwired SKUs (02-T9). Fixing it would require a full security audit of a tool that is already slated for retirement and has no future in a multi-tenant product. The risk of issuing any external tenant credential while this tool exists outweighs the cost of deleting it now.
+
+**Data retention:** The event data the tool imported (Event rows where `is_imported=True`, and their related `EventItemRecap`, `EventPhoto`, and `Expense` records) is **retained**. Only the import tooling is removed.
+
+**Future importer:** Any future tenant-facing historical event importer is a **fresh build**, not a revival of this tool. It must be designed with company-scoped account lookups from the start.
+
+**Historical documentation:** The "Historical Event Import Tool" section earlier in this file is preserved as a record of what was built; it is marked RETIRED at the top of that section.
+
+(Roadmap R2.)
+
+---
+
+## SalesRecord Grain (2026-06-13)
+
+**Decision:** `SalesRecord` deliberately has **no natural key** and keeps its **surrogate-id grain**. No uniqueness constraint on (company, account, item, sale_date) will be added.
+
+**Rationale:** Production data review and product-owner confirmation established that same-day duplicate (company, account, item, sale_date) rows and negative quantities are **legitimate business events**, not import artifacts:
+- Multiple same-day orders from the same account for the same item are real.
+- A negative-quantity row on the same day as a positive is a same-day correction that backs out the earlier order.
+- Negative quantities also represent returns and sample draws against house accounts (e.g. "SENOR SANGRIA / MBD SAMPLE").
+- The source (distributor VIP export) carries no line identifier, so there is no source-side key to enforce uniqueness against.
+
+A pre-COGS data-layer diagnostic (2026-06-13) confirmed that the importer preserves signed quantities and same-grain multiples faithfully end-to-end: the parse step explicitly allows negatives, the bulk_create path does not deduplicate, and the replace-on-import round-trip deletes and re-inserts every row without any quantity or grain filter.
+
+**Consequent decisions:**
+- (a) Every source line is ingested as its own `SalesRecord` row — no dedup, no grouping, no uniqueness constraint.
+- (b) Negative quantities are valid and **must net correctly in COGS** — any COGS aggregation must sum signed quantities, not filter `quantity > 0` or count rows.
+- (c) Sample/house-account sales are **commingled with real sales** in the same table. They are today identifiable only by `Account.name` convention (e.g. names containing "SAMPLE" or matching the house-account name). The `account_type` field exists on `Account` but is never populated by the importer and carries no controlled vocabulary. A programmatic identification mechanism is required before COGS can correctly exclude samples from margin math — see Roadmap R59.
+
+**Reconcile key for exports:** the surrogate `id` plus the full grain (company, account, item, sale_date, quantity).
+
+(Roadmap R23.)
+
+---
+
+## saas_admin Operating Model (2026-06-13)
+
+**Decision:** `saas_admin` operates through the **Django admin only**. The app-side all-tenant account search branch — the only by-design cross-tenant read path in the application — is **removed**.
+
+**Rationale:** The app-side cross-tenant account search exists as a special branch in the account lookup view, guarded by `user.is_saas_admin`. It is the only place in the codebase where a user intentionally reads across company boundaries inside the app. `saas_admin` is barely used and has never needed cross-tenant search; the Django admin already provides full data access for operator tasks. Removing the app-side branch eliminates a cross-tenant read surface before any external tenants exist, at essentially zero operator cost.
+
+**Scope:** The removal covers the app-side branch only. Django admin access for `saas_admin` is unchanged. The `is_saas_admin` flag and the role itself are retained; only the special cross-tenant code path in the app views is removed.
+
+**Implementation:** Handled as part of the `@require_permission` decorator rollout (Roadmap R1). The decorator resolves `request.company` in one place, including the saas_admin null-company case, so the decision is encoded once rather than scattered across per-view helper copies.
+
+**Future operator tooling:** Dedicated operator tooling (cross-tenant dashboards, support views) will be designed later, when the need is concrete and the multi-tenant architecture is stable.
+
+(Roadmap R7; implemented via the R1 `@require_permission` decorator.)
